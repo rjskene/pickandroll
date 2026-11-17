@@ -10,8 +10,8 @@ rule. The aliases are the ones the simulator's modules used before the move, so 
 the tests' patch targets read as they did.
 
 From the moves executor's queue (``season.autopilot``) the simulator takes the claim's bid alone
-(#172, PR Fb): ``bid_of``, ``typical_gain`` and the constants they need (a free agent's mark and
-the fortnight the typical gain is over), so a seat in a FAAB league bids by the live rule itself,
+(#172, PR Fb): ``bid_of``, ``typical_gain`` and the constants they need (the fortnight the typical
+gain is over and the moves it needs), so a seat in a FAAB league bids by the live rule itself,
 never a copy of it.
 """
 
@@ -22,7 +22,7 @@ from pickandroll.season import moves as mv
 from pickandroll.season import strategy as sg
 from pickandroll.season import stream as st
 from pickandroll.season import weekly as wk
-from pickandroll.season.autopilot import FREE_AGENT, TYPICAL_DAYS, TYPICAL_MIN, bid_of, typical_gain
+from pickandroll.season.autopilot import TYPICAL_DAYS, TYPICAL_MIN, bid_of, typical_gain
 from pickandroll.season.calendar import Calendar, Week, monday_of
 from pickandroll.season.moves import HELD, Move
 from pickandroll.season.progress import BLEND, DEFAULTS, LIVE_KNOBS, refused
@@ -35,7 +35,6 @@ __all__ = [
     "COUNTING",
     "DEFAULTS",
     "FPTS",
-    "FREE_AGENT",
     "HELD",
     "LIVE_KNOBS",
     "PCT",

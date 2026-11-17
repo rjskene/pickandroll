@@ -970,8 +970,9 @@ Who bids, and how:
   | `sizing` | the arm's `faab_sizing` | the knob |
   | `availability` | `W` for a claim; a free agent places none | the player's mark (`W`, or `FA`, which bids $0) |
 
-  The simulator has no queue weight (`three_weight` is PR E's), so a step's score is its week
-  increment, live's score at weight zero. The decision carries what its claims bid on
+  Live scores a step as its week increment plus the queue's weight (`plans.THREE_WEIGHT`, the
+  `three_weight` knob) times its three weeks' increment; the simulator has no queue weight until
+  PR E, so a step here bids on its week increment alone (below). The decision carries what its claims bid on
   (`policy.Basis`): the bid is set in the queue on the state's dollars that day, so two arms
   still share a decision while their states agree.
 - **The ranking tier** holds no gain in the engine's units (it ranks by per-game value) and bids
@@ -1003,7 +1004,10 @@ What FAAB does not model, each plainly:
    $0, contested by the day's rotation.
 4. **The order rolls only on a tie** (above), the first order the draft's reverse.
 5. **No pacing, cap or shading** on the seat's bid: the bid policy family is PR F2's.
-6. `validate` plays the fixed league without waivers.
+6. **A week-plan step bids on its week increment**, where live bids on its score (the week
+   increment plus the queue's weight times its three weeks' increment), until PR E brings the
+   queue's weight.
+7. `validate` plays the fixed league without waivers.
 
 **Not yet.** The ruling of 2026-11-07
 makes the market rivals' add rate a parameter of the league shape, with a default written as a

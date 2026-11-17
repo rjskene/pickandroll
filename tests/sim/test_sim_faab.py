@@ -13,7 +13,7 @@ import pytest
 
 from pickandroll.season import autopilot as qa
 from pickandroll.season import moves as mv
-from pickandroll.sim import audit, policy
+from pickandroll.sim import audit, nopeek, policy
 from pickandroll.sim import counts as ct
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
@@ -109,9 +109,12 @@ def test_a_bid_above_the_dollars_left_fails_and_the_player_goes_to_the_next():
     assert out.gone_by == {2: 1}
     # Nobody else could have been taken: the whole bid is paid above the next.
     assert out.claim_counts[3]["over"] == 5 and out.claim_counts[3]["behind"] == 1
-    # A win at $0, with no other claim on the player: free and alone.
+    # A tie at $0 with no dollars left: the better priority wins him free, not alone (team 2
+    # claimed him too), and team 2 loses on the tie.
     _, _, free, *_ = two_on_x(0, 0, dollars={2: 0, 3: 0})
-    assert free.claim_counts[3]["won_free"] == 1 and free.dollars[3] == 0
+    assert free.claim_counts[3]["won_free"] == 1 and free.claim_counts[3]["alone"] == 0
+    assert free.claim_counts[2]["lost_tie"] == 1
+    assert free.dollars == {1: 100, 2: 0, 3: 0, 4: 100}
 
 
 def test_a_lone_claim_is_won_alone_and_a_team_s_second_win_needs_the_dollars_left():
@@ -479,3 +482,35 @@ def test_a_surrogate_seat_wins_a_claim_it_paid_for():
         paid = sum(r.bid for r in won if r.team == t)
         assert seen[-1].dollars[t] == setup.budget - paid
         assert result.counts[t]["dollars_spent"] == paid
+
+
+def test_a_claim_s_bid_is_part_of_the_day_s_digest():
+    """The no-peek record: two day records alike but for one claim's bid digest apart in that
+    claim's field alone, and two alike but for a decided claim's bid in the morning's."""
+    _, _, out, x, a2, _, clears = two_on_x(7, 5)
+
+    def record(bid: int) -> rn.DayRecord:
+        placed = {2: (claim(x, a2, clears, bid),)}
+        return rn.DayRecord(clears, 0, {}, {}, {}, {}, {}, {}, {}, out, claims=placed, cleared=out.resolved)  # fmt: skip
+
+    one, two = nopeek.digest(record(7)), nopeek.digest(record(8))
+    assert set(one) == set(two) and [f for f in one if one[f] != two[f]] == ["claims"]
+    paid = record(7)
+    more = replace(paid, cleared=tuple(replace(r, bid=r.bid + 1) for r in paid.cleared))
+    three = nopeek.digest(more)
+    assert [f for f in one if one[f] != three[f]] == ["cleared"]
+
+
+def test_the_refusal_of_a_pair_apart_only_on_a_plan_floor_names_a_seat_that_bids():
+    """Two surrogate arms apart only on ``plan_floor_cats``: the same seat outside a FAAB run,
+    and the refusal says a seat that bids reads it there; two seats in a FAAB run."""
+    a = rn.Arm("A", "surrogate", KNOBS, {})
+    b = rn.Arm("B", "surrogate", {**KNOBS, "plan_floor_cats": 0.5}, {})
+    (why,) = rn.same_seat(a, b, [policy.Shape(waivers="priority")], rivals=False)
+    assert why == (
+        "plan_floor_cats (only the exact tier draws a week plan; read by the exact tier drawing "
+        "and executing the week plan in a categories league), and in a categories FAAB run by a "
+        "seat that bids (the exact or the surrogate tier, a mirror rival), its typical gain until "
+        "ten moves"
+    )
+    assert rn.same_seat(a, b, [policy.Shape(waivers="faab")], rivals=False) is None

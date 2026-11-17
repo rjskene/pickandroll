@@ -302,7 +302,7 @@ class Basis:
     decision's moves: for the live rule the move's own gain on the judging horizon, the set's
     value less the set without it (the live queue's ``gain``, the logged ``marginal`` on
     ``three``); for the market the move's gain on its view. ``plan`` is each of the plan's steps'
-    gain, in the order of its steps: its week increment, live's step score with no queue weight
+    gain, in the order of its steps: its week increment, where live bids on its score
     (:func:`basis_of`).
     ``sizing`` is the seat's ``faab_sizing`` and ``floor`` its plan floor, the typical gain until
     ten moves (live); ``noise`` the market's draw by move, for each of its moves that is a claim
@@ -351,9 +351,9 @@ def basis_of(
     """The live rule's basis for a decision of ``moves`` (and the week plan ``planned``, a
     ``stream.Plan``, when the decision carries one) in a FAAB league; None elsewhere. A move of
     the set bids on its own gain on the judging horizon (:func:`gains_of`, the live queue's
-    ``marginal``); a plan step on its score, which live is its week increment plus the queue's
-    weight times its three weeks' increment (``plans.step_score``): the simulator has no such
-    weight (``three_weight`` is PR E's), so its week increment (``stream.step_gains``). The gains
+    ``marginal``); a plan step on its week increment (``stream.step_gains``), where live bids on
+    its score, the week increment plus the queue's weight (``plans.THREE_WEIGHT``) times its
+    three weeks' increment (``plans.step_score``): the simulator has no queue weight until PR E. The gains
     are the engine's own, on its plain evaluator: the season term is the simulator's and live
     bids without it."""
     if not built.bids:
@@ -1024,6 +1024,20 @@ class Configured(Protocol):
     execute_plan: bool
     knobs: Mapping[str, Any]
 
+
+#: What else reads a knob in a FAAB run (#172, PR Fb), said in the refusal's message after
+#: :data:`WHEN_READ`'s words: a seat that bids reads its league's plan floor, its typical gain
+#: until ten moves.
+WHEN_READ_FAAB: Mapping[str, str] = {
+    "plan_floor_cats": (
+        "in a categories FAAB run by a seat that bids (the exact or the surrogate tier, a mirror "
+        "rival), its typical gain until ten moves"
+    ),
+    "plan_floor_points": (
+        "in a points FAAB run by a seat that bids (the exact or the surrogate tier, a mirror "
+        "rival), its typical gain until ten moves"
+    ),
+}
 
 #: What makes each knob and field read, for the refusal's message.
 WHEN_READ: Mapping[str, str] = {

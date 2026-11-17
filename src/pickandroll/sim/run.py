@@ -204,7 +204,11 @@ def same_seat(
                 rows.append(table[name])
         if policy.READ in rows:
             return None
-        out.append(f"{name} ({rows[0]}; read by {policy.WHEN_READ[name]})")
+        also = policy.WHEN_READ_FAAB.get(name)
+        out.append(
+            f"{name} ({rows[0]}; read by {policy.WHEN_READ[name]})"
+            + (f", and {also}" if also else "")
+        )
     return out
 
 
