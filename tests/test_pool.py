@@ -7,13 +7,16 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from pickandroll.api.app import SessionStore, create_app
+from pickandroll.optim import pool as pools
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -194,3 +197,71 @@ def test_the_punt_sweep_starts_its_pool_by_spawn(monkeypatch, pool):
     scan = roster.punt_scan(problem, workers=2)
     assert made == ["spawn"]
     assert len(scan.solutions) == len(roster.punt_sets(problem.cats, problem.max_punts))
+
+
+# --------------------------------------------------------------------------- #401: bounded waits
+#: Seconds a wait may take to end after the shutdown (a slice is half a second).
+STOP_BOUND = 10.0
+
+
+def waiting(target):
+    """Run ``target`` in a thread; what it returned or raised, and when it ended."""
+    out: dict = {}
+
+    def go():
+        try:
+            out["value"] = target()
+        except Exception as exc:  # noqa: BLE001 - the test reads it
+            out["raised"] = exc
+        out["ended"] = time.monotonic()
+
+    thread = threading.Thread(target=go, daemon=True)
+    thread.start()
+    return thread, out
+
+
+def test_a_wait_without_a_shutdown_gives_every_future_and_one_begun_after_a_shutdown_too():
+    pools.shutdown_pool()  # an earlier shutdown never stops a wait begun after it
+    with ThreadPoolExecutor(4) as ex:
+        futures = {ex.submit(time.sleep, 0.05 * i): i for i in range(6)}
+        assert sorted(futures[f] for f in pools.completed(futures)) == list(range(6))
+        assert pools.result(ex.submit(sum, [1, 2, 3])) == 6
+        assert list(pools.completed([])) == []
+
+
+def test_a_wait_ends_once_the_pools_shut_down_and_cancels_what_still_waits():
+    gate = threading.Event()
+    with ThreadPoolExecutor(1) as ex:
+        running = ex.submit(gate.wait)
+        queued = ex.submit(gate.wait)
+        thread, out = waiting(lambda: list(pools.completed([running, queued])))
+        one, alone = waiting(lambda: pools.result(ex.submit(gate.wait)))
+        time.sleep(1.0)  # both waits are on
+        stopped = time.monotonic()
+        pools.shutdown_pool()
+        thread.join(STOP_BOUND)
+        one.join(STOP_BOUND)
+        assert not thread.is_alive() and not one.is_alive()
+        assert isinstance(out["raised"], pools.PoolStopped)
+        assert isinstance(alone["raised"], pools.PoolStopped)
+        assert out["ended"] - stopped < 2 * pools.WAIT_SLICE_SECONDS + 1
+        assert queued.cancelled()  # nothing left queued behind the stopped wait
+        gate.set()
+
+
+def test_a_wait_on_the_shared_pool_ends_when_a_terminating_shutdown_stops_its_worker():
+    """#401: the API's shutdown terminates the workers mid-solve; the thread waiting on them
+    (the survival build's, a pricing round's) ends within a few seconds, never waits forever."""
+    pool = pools.shared_pool(1)
+    # One runs; the pool moves one more to its call queue and marks it running, so it can never
+    # be cancelled (``EXTRA_QUEUED_CALLS``); the third still waits in the pool's own queue.
+    futures = [pool.submit(time.sleep, 60) for _ in range(3)]
+    thread, out = waiting(lambda: list(pools.completed(futures)))
+    time.sleep(1.0)
+    stopped = time.monotonic()
+    pools.shutdown_pool(terminate=True)
+    thread.join(STOP_BOUND)
+    assert not thread.is_alive()
+    assert isinstance(out["raised"], pools.PoolStopped)
+    assert out["ended"] - stopped < STOP_BOUND
+    assert futures[2].cancelled()
