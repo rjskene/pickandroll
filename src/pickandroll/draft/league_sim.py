@@ -30,7 +30,7 @@ import pandas as pd
 from ..availability.adp import SPREAD_BASE, SPREAD_GROWTH
 from ..availability.survival import SurvivalTable
 from ..optim.objective import CategoryCurve
-from ..optim.pool import shared_pool
+from ..optim.pool import completed, shared_pool
 from ..projections.schema import ProjectionSet
 from .autopick import (
     STRATEGIES,
@@ -217,11 +217,9 @@ def simulate_league(
             seed, picks, team_totals = _job(job)
             collect(seed, picks, team_totals, done)
     else:
-        from concurrent.futures import as_completed
-
         pool = shared_pool(workers)
         futures = [pool.submit(_job, job) for job in jobs]
-        for done, future in enumerate(as_completed(futures), start=1):
+        for done, future in enumerate(completed(futures), start=1):
             seed, picks, team_totals = future.result()
             collect(seed, picks, team_totals, done)
 

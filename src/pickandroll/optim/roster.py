@@ -386,13 +386,11 @@ def punt_scan(
             solutions[i] = _solve_fixed(job)
             report(i, solutions[i], i + 1)
     else:
-        from concurrent.futures import as_completed
-
         from . import pool as pools
 
         with pools.process_pool(workers) as pool:
             futures = {pool.submit(_solve_fixed, job): i for i, job in enumerate(jobs)}
-            for done, future in enumerate(as_completed(futures), start=1):
+            for done, future in enumerate(pools.completed(futures), start=1):
                 i = futures[future]
                 solutions[i] = future.result()
                 report(i, solutions[i], done)
