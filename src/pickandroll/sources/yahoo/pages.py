@@ -35,7 +35,7 @@ from datetime import date
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from ...season.state import Player
+from ...season.state import EACH_CATEGORY, ONE_WIN, Player
 from .html import Node, cells, parse, table_rows
 
 _TEAM_POS = re.compile(r"^([A-Z]{2,4}) - ([A-Za-z,]+)$")
@@ -266,14 +266,27 @@ def lineup_rule(deadline: str | None) -> tuple[str | None, str | None]:
     return None, None
 
 
+def h2h_format(scoring_type: str | None) -> str | None:
+    """The head-to-head format a settings page's "Scoring Type" names (#397): ``Head-to-Head -
+    Categories`` is :data:`EACH_CATEGORY`, one win a matchup (``Head-to-Head - One Win``, or
+    ``Most Categories``) :data:`ONE_WIN`; None for points, rotisserie or words not known."""
+    t = " ".join((scoring_type or "").lower().split())
+    if not t.startswith("head-to-head"):
+        return None
+    if "one win" in t or "most categories" in t:
+        return ONE_WIN
+    return EACH_CATEGORY if t.endswith("- categories") else None
+
+
 def parse_settings_page(html: str) -> dict[str, Any]:
     """The settings page: the roster positions in order, held slots included (``IL``, ``IL+``,
     ``NA``: Yahoo's v3 settings leave them out), the lineup deadline as printed with what it
     means (:func:`lineup_rule`), the playoff weeks, whether an injured player can be added
     straight to an injury slot, the bracket's rules (#172): the playoff tie-breaker as
-    printed, whether the bracket reseeds each round, and whether the league has divisions; and
-    the waiver, acquisition and trade rules (#261), in the words of Yahoo's v3 settings where
-    those have a field (:func:`waiver_rules`). A row the page does not print is None."""
+    printed, whether the bracket reseeds each round, and whether the league has divisions; the
+    waiver, acquisition and trade rules (#261), in the words of Yahoo's v3 settings where
+    those have a field (:func:`waiver_rules`); and the scoring type as printed with its
+    head-to-head format (:func:`h2h_format`, #397). A row the page does not print is None."""
     root = parse(html)
     _require(root, "settings")
     rows: dict[str, str] = {}
@@ -296,7 +309,10 @@ def parse_settings_page(html: str) -> dict[str, Any]:
         "allow injured players from waivers or free agents to be added directly to injury slot"
     )
     tiebreak = rows.get("playoff tie-breaker")
+    scoring_type = " ".join((rows.get("scoring type") or "").split()) or None
     return {
+        "scoring_type": scoring_type,
+        "h2h": h2h_format(scoring_type),
         "roster": [x.strip() for x in positions.split(",") if x.strip()],
         "lineup_deadline": deadline,
         "lineup_changes": changes,

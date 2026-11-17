@@ -24,6 +24,7 @@ import {
   setLine,
   setSummary,
   weekLabel,
+  formatLabel,
 } from "../season";
 import { recsReason, when } from "../seasonStatus";
 import { Chevron } from "./icons";
@@ -55,8 +56,6 @@ export interface BlockProps extends BlockActions {
 
 /** A league's title in the table: its row, its panel and its Yahoo link's label (#278). */
 const titleOf = (s: SeasonSummary) => s.name ?? `League ${s.league}`;
-
-const formatOf = (s: SeasonSummary) => (s.scoring === "points" ? "H2H points" : "H2H categories");
 
 /** A click on a league's rows opens its page (#253), unless it lands on one of their controls
  * (the chevron, the name, the status icon, refresh, Solve) or ends a text selection. */
@@ -104,7 +103,7 @@ export function LeagueBlock(props: BlockProps) {
   });
   const cell = matchupOddsCell(s, odds.data, odds.error);
   const sub = [
-    `${formatOf(s)}${pinned ? " · private" : ""}`,
+    `${formatLabel(s)}${pinned ? " · private" : ""}`,
     s.my_team?.name,
     s.week != null ? weekLabel(s).toLowerCase() : null,
     best?.status === "solved" ? setSummary(best) : null,
@@ -254,7 +253,7 @@ function LeagueDetail(props: BlockProps & { id: string; readNote: string; reason
         <dl>
           <dt className="k">Format</dt>
           <dd>
-            {formatOf(s)} · {s.public ? "public" : "private"}
+            {formatLabel(s)} · {s.public ? "public" : "private"}
           </dd>
           <dt className="k">Team</dt>
           <dd>{s.my_team?.name ?? "not read"}</dd>
@@ -368,7 +367,7 @@ export function UnreadBlock({
         </span>
         <div className="lt-sub">
           <span>
-            {formatOf(s)}
+            {formatLabel(s)}
             {s.public === false ? " · private" : ""}
           </span>
         </div>

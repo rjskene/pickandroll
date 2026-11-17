@@ -156,6 +156,13 @@ export function statusTitle(player: Pick<SeasonPlayer, "status" | "status_full" 
   return [player.status_full ?? player.status, player.note].filter(Boolean).join(": ");
 }
 
+/** A league's format as the league page and the landing name it (#397): "H2H points", "H2H one
+ * win" where a week is one result, else "H2H categories". */
+export function formatLabel(s: Pick<SeasonSummary, "scoring" | "h2h">): string {
+  if (s.scoring === "points") return "H2H points";
+  return s.h2h === "one_win" ? "H2H one win" : "H2H categories";
+}
+
 /** "3-1-0 · 2nd": a team's record and rank, as the league page shows them. */
 export function recordLabel(team: SeasonTeamRef | null | undefined): string {
   if (!team) return "";
