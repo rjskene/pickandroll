@@ -827,8 +827,14 @@ read in one kind only (a run that asks about `plan_floor_points` is a points run
   assists 2, steals 4, blocks 4, turnovers −2. It is a platform's default, a working default the
   user may replace. The draft values players by fantasy points (each seat's own board under a
   table too), a week is one result on the week's points, and the standings break a tie on points
-  for ("The league"). No new metric: `category_wins` is the week's one result (a win, a half,
-  nothing), so it equals `matchup_wins`; the verdict's rule is untouched.
+  for ("The league"). A seat that weighs its moves (the exact and the surrogate tiers, a mirror
+  rival) reads a week as the live build does: its odds are on fantasy points alone, each
+  opponent's projected week carries its fantasy points and their spread, and the week so far is
+  each side's score, the sum the standings count. PR 2b's move problem gave the opponents' weeks
+  no table, a gap only a points league reaches: every week looked won and no move gained, so
+  those seats stood still until PR D4c filled it. No new metric: `category_wins` is the week's
+  one result (a win, a half, nothing), so it equals `matchup_wins`; the verdict's rule is
+  untouched.
 - **The held slots** (`--held IL=2,IL+=1`): `IL` 0 to 2 and `IL+` 0 or 1, after the bench; `NA`
   is refused. The draft takes the active spots only, so a held slot starts the season empty; a
   short draft's rule is unchanged, and under points the draftable players are the same players

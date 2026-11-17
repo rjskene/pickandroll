@@ -3,17 +3,19 @@ tiebreak, and the league ``run.replay_setup`` builds under the league rules."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 import numpy as np
 import pytest
 
-from pickandroll.sim import adp, shapes
+from pickandroll.sim import adp, policy, shapes
 from pickandroll.sim import league as lg
 from pickandroll.sim import run as rn
-from pickandroll.sim.engine import FPTS, STATS, wk
-from pickandroll.sim.state import Member, snake_draft
+from pickandroll.sim.engine import FPTS, STATS, mv, wk
+from pickandroll.sim.state import Member, initial, snake_draft
 from tests.sim.draws import between
+from tests.sim.sim_league import KNOBS
 
 POINTS = {"pts": 1.0}
 TABLE = dict(shapes.POINTS_DEFAULT)
@@ -140,6 +142,33 @@ def test_held_slots_follow_the_bench_and_the_draft_fills_the_active_spots_only()
     assert all(slot not in ("IL", "IL+") for r in setup.rosters.values() for _, slot in r)
     _, plain = setup_of()
     assert setup.rosters == plain.rosters  # the same draft: a held slot starts the season empty
+
+
+def test_a_points_league_s_move_problem_reads_its_weeks_in_fantasy_points():
+    """The move problem in a points league reads a week as the live build does
+    (``api.season_moves.build``): each opponent's projected week carries fantasy points with a
+    spread, and the week so far is each side's score, ``league.fpts`` of its totals, the sum the
+    standings count. So a clearly better add gains. PR 2b's ``problem_of`` gave the opponents'
+    weeks no table, which no points league reached before PR D4c: every week looked won outright
+    and no move gained."""
+    _, setup = setup_of(scoring="points", points=TABLE)
+    week = setup.calendar.weeks[0]
+    raw = {t: {s: 3.0 * t + i for i, s in enumerate(STATS)} for t in setup.teams}
+    state = replace(initial(setup), day=week.start + timedelta(2), totals={week.number: raw})
+    built = policy.problem_of(setup, state, 1, KNOBS, setup.projection, {}, {})
+    p = built.problem
+    this, later = p.horizons["week"][0], p.horizons["three"]
+    theirs = [*this.opponents, *(o for span in later for o in span.opponents)]
+    assert theirs and all(o.totals[FPTS] > 0 and o.variance[FPTS] > 0 for o in theirs)
+    assert this.so_far == {FPTS: lg.fpts(raw[1], TABLE)}
+    assert this.so_far_theirs == ({FPTS: lg.fpts(raw[2], TABLE)},)
+    assert lg.fpts(raw[1], TABLE) != lg.fpts(raw[2], TABLE)
+    # A free agent four times anyone's line, for the roster's least valuable player.
+    star = min(state.pool)
+    beliefs = {**setup.projection, star: {s: 4 * v for s, v in setup.projection[star].items()}}
+    p = policy.problem_of(setup, state, 1, KNOBS, beliefs, {}, {}).problem
+    weakest = min((k for k, _ in p.roster), key=lambda k: (p.value[k], k))
+    assert mv.Evaluator(p).gain("week", [mv.Move(star, weakest)]) > 0.05
 
 
 def test_a_points_league_without_a_table_is_refused():

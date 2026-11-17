@@ -52,6 +52,7 @@ from statistics import median
 from typing import Any, Protocol
 
 from .engine import DEFAULTS, LIVE_KNOBS, Week, dl, mv, refused, sg, st, wk
+from .league import fpts
 from .state import BENCH, Setup, SimState, add_totals
 
 #: The execution model every run's payload names (#172, the master's ruling on PR 2's plan).
@@ -279,20 +280,30 @@ def problem_of(
     value = wk.per_game_values(beliefs, cats, points)
     roster_of = {t: state.active(t) for t in setup.teams}
 
+    # A points league's weeks are read as the live build reads them (``api.season_moves.build``):
+    # each team's projected week carries its fantasy points (``points``), and the week so far is
+    # each side's score, the sum the standings count (``league.fpts``), as the matchup page gives
+    # it (``api.season_week.so_far``). Before PR D4c no points league reached this, and the
+    # opponents' weeks carried no points: every week looked won and no move gained (#172).
     def project(team: int, days: Sequence[date], this_week: bool) -> wk.TeamWeek:
         members = members_of(setup, roster_of.get(team, ()), status)
-        return wk.project_week(members, beliefs, days, setup.schedule, slots, value, this_week)
+        return wk.project_week(
+            members, beliefs, days, setup.schedule, slots, value, this_week, points=points
+        )
+
+    def so_far_of(team: int) -> dict[str, float]:
+        totals = dict(state.totals.get(this.number, {}).get(team, {}))
+        return {wk.FPTS: fpts(totals, points)} if points else totals
 
     other = next(
         (b if a == me else a for a, b in setup.pairings.get(this.number, ()) if me in (a, b)), None
     )
-    so_far = state.totals.get(this.number, {})
     week_span = mv.WeekSpan(
         tuple(days0),
         True,
         (project(other, days0, True),) if other is not None else (),
-        dict(so_far.get(me, {})),
-        (dict(so_far.get(other, {})),) if other is not None else (),
+        so_far_of(me),
+        (so_far_of(other),) if other is not None else (),
         None,
     )
     field_teams = [t for t in setup.teams if t != me]

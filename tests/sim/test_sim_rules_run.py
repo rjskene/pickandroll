@@ -31,6 +31,9 @@ SMALL = shapes.Grid("small", (10, 12), (shapes.SLOTS,), (2, None), ((6, 3),))
 #: The world's seed and path on which the surrogate seat holds a player in IL and takes him back
 #: (``test_a_surrogate_seat_holds_a_player_in_il_and_takes_him_back``, which says how it was found).
 HELD_PATH = (1, 0)
+#: The world's seed and path on which the surrogate seat moves in a points league
+#: (``test_a_surrogate_seat_in_a_points_league_adds_and_holds``, which says how it was found).
+POINTS_PATH = (1, 1)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -177,20 +180,17 @@ def test_a_run_with_a_held_slot_drafts_the_active_spots_and_records_it(wire: Pat
         )
 
 
-def test_a_surrogate_seat_holds_a_player_in_il_and_takes_him_back():
-    """The replay's league under ``LeagueRules(held=("IL",))`` on a made-up season (two teams,
-    six weeks) in which a quarter of the players miss seven games in a row: the surrogate seat
-    hears its player out, holds him in IL with an add into the spot that frees, and takes him
-    back when he returns, the weakest player sent; the audit finds nothing. HELD_PATH is the
-    first of seeds 1 to 3 and paths 0 and 1, tried in that order, on which the seat holds a
-    player (two of the six do not: its players are out on days it does not decide)."""
+def absent_season(league_rules: shapes.LeagueRules):
+    """The made-up season of ``test_sim_points`` with positions varied, in which a quarter of
+    the players miss seven games in a row, every player's schedule given (so a gap is an
+    absence), as the replay's league under ``league_rules``: two teams, six weeks. Returns the
+    setup, the lines and the players who miss games."""
     lines, players, projection = made_up_season()
     players = {k: replace(m, positions=POSITIONS[k % len(POSITIONS)]) for k, m in players.items()}
     out = {k for k in lines if k % 4 == 1}
     for k in out:
         lines[k] = {d: x for d, x in lines[k].items() if not 10 <= (d - PERIOD_ONE).days < 24}
     scheduled = {k: [PERIOD_ONE + timedelta(2 * i) for i in range(80)] for k in lines}
-    league_rules = shapes.LeagueRules(held=("IL",))
     setup = rn.replay_setup(
         2024,
         lines,
@@ -203,7 +203,20 @@ def test_a_surrogate_seat_holds_a_player_in_il_and_takes_him_back():
         weeks=6,
         playoff_weeks=1,
         playoff_teams=2,
+        scoring=league_rules.scoring,
+        points=league_rules.table,
     )
+    return setup, lines, out
+
+
+def test_a_surrogate_seat_holds_a_player_in_il_and_takes_him_back():
+    """The replay's league under ``LeagueRules(held=("IL",))`` on a made-up season (two teams,
+    six weeks) in which a quarter of the players miss seven games in a row: the surrogate seat
+    hears its player out, holds him in IL with an add into the spot that frees, and takes him
+    back when he returns, the weakest player sent; the audit finds nothing. HELD_PATH is the
+    first of seeds 1 to 3 and paths 0 and 1, tried in that order, on which the seat holds a
+    player (two of the six do not: its players are out on days it does not decide)."""
+    setup, lines, out = absent_season(shapes.LeagueRules(held=("IL",)))
     assert all(slot not in mv.HELD for r in setup.rosters.values() for _, slot in r)
     u = arm("U", "surrogate", opponents="static")
     held: dict[int, list[date]] = {}
@@ -224,6 +237,24 @@ def test_a_surrogate_seat_holds_a_player_in_il_and_takes_him_back():
     counts = result.counts[1]
     assert counts["held_stints"] == 1 and counts["held_days"] == len(days)
     assert counts["forced_drops"] == 1 and counts["held_refused"] == 0
+
+
+def test_a_surrogate_seat_in_a_points_league_adds_and_holds():
+    """The same season as a points league on ESPN's default table: with no held slot the
+    surrogate seat lands an add, and with an IL slot it holds a player too; the audit finds
+    nothing. The evaluator reads each opponent's projected fantasy points and each side's score
+    so far. When it read the opponents' weeks with no table (``policy.problem_of``, PR 2b to PR
+    D4c), every week looked won outright and no move gained: on each of seeds 1 to 3 and paths 0
+    and 1 the seat landed nothing and held nobody. POINTS_PATH is the first of those six, in that
+    order, on which it now lands an add (two of the six do)."""
+    u = arm("U", "surrogate", opponents="static")
+    for held, counts in (((), ("landed",)), (("IL",), ("landed", "held_stints"))):
+        setup, lines, _ = absent_season(shapes.LeagueRules("points", shapes.POINTS_DEFAULT, held))
+        assert setup.scoring == "points"
+        w = rn.replay_world(setup, lines, 1, *POINTS_PATH)
+        (result,) = rn.simulate(setup, w, [{**rn.opponents_of(setup, u, 1), 1: u.seat()}])
+        assert result.breaches == ()
+        assert all(result.counts[1][c] >= 1 for c in counts), (held, result.counts[1])
 
 
 def test_the_reads_table_and_the_refusal_follow_the_run_s_scoring(wire: Path):
