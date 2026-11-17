@@ -302,17 +302,25 @@ POINTS_DEFAULT: tuple[tuple[str, float], ...] = (
 )
 
 
-#: How a league's dropped players are added back (#172, PR Fa): ``none``, every add a free agent
-#: who lands the next morning, as before the waivers; ``priority``, a dropped player waits his
-#: waiver days and a claim on him goes by rolling waiver priority. A FAAB league's budget and
-#: sealed bids are PR Fb's, refused by name until then.
-WAIVERS = ("none", "priority")
-#: The waiver kind PR Fb brings, refused by name here.
+#: How a league's dropped players are added back (#172, PR Fa, PR Fb): ``none``, every add a free
+#: agent who lands the next morning, as before the waivers; ``priority``, a dropped player waits his
+#: waiver days and a claim on him goes by rolling waiver priority; ``faab``, he waits as with
+#: priority and a claim on him carries a sealed bid from its team's budget: the highest bid takes
+#: him, a tie to the better priority.
+WAIVERS = ("none", "priority", "faab")
+#: The waiver kind with a budget and sealed bids (PR Fb).
 FAAB = "faab"
 #: The whole days a dropped player waits by default, and the fewest and most a run may name
 #: (the all-knobs plan, 3d: ``waiver_days``, default 2).
 WAIVER_DAYS = 2
 WAIVER_DAYS_RANGE = (1, 7)
+#: A FAAB league's budget (PR Fb): the whole dollars each team starts the season with, by default
+#: (a working default of the brief) and the fewest and most a run may name.
+BUDGET = 100
+BUDGET_RANGE = (1, 1000)
+#: What a market rival's bid is multiplied by (PR Fb): an assumption a sweep names, not a fit;
+#: 1 by default, any number above 0.
+RIVAL_SCALE = 1.0
 
 
 def _number(x: float) -> str:
@@ -328,29 +336,29 @@ _WORDS = {1: "one", 2: "two"}
 
 @dataclass(frozen=True)
 class LeagueRules:
-    """How a run's league scores, what it holds and how it waives (#172, PR D4c, PR Fa):
+    """How a run's league scores, what it holds and how it waives (#172, PR D4c, PR Fa, PR Fb):
     ``scoring`` (one of :data:`SCORINGS`), a points league's ``points`` table (stat and points
     per unit, in the order of the engine's ``STATS``; None in a categories league), the ``held``
     slots, in the roster's order after the bench (``IL`` up to twice, then ``IL+`` up to once),
-    and the ``waivers`` (one of :data:`WAIVERS`) with a dropped player's ``waiver_days`` (a
-    whole number from 1 to 7, named only with waivers). One set for every path of a run;
-    :data:`PLAIN` is today's league. ValueError, in words, on anything else."""
+    the ``waivers`` (one of :data:`WAIVERS`) with a dropped player's ``waiver_days`` (a whole
+    number from 1 to 7, named only with waivers), and in a FAAB league the ``budget`` each team
+    starts with (whole dollars, 1 to 1000) and the ``rival_scale`` a market rival's bid is
+    multiplied by (above 0), both named only with ``faab``. One set for every path of a run, never
+    a grid axis; :data:`PLAIN` is today's league. ValueError, in words, on anything else."""
 
     scoring: str = "categories"
     points: tuple[tuple[str, float], ...] | None = None
     held: tuple[str, ...] = ()
     waivers: str = "none"
     waiver_days: int = WAIVER_DAYS
+    budget: int = BUDGET
+    rival_scale: float = RIVAL_SCALE
 
     def __post_init__(self) -> None:
         self._check_scoring()
         self._check_waivers()
 
     def _check_waivers(self) -> None:
-        if self.waivers == FAAB:
-            raise ValueError(
-                "waivers faab: a budget and sealed bids are PR Fb's; this PR plays none or priority"
-            )
         if self.waivers not in WAIVERS:
             raise ValueError(f"waivers {self.waivers!r} is not one of {', '.join(WAIVERS)}")
         days = self.waiver_days
@@ -363,6 +371,23 @@ class LeagueRules:
             raise ValueError(
                 f"waiver days {days} with waivers none: a wait is a waiver league's, and a league "
                 "without waivers has none"
+            )
+        self._check_budget()
+
+    def _check_budget(self) -> None:
+        budget, scale = self.budget, self.rival_scale
+        if not _whole(budget):
+            raise ValueError(f"budget {budget!r}: whole dollars")
+        lo, hi = BUDGET_RANGE
+        if not lo <= budget <= hi:
+            raise ValueError(f"budget {budget}: a team starts with {lo} to {hi} dollars")
+        number = isinstance(scale, int | float) and not isinstance(scale, bool)
+        if not number or not math.isfinite(scale) or scale <= 0:
+            raise ValueError(f"rival scale {scale!r}: a number above 0")
+        if self.waivers != FAAB and (budget != BUDGET or scale != RIVAL_SCALE):
+            raise ValueError(
+                f"budget {budget} and rival scale {_number(scale)} with waivers {self.waivers}: "
+                "a budget and the rivals' bids are a FAAB league's"
             )
 
     def _check_scoring(self) -> None:
@@ -413,17 +438,28 @@ class LeagueRules:
         if not self.waiting:
             return f"{scoring}, {held}"
         days = f"{self.waiver_days} day{'s' if self.waiver_days > 1 else ''}"
-        return f"{scoring}, {held}, waivers by priority after {days}"
+        if not self.bidding:
+            return f"{scoring}, {held}, waivers by priority after {days}"
+        return (
+            f"{scoring}, {held}, waivers by FAAB after {days}, ${self.budget} a team, the "
+            f"rivals' bids x{_number(self.rival_scale)}"
+        )
 
     @property
     def waiting(self) -> bool:
         """Whether a dropped player waits: the league has waivers."""
         return self.waivers != "none"
 
+    @property
+    def bidding(self) -> bool:
+        """Whether a claim carries a bid from its team's budget: a FAAB league (PR Fb)."""
+        return self.waivers == FAAB
+
     def payload(self) -> dict[str, Any]:
-        """The record's ``league.rules``: the scoring, the table and the held slots, and in a
-        waiver league its waivers and waiver days (a league without waivers records the three
-        keys it did before PR Fa)."""
+        """The record's ``league.rules``: the scoring, the table and the held slots, in a waiver
+        league its waivers and waiver days, and in a FAAB league its budget and the rivals' bid
+        scale (a league without waivers records the three keys it did before PR Fa, and one by
+        priority the five it did before PR Fb)."""
         out: dict[str, Any] = {
             "scoring": self.scoring,
             "points": self.table,
@@ -431,6 +467,8 @@ class LeagueRules:
         }
         if self.waiting:
             out |= {"waivers": self.waivers, "waiver_days": self.waiver_days}
+        if self.bidding:
+            out |= {"budget": self.budget, "rival_scale": float(self.rival_scale)}
         return out
 
     def slots(self, roster: tuple[str, ...]) -> tuple[str, ...]:
@@ -503,15 +541,10 @@ def parse_points(text: str) -> tuple[tuple[str, float], ...]:
 
 
 def parse_waivers(waivers: str, days: str | None = None) -> tuple[str, int]:
-    """The waivers ``replay --waivers`` and ``--waiver-days`` name (#172, PR Fa): ``none`` or
-    ``priority`` (``faab`` refused by name: PR Fb), and the whole days a dropped player waits,
-    1 to 7, named only with waivers (the default 2 when not named). ValueError, in words, on
-    anything else."""
+    """The waivers ``replay --waivers`` and ``--waiver-days`` name (#172, PR Fa, PR Fb):
+    ``none``, ``priority`` or ``faab``, and the whole days a dropped player waits, 1 to 7, named
+    only with waivers (the default 2 when not named). ValueError, in words, on anything else."""
     kind = waivers.strip().lower()
-    if kind == FAAB:
-        raise ValueError(
-            "--waivers faab: a budget and sealed bids are PR Fb's; this PR plays none or priority"
-        )
     if kind not in WAIVERS:
         raise ValueError(f"--waivers {waivers}: one of {', '.join(WAIVERS)}")
     if days is None:
@@ -519,7 +552,7 @@ def parse_waivers(waivers: str, days: str | None = None) -> tuple[str, int]:
     if kind == "none":
         raise ValueError(
             f"--waiver-days {days}: a dropped player's wait is a waiver league's; it is read only "
-            "with --waivers priority"
+            "with --waivers priority or faab"
         )
     try:
         n = int(days)
@@ -531,7 +564,40 @@ def parse_waivers(waivers: str, days: str | None = None) -> tuple[str, int]:
     return kind, n
 
 
+def parse_budget(waivers: str, budget: str | None, scale: str | None) -> tuple[int, float]:
+    """The budget and the rivals' bid scale ``replay --budget`` and ``--rival-scale`` name
+    (#172, PR Fb), each read only with ``--waivers faab`` (``waivers`` as :func:`parse_waivers`
+    gives it): whole dollars from 1 to 1000 (default 100), and a number above 0 (default 1).
+    ValueError, in words, on anything else."""
+    for flag, value in (("--budget", budget), ("--rival-scale", scale)):
+        if value is not None and waivers != FAAB:
+            raise ValueError(
+                f"{flag} {value}: a budget and the rivals' bids are a FAAB league's; it is read "
+                "only with --waivers faab"
+            )
+    dollars = BUDGET
+    if budget is not None:
+        try:
+            dollars = int(budget)
+        except ValueError:
+            raise ValueError(f"--budget {budget}: whole dollars") from None
+        lo, hi = BUDGET_RANGE
+        if not lo <= dollars <= hi:
+            raise ValueError(f"--budget {budget}: a team starts with {lo} to {hi} dollars")
+    times = RIVAL_SCALE
+    if scale is not None:
+        try:
+            times = float(scale)
+        except ValueError:
+            raise ValueError(f"--rival-scale {scale}: a number above 0") from None
+        if not math.isfinite(times) or times <= 0:
+            raise ValueError(f"--rival-scale {scale}: a number above 0")
+    return dollars, times
+
+
 __all__ = [
+    "BUDGET",
+    "BUDGET_RANGE",
     "FAAB",
     "FIXED",
     "FIXED_GRID",
@@ -540,6 +606,7 @@ __all__ = [
     "LEAGUE_KEYS",
     "PLAIN",
     "POINTS_DEFAULT",
+    "RIVAL_SCALE",
     "SCORINGS",
     "SLOTS",
     "STRIDE",
@@ -554,6 +621,7 @@ __all__ = [
     "Visit",
     "axis_values",
     "one",
+    "parse_budget",
     "parse_held",
     "parse_league",
     "parse_points",

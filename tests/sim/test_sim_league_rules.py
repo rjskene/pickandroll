@@ -179,13 +179,12 @@ def test_the_waivers_flags_parse_to_the_kind_and_the_wait():
 @pytest.mark.parametrize(
     ("waivers", "days", "says"),
     [
-        ("faab", None, "--waivers faab: a budget and sealed bids are PR Fb's"),
         ("bids", None, "--waivers bids: one of none, priority"),
         ("priority", "0", "--waiver-days 0: a dropped player waits 1 to 7 days"),
         ("priority", "8", "--waiver-days 8: a dropped player waits 1 to 7 days"),
         ("priority", "two", "--waiver-days two: a whole number of days"),
         ("none", "2", "--waiver-days 2: a dropped player's wait is a waiver league's"),
-        ("none", "3", "it is read only with --waivers priority"),
+        ("none", "3", "it is read only with --waivers priority or faab"),
     ],
 )
 def test_a_waiver_flag_out_of_the_plan_is_refused_in_words(waivers, days, says):
@@ -197,7 +196,6 @@ def test_a_waiver_flag_out_of_the_plan_is_refused_in_words(waivers, days, says):
 @pytest.mark.parametrize(
     ("kwargs", "says"),
     [
-        ({"waivers": "faab"}, "waivers faab: a budget and sealed bids are PR Fb's"),
         ({"waivers": "rolling"}, "waivers 'rolling' is not one of none, priority"),
         ({"waivers": "priority", "waiver_days": 0}, "a dropped player waits 1 to 7 days"),
         ({"waivers": "priority", "waiver_days": 8}, "a dropped player waits 1 to 7 days"),
@@ -207,6 +205,89 @@ def test_a_waiver_flag_out_of_the_plan_is_refused_in_words(waivers, days, says):
     ],
 )
 def test_waiver_rules_out_of_the_plan_are_refused_in_words(kwargs, says):
+    with pytest.raises(ValueError) as e:
+        shapes.LeagueRules(**kwargs)
+    assert says in str(e.value)
+
+
+# --------------------------------------------------------------------------- PR Fb: the budget
+def test_a_faab_league_says_its_budget_and_the_rivals_scale_in_the_label_and_the_payload():
+    faab = shapes.LeagueRules(waivers="faab")
+    assert faab.waiting and faab.bidding and not shapes.LeagueRules(waivers="priority").bidding
+    assert (faab.budget, faab.rival_scale) == (shapes.BUDGET, shapes.RIVAL_SCALE) == (100, 1.0)
+    assert faab.label() == (
+        "the nine categories, no held slot, waivers by FAAB after 2 days, $100 a team, the "
+        "rivals' bids x1"
+    )
+    assert faab.payload() == {
+        "scoring": "categories",
+        "points": None,
+        "held": [],
+        "waivers": "faab",
+        "waiver_days": 2,
+        "budget": 100,
+        "rival_scale": 1.0,
+    }
+    named = shapes.LeagueRules("points", shapes.POINTS_DEFAULT, ("IL",), "faab", 3, 250, 0.5)
+    assert named.label() == (
+        "points on ESPN's default table, one IL slot, waivers by FAAB after 3 days, $250 a team, "
+        "the rivals' bids x0.5"
+    )
+    assert (named.payload()["budget"], named.payload()["rival_scale"]) == (250, 0.5)
+    # A priority league records the five keys it did before the budget.
+    assert "budget" not in shapes.LeagueRules(waivers="priority").payload()
+    # Hashable and told apart by the budget and the scale.
+    assert len({faab, named, shapes.LeagueRules(waivers="faab", budget=99)}) == 3
+    assert shapes.LeagueRules(waivers="faab", rival_scale=2) != faab
+
+
+def test_the_budget_flags_parse_to_whole_dollars_and_a_scale():
+    assert shapes.parse_waivers("faab") == ("faab", 2)
+    assert shapes.parse_waivers("FAAB", "4") == ("faab", 4)
+    assert shapes.parse_budget("faab", None, None) == (100, 1.0)
+    assert shapes.parse_budget("faab", "1", "0.5") == (1, 0.5)
+    assert shapes.parse_budget("faab", "1000", "2") == (1000, 2.0)
+    assert shapes.parse_budget("none", None, None) == (100, 1.0)
+    assert shapes.parse_budget("priority", None, None) == (100, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("waivers", "budget", "scale", "says"),
+    [
+        ("priority", "100", None, "--budget 100: a budget and the rivals' bids are"),
+        ("none", None, "1", "--rival-scale 1: a budget and the rivals' bids are a FAAB league's"),
+        ("priority", None, "2", "it is read only with --waivers faab"),
+        ("faab", "0", None, "--budget 0: a team starts with 1 to 1000 dollars"),
+        ("faab", "1001", None, "--budget 1001: a team starts with 1 to 1000 dollars"),
+        ("faab", "99.5", None, "--budget 99.5: whole dollars"),
+        ("faab", None, "0", "--rival-scale 0: a number above 0"),
+        ("faab", None, "-1", "--rival-scale -1: a number above 0"),
+        ("faab", None, "inf", "--rival-scale inf: a number above 0"),
+        ("faab", None, "nan", "--rival-scale nan: a number above 0"),
+        ("faab", None, "lots", "--rival-scale lots: a number above 0"),
+    ],
+)
+def test_a_budget_flag_out_of_the_plan_is_refused_in_words(waivers, budget, scale, says):
+    with pytest.raises(ValueError) as e:
+        shapes.parse_budget(waivers, budget, scale)
+    assert says in str(e.value)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "says"),
+    [
+        ({"waivers": "faab", "budget": 0}, "budget 0: a team starts with 1 to 1000 dollars"),
+        ({"waivers": "faab", "budget": 1001}, "a team starts with 1 to 1000 dollars"),
+        ({"waivers": "faab", "budget": 100.0}, "budget 100.0: whole dollars"),
+        ({"waivers": "faab", "budget": True}, "budget True: whole dollars"),
+        ({"waivers": "faab", "rival_scale": 0.0}, "rival scale 0.0: a number above 0"),
+        ({"waivers": "faab", "rival_scale": float("inf")}, "a number above 0"),
+        ({"waivers": "faab", "rival_scale": True}, "rival scale True: a number above 0"),
+        ({"waivers": "priority", "budget": 50}, "the rivals' bids are a FAAB league's"),
+        ({"rival_scale": 2.0}, "budget 100 and rival scale 2 with waivers none"),
+    ],
+)
+def test_budget_rules_out_of_the_plan_are_refused_in_words(kwargs, says):
     with pytest.raises(ValueError) as e:
         shapes.LeagueRules(**kwargs)
     assert says in str(e.value)

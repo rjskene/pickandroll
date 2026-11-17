@@ -6,7 +6,7 @@ the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
 tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
 (PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
-priority. The world
+priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by. The world
 (``run.World``) is apart: lines, availability and the beliefs belong to the path, never to an
 arm, so two arms of a pair see one world. Pure: frozen dataclasses,
 advanced by ``replace``.
@@ -50,6 +50,12 @@ WON, LOST, FAILED = "won", "lost", "failed"
 #: better priority, failed (won and not taken), and of those decided, how many had a team ahead
 #: of theirs in the order when their player was decided and how many of those were lost.
 CLAIM_COUNTS = ("placed", WON, LOST, FAILED, "behind", "behind_lost")
+#: A FAAB league's claim counts besides (#172, PR Fb), the world's knowledge of every bid, which
+#: no decision reads: claims won at $0, lost to a higher bid, lost on a tie, won with no other
+#: claim on the player that morning; the dollars a won claim paid above the next bid that could
+#: have been taken (its whole bid when there was none), and the dollars a lost claim fell short
+#: of the winning bid by.
+BID_COUNTS = ("won_free", "lost_bid", "lost_tie", "alone", "over", "short")
 
 
 @dataclass(frozen=True)
@@ -68,7 +74,8 @@ class Claim:
     add's clear date (the morning it is decided), the week its add is charged to (the week of the
     day before it lands, so the plan's and the world's weeks agree; None outside the calendar),
     the held-slot moves it needs, made only if it is won, and whether its drop is a held player
-    (a churn, #221), who leaves on his own the morning after the claim is placed."""
+    (a churn, #221), who leaves on his own the morning after the claim is placed. In a FAAB league
+    (PR Fb) its sealed ``bid``, whole dollars set when it is placed (0 by priority)."""
 
     move: Move
     placed: date
@@ -76,6 +83,7 @@ class Claim:
     week: int | None
     held: tuple[tuple[int, str], ...] = ()
     churn: bool = False
+    bid: int = 0
 
     @property
     def needs_spot(self) -> bool:
@@ -87,13 +95,15 @@ class Claim:
 class Resolved:
     """One claim decided on a clear morning (#172, PR Fa): the team, the add, the drop, the
     outcome (:data:`WON`, :data:`LOST`, :data:`FAILED`) and whether a team stood ahead of the
-    claim's team in the order when its player was decided."""
+    claim's team in the order when its player was decided. In a FAAB league (PR Fb) its bid
+    (None by priority)."""
 
     team: int
     add: int
     drop: int | None
     outcome: str
     behind: bool
+    bid: int | None = None
 
 
 @dataclass(frozen=True)
@@ -137,11 +147,20 @@ class Setup:
     #: claim on him goes by rolling waiver priority.
     waivers: str = "none"
     waiver_days: int = 2
+    #: A FAAB league's (PR Fb, ``waivers`` ``faab``): the whole dollars each team starts with,
+    #: and what a market rival's bid is multiplied by.
+    budget: int = 100
+    rival_scale: float = 1.0
 
     @property
     def waiting(self) -> bool:
         """Whether a dropped player waits: the league has waivers."""
         return self.waivers != "none"
+
+    @property
+    def bidding(self) -> bool:
+        """Whether a claim carries a bid from its team's budget: a FAAB league (PR Fb)."""
+        return self.waivers == "faab"
 
     @property
     def season_end(self) -> date:
@@ -195,13 +214,20 @@ class SimState:
     #: player; the claims placed and not yet decided, by team in the order placed; the held
     #: players churn claims drop, leaving on their own tomorrow morning, by team; the waiver
     #: priority, best first; the claims decided this morning, in the order decided; and each
-    #: team's claim counts (:data:`CLAIM_COUNTS`).
+    #: team's claim counts (:data:`CLAIM_COUNTS`, and :data:`BID_COUNTS` in a FAAB league).
     waivers: Mapping[int, Waiting] = field(default_factory=dict)
     claims: Mapping[int, tuple[Claim, ...]] = field(default_factory=dict)
     pending_drops: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     priority: tuple[int, ...] = ()
     resolved: tuple[Resolved, ...] = ()
     claim_counts: Mapping[int, Mapping[str, int]] = field(default_factory=dict)
+    #: A FAAB league's (PR Fb; all empty otherwise): each team's dollars left; the gains of the
+    #: moves each seat that bids by the live rule recommended over the fortnight, by team, each
+    #: with its day (what its typical gain is over, ``autopilot.typical_gain``); and the market
+    #: rivals' moves' gains on their view over the fortnight, pooled, each with its day.
+    dollars: Mapping[int, int] = field(default_factory=dict)
+    recent: Mapping[int, tuple[tuple[date, float], ...]] = field(default_factory=dict)
+    market_recent: tuple[tuple[date, float], ...] = ()
 
     @property
     def executed(self) -> int:
@@ -261,7 +287,8 @@ def initial(setup: Setup) -> SimState:
     """Day one's state from the setup. In a waiver league the first priority order is the
     reverse of the draft's (#172, PR Fa): the seat that picks last in the first round claims
     first (``snake_draft`` and ``board_draft`` take the seats in team order). Nobody is on
-    waivers: the draft's leftovers are free agents."""
+    waivers: the draft's leftovers are free agents. In a FAAB league every team starts with the
+    league's budget (PR Fb)."""
     taken = {k for r in setup.rosters.values() for k, _ in r}
     return SimState(
         setup.start,
@@ -269,6 +296,7 @@ def initial(setup: Setup) -> SimState:
         frozenset(k for k in setup.pool if k not in taken),
         dict(setup.adds_used),
         priority=tuple(reversed(setup.teams)) if setup.waiting else (),
+        dollars=dict.fromkeys(setup.teams, setup.budget) if setup.bidding else {},
     )
 
 

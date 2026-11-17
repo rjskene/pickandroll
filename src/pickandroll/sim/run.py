@@ -204,7 +204,11 @@ def same_seat(
                 rows.append(table[name])
         if policy.READ in rows:
             return None
-        out.append(f"{name} ({rows[0]}; read by {policy.WHEN_READ[name]})")
+        also = policy.WHEN_READ_FAAB.get(name)
+        out.append(
+            f"{name} ({rows[0]}; read by {policy.WHEN_READ[name]})"
+            + (f", and {also}" if also else "")
+        )
     return out
 
 
@@ -712,7 +716,9 @@ def simulate(
         waiver = {"waiver": (day, setup.waiver_days)} if waiting else {}
         if waiting:
             states = [
-                policy.clear_waivers(s, day, spots, slot_counts, status, setup.waiver_days)
+                policy.clear_waivers(
+                    s, day, spots, slot_counts, status, setup.waiver_days, setup.bidding
+                )
                 for s in states
             ]
         states = [
@@ -1259,6 +1265,8 @@ def replay_setup(
     points: Mapping[str, float] | None = None,
     waivers: str = "none",
     waiver_days: int = shapes.WAIVER_DAYS,
+    budget: int = shapes.BUDGET,
+    rival_scale: float = shapes.RIVAL_SCALE,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1289,7 +1297,8 @@ def replay_setup(
     slots arrive in ``slots`` after the bench: the draft takes the active spots only, so a held
     slot starts the season empty. The waivers (PR Fa, ``shapes.WAIVERS``): ``waivers`` and a
     dropped player's ``waiver_days``; the first priority order is the reverse of the draft's
-    (``state.initial``)."""
+    (``state.initial``). A FAAB league's (PR Fb): every team's ``budget`` and the
+    ``rival_scale`` a market rival's bid is multiplied by."""
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     schedule: dict[date, set[str]] = {}
@@ -1364,6 +1373,8 @@ def replay_setup(
         points=table,
         waivers=waivers,
         waiver_days=waiver_days,
+        budget=budget,
+        rival_scale=rival_scale,
     )
 
 

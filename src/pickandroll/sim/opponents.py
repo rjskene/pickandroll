@@ -4,9 +4,10 @@ The ladder from the design note. **Static** makes no move. **Market** is the heu
 with probability ``rate`` (adds per team-day: the arm's ``opponents.rate``, else the setup's,
 which a replay leaves at zero) it adds
 the pool's best by the market's view and drops its weakest by the same view, within the caps (in
-a waiver league the best it may add and the weakest it may drop, :class:`Market`).
+a waiver league the best it may add and the weakest it may drop, :class:`Market`; in a FAAB
+league it bids by an assumed form, ``policy.rival_bid``).
 **Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
-whole: at the defaults nothing changes). **Seat** is the equal room's: a named arm in another
+whole: at the defaults nothing changes; in a FAAB league it bids by the live rule on them). **Seat** is the equal room's: a named arm in another
 seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
 draws (``run.World`` passes the day's generator), so two arms of a comparison see the same
 opponents while their states agree.
@@ -63,7 +64,12 @@ class Market:
     claims and not its own drop still waiting, and its drop the weakest it may drop, not one an
     open claim of its takes: the executor would refuse either (``ALREADY_CLAIMED``, ``READD``,
     ``DROP_CLAIMED``), and the rival would idle while its claim waits. Without waivers it has no
-    claim and nobody waits, so its pick is the pool's best and its weakest, as before."""
+    claim and nobody waits, so its pick is the pool's best and its weakest, as before.
+
+    In a FAAB league (PR Fb) its decision carries what its bid is made on
+    (``policy.rival_bid``, an assumed form, not a fit): its move's gain on its view, and, when the
+    pick is a claim, a noise drawn after the pick from the path's draw for its team and day (a
+    fresh draw of its own, so nothing else it draws moves)."""
 
     rate: float
     kind: str = "market"
@@ -96,7 +102,11 @@ class Market:
         drop = min(roster, key=lambda k: (view[k], k))
         if view[add] <= view[drop]:
             return policy.NONE
-        return policy.Decision((mv.Move(add, drop),), (), (), 0, "market")
+        basis = None
+        if setup.bidding:
+            noise = (policy.market_noise(g),) if add in state.waivers else ()
+            basis = policy.Basis(policy.MARKET, (float(view[add] - view[drop]),), noise=noise)
+        return policy.Decision((mv.Move(add, drop),), (), (), 0, "market", basis)
 
 
 @dataclass(frozen=True)
