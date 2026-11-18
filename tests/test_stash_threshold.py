@@ -41,6 +41,11 @@ def test_with_no_threshold_every_payload_is_mains_snapshot(name):
         # The one key added since (#397): these leagues are categories leagues, not one-win, and
         # every other byte of the answer is still main's.
         assert out.pop("measure") == mv.CATEGORIES
+        # The pool's counts and the guard's list (#424), new keys: whatever the list added, the
+        # rest of the answer, every set included, is still main's.
+        search = out["search"]
+        assert search.pop("guard_pool") == sm.GUARD_POOL
+        search.pop("pools"), search.pop("guarded")
         assert out == snap[name]
 
 

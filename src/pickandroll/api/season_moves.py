@@ -72,6 +72,10 @@ WEEKS_AHEAD = 4
 #: The candidates the recommended set and its re-solves search: those whose best single move
 #: gains most on the horizon.
 POOL = 30
+#: The adds the season guard admits that join that pool (#424): the best this many by their best
+#: single move the guard admits, appended to the ``POOL`` without repeating one
+#: (:func:`pool_for`).
+GUARD_POOL = 30
 #: A move must add at least this many expected categories to be recommended.
 MIN_GAIN = 0.01
 #: The alternative adds the drawer lists for a drop.
@@ -603,6 +607,76 @@ def decided_by(pm: mv.PricedMove, key: str, season: mv.Season | None) -> str:
     return dl.SEASON if season is not None and tied else key
 
 
+@dataclass(frozen=True)
+class Pool:
+    """A horizon's search pool (#424): ``players`` in order, the first ``size`` the best by
+    single-move gain (the pool before #424), then ``admitted`` more from the guard's list
+    (:func:`admitted_swaps`)."""
+
+    players: tuple[int, ...]
+    size: int
+    admitted: int
+
+    def counts(self) -> dict[str, int]:
+        return {"size": self.size, "admitted": self.admitted}
+
+
+def ranked_of(swaps: Mapping[int, Sequence[mv.SwapGain]]) -> list[int]:
+    """The candidates whose best single move gains more than ``MIN_GAIN``, best first."""
+    return sorted(
+        (c for c, g in swaps.items() if g and g[0].gain > MIN_GAIN),
+        key=lambda c: -swaps[c][0].gain,
+    )
+
+
+def admitted_swaps(
+    swaps: Mapping[int, Sequence[mv.SwapGain]],
+    allowed: mv.Allowed | None,
+    size: int | None = None,
+) -> list[tuple[int, mv.SwapGain]]:
+    """The guard's list (#424): the best ``size`` (``GUARD_POOL``) adds by their best single
+    move that ``allowed`` admits and that gains more than ``MIN_GAIN``, each with that move's
+    drop and gain, best first; empty without a guard. ``swaps`` is a horizon's
+    ``moves.single_swaps``: every drop each add can come with, best first."""
+    if allowed is None:
+        return []
+    size = GUARD_POOL if size is None else size
+    pairs = sorted(
+        ((c, g) for c, gains in swaps.items() for g in gains if g.gain > MIN_GAIN),
+        key=lambda cg: (-cg[1].gain, cg[0]),
+    )
+    out: list[tuple[int, mv.SwapGain]] = []
+    seen: set[int] = set()
+    for c, g in pairs:
+        if len(out) >= size:
+            break
+        if c in seen or not allowed((mv.Move(c, g.drop),)):
+            continue
+        seen.add(c)
+        out.append((c, g))
+    return out
+
+
+def joined(head: Sequence[int], extra: Iterable[int]) -> Pool:
+    """``head`` and then each of ``extra`` not already in it."""
+    seen = set(head)
+    more = [c for c in extra if not (c in seen or seen.add(c))]
+    return Pool((*head, *more), len(head), len(more))
+
+
+def pool_for(
+    swaps: Mapping[int, Sequence[mv.SwapGain]], allowed: mv.Allowed | None
+) -> tuple[Pool, list[tuple[int, mv.SwapGain]]]:
+    """A horizon's search pool (#424) and the guard's list it took from: the best ``POOL`` by
+    single-move gain (:func:`ranked_of`, in that order), then the guard's list
+    (:func:`admitted_swaps`) without repeating an add. The best ``POOL`` stay, though the guard
+    may refuse each one's best move: one may come with another drop, or join a set the guard
+    admits as a whole. An add below them whose move the guard admits would otherwise never be
+    searched. Without a guard, the ``POOL`` alone."""
+    guarded = admitted_swaps(swaps, allowed)
+    return joined(ranked_of(swaps)[:POOL], (c for c, _ in guarded)), guarded
+
+
 class Watched:
     """A guard that counts the sets it refused: a solve it never refused is the unguarded
     one's."""
@@ -1066,14 +1140,16 @@ def _payload(built: Built) -> dict[str, Any]:
     ros = guard_ros(built)
     guard = None if ros is None else mv.season_guard(ros)
     season = season_of(ros)
+    pools: dict[str, Pool] = {}
+    guarded: dict[str, list[tuple[int, mv.SwapGain]]] = {}
     for key in HORIZONS:
-        ranked = sorted(
-            (c for c, g in swaps[key].items() if g and g[0].gain > MIN_GAIN),
-            key=lambda c: -swaps[key][c][0].gain,
-        )
+        # The pool takes the adds the guard admits beside the best by single move (#424): the
+        # guarded solve and the unguarded one behind held_back search the same adds.
+        pools[key], guarded[key] = pool_for(swaps[key], guard)
+        pool = pools[key]
         watched = None if guard is None else Watched(guard)
         rec = mv.recommend(
-            ev, key, ranked[:POOL], min_gain=MIN_GAIN, allowed=watched, season=season
+            ev, key, list(pool.players), min_gain=MIN_GAIN, allowed=watched, season=season
         )
         sets[key] = [pm.move for pm in rec.moves]
         # The set the engine recommends without the guard, re-solves and all (a re-solve can
@@ -1081,7 +1157,7 @@ def _payload(built: Built) -> dict[str, Any]:
         # else the guarded solve was the unguarded one.
         free = None
         if watched is not None and watched.refused:
-            unguarded = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN, season=season)
+            unguarded = mv.recommend(ev, key, list(pool.players), min_gain=MIN_GAIN, season=season)
             free = [pm.move for pm in unguarded.moves]
         held = held_by_add(p, sets[key])
         rows = [
@@ -1137,6 +1213,15 @@ def _payload(built: Built) -> dict[str, Any]:
         "unprojected": built.unprojected,
         "search": {
             "pool": POOL,
+            # Each horizon's pool (#424): ``size`` adds by single-move gain, ``admitted`` more
+            # from the guard's list; ``guarded`` that list, best first (the strategy's pool
+            # takes it too).
+            "guard_pool": GUARD_POOL,
+            "pools": {key: pools[key].counts() for key in HORIZONS},
+            "guarded": {
+                key: [{"player": c, "drop": g.drop, "gain": _r(g.gain)} for c, g in guarded[key]]
+                for key in HORIZONS
+            },
             "min_gain": MIN_GAIN,
             "seconds": round(time.perf_counter() - began, 3),
         },

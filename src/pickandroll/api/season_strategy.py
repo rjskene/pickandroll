@@ -3,7 +3,8 @@
 
 A run takes the league's move problem (``season_moves.build``) and the Moves panel's
 single-move gains (today's moves, solved first when they are not), ranks the pool from them
-(``strategy.pool_of``), and for each weight of the frontier:
+(``strategy.pool_of``), appends the adds the season guard admits from the same answer's list
+(#424, ``season_moves.pool_for``), and for each weight of the frontier:
 
 1. runs the exact search on the weighted value, at once: the panel's first answer;
 2. starts the program in the background process pool (``optim.pool``) from the search's set, one
@@ -88,6 +89,17 @@ def gains_of(moves: dict[str, Any]) -> dict[str, dict[int, float]]:
     return out
 
 
+def guarded_of(moves: dict[str, Any]) -> dict[str, dict[int, float]]:
+    """The Moves panel's guard's list on each horizon (#424): each add's best single-move gain
+    the season guard admits, for the adds in that list (none without a guard, or from an answer
+    made before #424)."""
+    guarded = (moves.get("search") or {}).get("guarded") or {}
+    return {
+        key: {int(row["player"]): row["gain"] for row in guarded.get(key) or ()}
+        for key in season_moves.HORIZONS
+    }
+
+
 def _r(x: float) -> float:
     return round(float(x), 3)
 
@@ -124,6 +136,9 @@ class Run:
         wl = built.weeks_left
         self.weights = [w for w in st.weights(wl) if w.key in settings.weights]
         self.pool: list[int] = []
+        #: How many of the pool are the candidates by single-move gain (``size``) and how many the
+        #: guard's list added (``admitted``, #424).
+        self.pool_counts: dict[str, int] = {"size": 0, "admitted": 0}
         self.base: dict[str, float] = {}
         #: Seconds from the start: the moves read, every search's set in (the first answer),
         #: and the end.
@@ -168,6 +183,7 @@ class Run:
                 "recommended": self.recommended,
                 "keep_rule": season_moves.keep_payload(b),
                 "pool": list(self.pool),
+                "pool_counts": dict(self.pool_counts),
                 "horizons": horizons,
                 "adds": b.adds,
                 "points": [self.points[w.key] for w in self.weights],
@@ -213,20 +229,26 @@ class Run:
         p = self.built.problem
         wl = self.built.weeks_left
         keep = frozenset(self.settings.keep)
-        gains = gains_of(self.prepare())
+        answer = self.prepare()
+        gains = gains_of(answer)
         self._mark("moves")
         self._step("searching")
         ev = mv.Evaluator(p)
         weighted = {w.key: st.Weighted(ev, w.lam, wl) for w in self.weights}
         any_w = st.Weighted(ev, 0.5, wl)
-        pool = st.pool_of(gains, self.settings.pool)
-        with self._lock:
-            self.pool = pool
-            self.base = {**ev.base, "season": any_w.season(ev.base.get("three", 0.0))}
-        curves = st.curves(ev)
         # The season guard (#164) on every weight: its search, its re-solves and the program's set.
         ros = season_moves.guard_ros(self.built)
         guard = None if ros is None else mv.season_guard(ros)
+        # The pool setting's candidates by single-move gain, then the adds the guard admits
+        # (#424), the Moves panel's rule: taken in turn from each horizon's list, as many in all.
+        listed = [] if guard is None else st.pool_of(guarded_of(answer), season_moves.GUARD_POOL)
+        joined = season_moves.joined(st.pool_of(gains, self.settings.pool), listed)
+        pool = list(joined.players)
+        with self._lock:
+            self.pool = pool
+            self.pool_counts = joined.counts()
+            self.base = {**ev.base, "season": any_w.season(ev.base.get("three", 0.0))}
+        curves = st.curves(ev)
         watched = {
             w.key: None if guard is None else season_moves.Watched(guard) for w in self.weights
         }
