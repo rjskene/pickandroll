@@ -145,6 +145,13 @@ def every_category(setup: sst.Setup) -> sst.Setup:
     return replace(setup, h2h=EACH_CATEGORY, spec=spec)
 
 
+def of_format(setup: sst.Setup, h2h: str) -> sst.Setup:
+    """A one-win ``setup`` (``make_setup``'s) in the format ``h2h``: itself, or
+    :func:`every_category`'s. A setup and its spec count one format (``state.Setup`` refuses
+    two), so a test names the format here, never on one half."""
+    return every_category(setup) if h2h == EACH_CATEGORY else setup
+
+
 # --------------------------------------------------------------------------- a recorded season
 #: A made-up recorded season's chance of a new absence after a played game.
 ABSENCE_HAZARD = 0.12

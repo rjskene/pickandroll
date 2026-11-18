@@ -223,7 +223,11 @@ None stays a value only where the engine's default is None (`blend`, `stash_thre
 - `pool` (30, a whole number, 1 or more): the candidates the exact tier's recommended set and
   week plan search, the weighted search's, and the surrogate's best by value times games;
 - `min_gain` (0.01, a number, 0 or more): the least gain a candidate or a set must make, on the key
-  the arm executes and with the season term when it is on, so it is the combined figure's;
+  the arm executes and with the season term when it is on, so it is the combined figure's. The
+  gain is in the league's measure: 0.01 is a point of the matchup's win odds in a one-win league
+  (of a matchup won on the points in a points league) and a hundredth of a category under
+  `--h2h each_category`, so a `min_gain` set in one format is not the other's, as with
+  `season_weight`, while its default is one number in every format, as the live build's is;
 - `weeks_ahead` (4, a whole number, 2 or more): the weeks a problem looks ahead, this one included;
   the "three weeks" horizon is the `weeks_ahead − 1` after it (fewer near the season's end), so a
   gain on it, and what `min_gain` asks of one, grows with `weeks_ahead`;

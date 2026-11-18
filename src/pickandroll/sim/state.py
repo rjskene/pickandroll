@@ -153,8 +153,19 @@ class Setup:
     rival_scale: float = 1.0
     #: A categories league's head-to-head format (the format PR, ``shapes.H2H``): ``one_win``, a
     #: week one result in the standings; ``each_category``, each category's. A points league
-    #: holds the default and its week is one result on the points.
+    #: holds the default and its week is one result on the points. A categories ``spec`` of
+    #: another format is refused: the seats and the standings count one.
     h2h: str = ONE_WIN
+
+    def __post_init__(self) -> None:
+        # The seat's half of the format and the standings' half are one rule of the run (the
+        # format PR's review): a categories spec of another format is refused by name. A points
+        # spec holds the default and names no format.
+        if self.spec is not None and self.spec.scoring != "points" and self.spec.h2h != self.h2h:
+            raise ValueError(
+                f"head-to-head format {self.h2h!r} with a spec of the format {self.spec.h2h!r}: "
+                "the seats and the standings count one format"
+            )
 
     @property
     def waiting(self) -> bool:
