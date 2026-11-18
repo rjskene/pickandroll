@@ -662,8 +662,10 @@ def test_the_season_scale_is_measured_once_and_the_nudges_are_shares_of_it(data:
     code, out = screen(data, levers=("season_weight",), name="scaled")
     assert code == 0 and measured == [0, 1], out
     assert "season scale: measured" not in out and record(data, "scaled")["scale"] == scale
+    assert (scale["paths"], scale["of"]) == (2, 2)
     assert (
-        f"season scale: {scale['ratio']:.4g}, as the screen measured it when it was started" in out
+        f"season scale: {scale['ratio']:.4g}, on 2 of 2 paths of the first cell, as the screen "
+        "measured it when it was started" in out
     )
 
 

@@ -3359,7 +3359,10 @@ def cmd_screen(args: argparse.Namespace) -> int:
             scale = measured
         else:
             kept = "none" if scale["ratio"] is None else f"{scale['ratio']:.4g}"
-            print(f"season scale: {kept}, as the screen measured it when it was started")
+            print(
+                f"season scale: {kept}, on {scale['paths']} of {scale['of']} paths of the first "
+                "cell, as the screen measured it when it was started"
+            )
         ctx = replace(ctx, scale=scale["ratio"], no_scale=sc.NO_RATIO)
         rows = sc.rows_of(base, names, plan.shapes_read, ctx)
     refused = [r for r in rows if r.status == sc.REFUSED]

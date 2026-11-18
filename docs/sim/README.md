@@ -1470,6 +1470,16 @@ No lever is played on the static or the ranking tier.
   that have one, of the baseline's scale on the surrogate tier on the path's first simulated day
   (the ratio: the `season_weight` at which the season term is the week gain's size). No day is
   played for it. The record keeps the figure, and a later piece uses the one on file.
+  - **A path can have no scale.** The scale is read from the seat's single swaps on that first
+    day. A path whose seat keeps its whole roster that day (the engine's keep rule protecting
+    every player it holds) has no swap to read, and so no ratio. The mean rests on the paths that
+    have one, and the record (`scale.paths` of `scale.of`) and the run's output say on how many
+    of how many, so a nudge sized on few paths is seen as one.
+  - A screen with no such path lists the season weight's nudges **not played**, and the playoff
+    weight's too when the baseline holds no season weight.
+  - Under a draft table this is common today: the arm's seat drafts on per-game value among
+    rivals who draft from the board, so on the first day every player it holds beats the best
+    free agent. The PR that makes the seat draft as a rival should thin it out.
 
 What a row can be:
 
