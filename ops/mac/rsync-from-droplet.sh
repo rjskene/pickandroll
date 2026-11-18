@@ -12,7 +12,8 @@
 # (studies, the external and fidelity archives, draft day, Yahoo history), so a rollback copy
 # may carry stale extra files, which is harmless, and erases nothing. On success it stamps
 # data/routine/.copied-at on the droplet, which the droplet's watchdog checks (an alert once it
-# is older than 72 h).
+# is older than 72 h). The copy and the stamp are each tried three times, a minute apart (#421);
+# a copy that never lands exits 1, a copy whose stamp never lands exits 2.
 set -u
 conf=${PICKANDROLL_CONF:-$HOME/.config/pickandroll}
 env_file=$conf/rsync.env
@@ -50,14 +51,46 @@ if [ -n "$local_rooms" ] && [ "$local_rooms" != "[]" ]; then
   exit 0
 fi
 
-if rsync -az \
+# One reset of the droplet's ssh must not end the night's copy (#421): the copy and the stamp
+# each get up to $attempts tries, $pause seconds apart (RSYNC_RETRY_PAUSE, for the tests); rsync
+# picks up where the last try stopped. Each failed try is logged with its exit code.
+attempts=3
+pause=${RSYNC_RETRY_PAUSE:-60}
+retry() {
+  what=$1
+  shift
+  n=1
+  while :; do
+    "$@" && return 0
+    code=$?
+    if [ "$n" -ge "$attempts" ]; then
+      note "rsync: $what failed (try $n of $attempts, exit $code)"
+      return "$code"
+    fi
+    note "rsync: $what failed (try $n of $attempts, exit $code), again in ${pause}s"
+    sleep "$pause"
+    n=$((n + 1))
+  done
+}
+copy() {
+  rsync -az \
     --exclude=/routine/profile/ --exclude=/routine/downloads/ --exclude=/routine/screens/ \
-    -e "ssh $ssh_opts" "$DROPLET:$REMOTE_DATA/" "$LOCAL_DATA/" >>"$log" 2>&1; then
+    -e "ssh $ssh_opts" "$DROPLET:$REMOTE_DATA/" "$LOCAL_DATA/" >>"$log" 2>&1
+}
+mark() {
   # shellcheck disable=SC2086
-  ssh $ssh_opts "$DROPLET" "mkdir -p $REMOTE_DATA/routine && date -u +%FT%TZ > $REMOTE_DATA/routine/.copied-at" 2>/dev/null \
-    && note "rsync: copied $DROPLET:$REMOTE_DATA/ into $LOCAL_DATA/ and stamped .copied-at" \
-    || note "rsync: copied, but the stamp on $DROPLET failed"
-  exit 0
+  ssh $ssh_opts "$DROPLET" "mkdir -p $REMOTE_DATA/routine && date -u +%FT%TZ > $REMOTE_DATA/routine/.copied-at" 2>/dev/null
+}
+
+if ! retry "the copy" copy; then
+  note "rsync: the copy failed (see $log)"
+  exit 1
 fi
-note "rsync: the copy failed (see $log)"
-exit 1
+# A copy whose stamp failed exits non-zero, so launchd shows it: the droplet's watchdog reads
+# only the stamp, which stays old.
+if ! retry "the stamp" mark; then
+  note "rsync: copied, but the stamp on $DROPLET failed: .copied-at stays old"
+  exit 2
+fi
+note "rsync: copied $DROPLET:$REMOTE_DATA/ into $LOCAL_DATA/ and stamped .copied-at"
+exit 0
