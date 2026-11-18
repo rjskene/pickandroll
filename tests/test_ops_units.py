@@ -742,6 +742,112 @@ def test_the_copy_script_excludes_the_profile_and_guards_both_hosts() -> None:
     assert text.count("/rooms") >= 2 and ".copied-at" in text
 
 
+@pytest.fixture
+def mac_copy(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
+    """The copy script against fakes of ssh (the droplet's rooms and the stamp), rsync, curl (the
+    Mac's rooms) and sleep: ``FAKE_RSYNC_FAILS`` and ``FAKE_STAMP_FAILS`` are how many tries of
+    each fail before one lands (each fails with ``FAKE_EXIT``, 255 by default, ssh's own)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.log"
+    count = tmp_path / "count"
+    count.mkdir()
+    tries = f"""n=$(( $(cat "{count}/$1" 2>/dev/null || echo 0) + 1 )); echo "$n" > "{count}/$1"
+[ "$n" -gt "${{2:-0}}" ]"""
+    fake(
+        bin_dir,
+        "ssh",
+        f'''cmd="${{@: -1}}"
+echo "ssh $cmd" >> "{calls}"
+tries() {{ {tries}; }}
+case "$cmd" in
+  *"/rooms"*) printf '[]'; exit 0 ;;
+  *".copied-at"*) tries stamp "${{FAKE_STAMP_FAILS:-0}}" || exit "${{FAKE_EXIT:-255}}"; exit 0 ;;
+  *) exit 0 ;;
+esac
+''',
+    )
+    fake(
+        bin_dir,
+        "rsync",
+        f'''echo "rsync $*" >> "{calls}"
+tries() {{ {tries}; }}
+tries rsync "${{FAKE_RSYNC_FAILS:-0}}" || {{ echo "rsync error: unexpected end of file"; exit 12; }}
+''',
+    )
+    fake(bin_dir, "curl", "printf '[]'\n")
+    fake(bin_dir, "sleep", f'echo "sleep $*" >> "{calls}"\n')
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    local = tmp_path / "data"
+    local.mkdir()
+    (conf / "rsync.env").write_text(
+        f"DROPLET=pickandroll@box\nREMOTE_DATA=pickandroll/data\nLOCAL_DATA={local}\n"
+    )
+    env = env_with(bin_dir, PICKANDROLL_CONF=str(conf))
+    return MAC / "rsync-from-droplet.sh", calls, conf / "rsync.log", env
+
+
+def _calls(calls: Path, what: str) -> list[str]:
+    return [line for line in calls.read_text().splitlines() if line.startswith(what)]
+
+
+def test_the_copy_lands_and_stamps_on_its_first_try(mac_copy) -> None:
+    script, calls, log, env = mac_copy
+    done = run(script, env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(_calls(calls, "rsync")) == 1 and not _calls(calls, "sleep")
+    assert len([c for c in _calls(calls, "ssh") if ".copied-at" in c]) == 1
+    assert "and stamped .copied-at" in log.read_text()
+
+
+def test_a_copy_reset_once_is_tried_again_a_minute_later_then_copies_and_stamps(mac_copy) -> None:
+    # 2026-11-16: "Connection reset by ... port 22" on the rsync; the next try lands.
+    script, calls, log, env = mac_copy
+    done = run(script, {**env, "FAKE_RSYNC_FAILS": "1"})
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(_calls(calls, "rsync")) == 2
+    assert _calls(calls, "sleep") == ["sleep 60"]  # the minute between tries
+    text = log.read_text()
+    assert text.count("the copy failed (try 1 of 3, exit 12), again in 60s") == 1
+    assert "try 2" not in text
+    assert "and stamped .copied-at" in text
+
+
+def test_a_stamp_that_never_lands_is_logged_and_exits_non_zero(mac_copy) -> None:
+    # 2026-11-15: copied, then the stamp's ssh was reset; the run said nothing to launchd.
+    script, calls, log, env = mac_copy
+    done = run(script, {**env, "FAKE_STAMP_FAILS": "9", "RSYNC_RETRY_PAUSE": "0"})
+    assert done.returncode == 2
+    assert len(_calls(calls, "rsync")) == 1
+    assert len([c for c in _calls(calls, "ssh") if ".copied-at" in c]) == 3
+    assert _calls(calls, "sleep") == ["sleep 0", "sleep 0"]  # the pause's override
+    text = log.read_text()
+    assert "the stamp failed (try 1 of 3, exit 255), again in 0s" in text
+    assert "the stamp failed (try 3 of 3, exit 255)" in text
+    assert "copied, but the stamp on pickandroll@box failed" in text
+    assert "and stamped .copied-at" not in text
+
+
+def test_a_stamp_reset_once_is_tried_again_and_the_run_exits_0(mac_copy) -> None:
+    script, calls, log, env = mac_copy
+    done = run(script, {**env, "FAKE_STAMP_FAILS": "1", "RSYNC_RETRY_PAUSE": "0"})
+    assert done.returncode == 0
+    assert len([c for c in _calls(calls, "ssh") if ".copied-at" in c]) == 2
+    assert "and stamped .copied-at" in log.read_text()
+
+
+def test_three_failed_copies_say_the_copy_failed_and_exit_1_without_a_stamp(mac_copy) -> None:
+    script, calls, log, env = mac_copy
+    done = run(script, {**env, "FAKE_RSYNC_FAILS": "9", "RSYNC_RETRY_PAUSE": "0"})
+    assert done.returncode == 1
+    assert len(_calls(calls, "rsync")) == 3
+    assert not [c for c in _calls(calls, "ssh") if ".copied-at" in c]
+    text = log.read_text()
+    assert "the copy failed (try 3 of 3, exit 12)" in text
+    assert "rsync: the copy failed (see " in text
+
+
 # ------------------------------------------------------------------- the Mac's re-sign-in (#238)
 DEVTOOLS_LIST = json.dumps(
     [
