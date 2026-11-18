@@ -1450,6 +1450,17 @@ added by the PR that builds it, and no flag invents a nudge.
 | `system` | to each other source; to the mix at 0.5 | surrogate | |
 | `blend` | to 0.25 and to 0.75 | surrogate | `system: blend` (the mix at 0.5 when the baseline names none) |
 
+The tier each lever is played on, in both arms, whatever tier the baseline names (the cheapest
+that reads the lever):
+
+- **the surrogate tier**, eleven levers: `protection_floor`, `daily_cap`, `faab_sizing`,
+  `season_weight`, `playoff_weight`, `pool`, `min_gain`, `weeks_ahead`, `surrogate_days`,
+  `system`, `blend`;
+- **the exact tier**, six levers: `plan_floor_cats`, `plan_floor_points`, `horizon_weight`,
+  `executes`, `with_plan`, `execute_plan`.
+
+No lever is played on the static or the ranking tier.
+
 - A lever with two nudges is two pairs.
 - A floor's step is the Monday step's own grid, read through `sim/engine.py` and never run: the
   protection floor's step a game (0.05 in a categories league, 0.5 in a points league); a plan
