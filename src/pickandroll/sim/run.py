@@ -1270,6 +1270,7 @@ def replay_setup(
     budget: int = shapes.BUDGET,
     rival_scale: float = shapes.RIVAL_SCALE,
     h2h: str = ONE_WIN,
+    waiver_rule: str = shapes.DROPPED,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1304,11 +1305,18 @@ def replay_setup(
     ``rival_scale`` a market rival's bid is multiplied by. A categories league's head-to-head
     format (the format PR, ``shapes.H2H``): ``h2h`` ``each_category`` orders the standings by
     the category percentage, then head to head (``league.TIEBREAK_EACH``); the default counts
-    one win per matchup, as before. A points league names none."""
+    one win per matchup, as before. A points league names none. A waiver league's
+    ``waiver_rule`` (PR Fc, ``shapes.WAIVER_RULES``): ``continuous``, every add a claim, the
+    draft's leftovers claimable from the first morning; the default, a claim only on a dropped
+    player in his wait."""
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     if h2h not in shapes.H2H or (points and h2h != ONE_WIN):
         raise ValueError(f"head-to-head format {h2h!r} with scoring {scoring!r}")
+    if waiver_rule not in shapes.WAIVER_RULES or (
+        waivers == "none" and waiver_rule != shapes.DROPPED
+    ):
+        raise ValueError(f"waiver rule {waiver_rule!r} with waivers {waivers!r}")
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days = league_days(lines, players, scheduled)
@@ -1385,6 +1393,7 @@ def replay_setup(
         budget=budget,
         rival_scale=rival_scale,
         h2h=h2h,
+        waiver_rule=waiver_rule,
     )
 
 

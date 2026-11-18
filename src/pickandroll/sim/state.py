@@ -21,6 +21,7 @@ from typing import Any
 
 from .engine import HELD, ONE_WIN, Calendar, Move, Player, Week, monday_of
 from .league import LeagueSpec
+from .shapes import CONTINUOUS, DROPPED
 
 Rates = Mapping[str, float]
 #: A roster as the simulator holds it: each player with the slot he sits in.
@@ -156,6 +157,10 @@ class Setup:
     #: holds the default and its week is one result on the points. A categories ``spec`` of
     #: another format is refused: the seats and the standings count one.
     h2h: str = ONE_WIN
+    #: Which of a waiver league's adds are claims (PR Fc, ``shapes.WAIVER_RULES``): ``dropped``,
+    #: a dropped player's in his wait, every other add a free agent's; ``continuous``, every add,
+    #: a claim on a player nobody dropped lately decided the next morning. Read only with waivers.
+    waiver_rule: str = DROPPED
 
     def __post_init__(self) -> None:
         # The seat's half of the format and the standings' half are one rule of the run (the
@@ -176,6 +181,11 @@ class Setup:
     def bidding(self) -> bool:
         """Whether a claim carries a bid from its team's budget: a FAAB league (PR Fb)."""
         return self.waivers == "faab"
+
+    @property
+    def continuous(self) -> bool:
+        """Whether every add is a claim: a waiver league under continuous waivers (PR Fc)."""
+        return self.waiting and self.waiver_rule == CONTINUOUS
 
     @property
     def one_win(self) -> bool:
@@ -308,8 +318,9 @@ def initial(setup: Setup) -> SimState:
     """Day one's state from the setup. In a waiver league the first priority order is the
     reverse of the draft's (#172, PR Fa): the seat that picks last in the first round claims
     first (``snake_draft`` and ``board_draft`` take the seats in team order). Nobody is on
-    waivers: the draft's leftovers are free agents. In a FAAB league every team starts with the
-    league's budget (PR Fb)."""
+    waivers: the draft's leftovers are free agents, or under continuous waivers (PR Fc) players a
+    claim decides from the first morning, with no wait. In a FAAB league every team starts with
+    the league's budget (PR Fb)."""
     taken = {k for r in setup.rosters.values() for k, _ in r}
     return SimState(
         setup.start,

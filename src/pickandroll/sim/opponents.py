@@ -69,7 +69,9 @@ class Market:
     In a FAAB league (PR Fb) its decision carries what its bid is made on
     (``policy.rival_bid``, an assumed form, not a fit): its move's gain on its view, and, when the
     pick is a claim, a noise drawn after the pick from the path's draw for its team and day (a
-    fresh draw of its own, so nothing else it draws moves)."""
+    fresh draw of its own, so nothing else it draws moves). Under continuous waivers (PR Fc) every
+    pick is a claim, so it draws its noise on every pick; with the rule not named it draws only
+    on a pick on waivers, as before."""
 
     rate: float
     kind: str = "market"
@@ -104,7 +106,8 @@ class Market:
             return policy.NONE
         basis = None
         if setup.bidding:
-            noise = (policy.market_noise(g),) if add in state.waivers else ()
+            claim = setup.continuous or add in state.waivers
+            noise = (policy.market_noise(g),) if claim else ()
             basis = policy.Basis(policy.MARKET, (float(view[add] - view[drop]),), noise=noise)
         return policy.Decision((mv.Move(add, drop),), (), (), 0, "market", basis)
 

@@ -166,6 +166,7 @@ def test_a_waiver_league_says_its_wait_in_the_label_and_the_payload():
         "h2h": "one_win",
         "waivers": "priority",
         "waiver_days": 2,
+        "waiver_rule": "dropped",
     }
     one = shapes.LeagueRules("points", shapes.POINTS_DEFAULT, ("IL",), "priority", 1)
     assert one.label() == (
@@ -234,6 +235,7 @@ def test_a_faab_league_says_its_budget_and_the_rivals_scale_in_the_label_and_the
         "h2h": "one_win",
         "waivers": "faab",
         "waiver_days": 2,
+        "waiver_rule": "dropped",
         "budget": 100,
         "rival_scale": 1.0,
     }

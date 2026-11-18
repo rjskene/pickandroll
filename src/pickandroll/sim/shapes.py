@@ -335,6 +335,13 @@ BUDGET_RANGE = (1, 1000)
 #: What a market rival's bid is multiplied by (PR Fb): an assumption a sweep names, not a fit;
 #: 1 by default, any number above 0.
 RIVAL_SCALE = 1.0
+#: Which players a waiver league's adds are claims on (#172, PR Fc): ``dropped``, a dropped player
+#: in his wait, every other add a free agent's the next morning (the default, PR Fa's league);
+#: ``continuous``, every unowned player is on waivers at all times, so every add is a claim,
+#: decided the next morning or on a dropped player's clear date, and nobody is a free agent (the
+#: nine public leagues of the winning-bids table, the master on #172, 2026-11-17).
+DROPPED, CONTINUOUS = "dropped", "continuous"
+WAIVER_RULES = (DROPPED, CONTINUOUS)
 
 
 def _number(x: float) -> str:
@@ -359,8 +366,9 @@ class LeagueRules:
     starts with (whole dollars, 1 to 1000) and the ``rival_scale`` a market rival's bid is
     multiplied by (above 0), both named only with ``faab``; a categories league's head-to-head
     format ``h2h`` (one of :data:`H2H`, ``one_win`` by default; a points league holds the default
-    and names none). One set for every path of a run, never a grid axis; :data:`PLAIN` is today's
-    league. ValueError, in words, on anything else."""
+    and names none); a waiver league's ``waiver_rule`` (one of :data:`WAIVER_RULES`, ``dropped``
+    by default, named only with waivers, PR Fc). One set for every path of a run, never a grid
+    axis; :data:`PLAIN` is today's league. ValueError, in words, on anything else."""
 
     scoring: str = "categories"
     points: tuple[tuple[str, float], ...] | None = None
@@ -370,11 +378,23 @@ class LeagueRules:
     budget: int = BUDGET
     rival_scale: float = RIVAL_SCALE
     h2h: str = ONE_WIN
+    waiver_rule: str = DROPPED
 
     def __post_init__(self) -> None:
         self._check_scoring()
         self._check_waivers()
         self._check_h2h()
+        self._check_waiver_rule()
+
+    def _check_waiver_rule(self) -> None:
+        rule = self.waiver_rule
+        if rule not in WAIVER_RULES:
+            raise ValueError(f"waiver rule {rule!r} is not one of {', '.join(WAIVER_RULES)}")
+        if self.waivers == "none" and rule != DROPPED:
+            raise ValueError(
+                f"waiver rule {rule} with waivers none: which adds are claims is a waiver "
+                "league's, and a league without waivers has no claim"
+            )
 
     def _check_h2h(self) -> None:
         if self.h2h not in H2H:
@@ -469,10 +489,14 @@ class LeagueRules:
         if not self.waiting:
             return f"{scoring}, {held}"
         days = f"{self.waiver_days} day{'s' if self.waiver_days > 1 else ''}"
+        # The default rule goes unsaid too; continuous waivers say so, and that the days are a
+        # dropped player's wait.
+        kind = "waivers" if not self.continuous else "continuous waivers"
+        wait = f" after {days}" if not self.continuous else f", a dropped player after {days}"
         if not self.bidding:
-            return f"{scoring}, {held}, waivers by priority after {days}"
+            return f"{scoring}, {held}, {kind} by priority{wait}"
         return (
-            f"{scoring}, {held}, waivers by FAAB after {days}, ${self.budget} a team, the "
+            f"{scoring}, {held}, {kind} by FAAB{wait}, ${self.budget} a team, the "
             f"rivals' bids x{_number(self.rival_scale)}"
         )
 
@@ -487,6 +511,11 @@ class LeagueRules:
         return self.waivers == FAAB
 
     @property
+    def continuous(self) -> bool:
+        """Whether every add is a claim: a waiver league under continuous waivers (PR Fc)."""
+        return self.waiting and self.waiver_rule == CONTINUOUS
+
+    @property
     def one_win(self) -> bool:
         """Whether a week is one result in the standings and a seat weighs the matchup's odds: a
         categories league of the ``one_win`` format (a points league's measure is its own)."""
@@ -494,10 +523,10 @@ class LeagueRules:
 
     def payload(self) -> dict[str, Any]:
         """The record's ``league.rules``: the scoring, the table and the held slots, in a
-        categories league its head-to-head format (the format PR), in a waiver league its waivers
-        and waiver days, and in a FAAB league its budget and the rivals' bid scale (a league
-        without waivers records the keys it did before PR Fa, and one by priority those it did
-        before PR Fb, the format's beside them)."""
+        categories league its head-to-head format (the format PR), in a waiver league its waivers,
+        waiver days and waiver rule (PR Fc), and in a FAAB league its budget and the rivals' bid
+        scale (a league without waivers records the keys it did before PR Fa, and one by priority
+        those it did before PR Fb, the format's and the rule's beside them)."""
         out: dict[str, Any] = {
             "scoring": self.scoring,
             "points": self.table,
@@ -506,7 +535,11 @@ class LeagueRules:
         if self.points is None:
             out["h2h"] = self.h2h
         if self.waiting:
-            out |= {"waivers": self.waivers, "waiver_days": self.waiver_days}
+            out |= {
+                "waivers": self.waivers,
+                "waiver_days": self.waiver_days,
+                "waiver_rule": self.waiver_rule,
+            }
         if self.bidding:
             out |= {"budget": self.budget, "rival_scale": float(self.rival_scale)}
         return out
@@ -622,6 +655,23 @@ def parse_h2h(scoring: str, h2h: str | None) -> str:
     return kind
 
 
+def parse_waiver_rule(waivers: str, rule: str | None) -> str:
+    """The waiver rule ``replay --waiver-rule`` names (#172, PR Fc): ``dropped`` (the default when
+    not named) or ``continuous``, named only with ``--waivers priority`` or ``faab`` (``waivers``
+    as :func:`parse_waivers` gives it). ValueError, in words, on anything else."""
+    if rule is None:
+        return DROPPED
+    if waivers == "none":
+        raise ValueError(
+            f"--waiver-rule {rule}: which adds are claims is a waiver league's; it is read only "
+            "with --waivers priority or faab"
+        )
+    kind = rule.strip().lower()
+    if kind not in WAIVER_RULES:
+        raise ValueError(f"--waiver-rule {rule}: one of {', '.join(WAIVER_RULES)}")
+    return kind
+
+
 def parse_budget(waivers: str, budget: str | None, scale: str | None) -> tuple[int, float]:
     """The budget and the rivals' bid scale ``replay --budget`` and ``--rival-scale`` name
     (#172, PR Fb), each read only with ``--waivers faab`` (``waivers`` as :func:`parse_waivers`
@@ -656,6 +706,8 @@ def parse_budget(waivers: str, budget: str | None, scale: str | None) -> tuple[i
 __all__ = [
     "BUDGET",
     "BUDGET_RANGE",
+    "CONTINUOUS",
+    "DROPPED",
     "FAAB",
     "FIXED",
     "FIXED_GRID",
@@ -674,6 +726,7 @@ __all__ = [
     "WAIVERS",
     "WAIVER_DAYS",
     "WAIVER_DAYS_RANGE",
+    "WAIVER_RULES",
     "WIDE_SLOTS",
     "Grid",
     "LeagueRules",
@@ -686,6 +739,7 @@ __all__ = [
     "parse_held",
     "parse_league",
     "parse_points",
+    "parse_waiver_rule",
     "parse_waivers",
     "place",
     "round_up",

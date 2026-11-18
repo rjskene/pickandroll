@@ -8,7 +8,9 @@ the day (:class:`Day`) and the same variant's day before (None on the first day,
 setup's rosters stand for it). It returns what it found, one ``(seat, what)`` a breach. A later
 PR adds a rule by adding to the list. A waiver league is held to :data:`WAIVER_RULES` too (PR
 Fa, :func:`rules_of`): a run without waivers reads only :data:`RULES`. A FAAB league (PR Fb) is
-held to the wait and :data:`BID_RULES` instead: its claims go by bid, not by priority alone.
+held to the wait and :data:`BID_RULES` instead: its claims go by bid, not by priority alone. A
+league under continuous waivers (PR Fc) is held to :data:`CLAIMS_ONLY` after them: every add is a
+claim.
 
 A breach voids its path: the runner records it (:class:`Breach`), the commands leave the path out
 of every aggregate, list the breaches in the payload and exit non-zero after writing. Nothing is
@@ -24,6 +26,7 @@ from datetime import date
 from typing import Any
 
 from .engine import HELD, mv, wk
+from .shapes import CONTINUOUS, DROPPED
 from .state import FAILED, LOST, WON, Roster, Setup, SimState
 
 #: The statuses a seat that has heard them never starts (``policy.starters_of``).
@@ -324,6 +327,19 @@ def bid_order(setup: Setup, today: Day, before: Day | None) -> Found:
         yield None, f"priority after the morning {today.state.priority}, expected {tuple(order)}"
 
 
+def claims_only(setup: Setup, today: Day, before: Day | None) -> Found:
+    """Nobody joins a roster but by a claim won that morning (PR Fc, continuous waivers): every
+    player who joined a roster today is the add of a claim its team won on this morning's
+    decisions (``state.resolved``). The draft's rosters stand for the day before the first."""
+    was = _rosters_before(setup, before)
+    won = {(r.team, r.add) for r in today.state.resolved if r.outcome == WON}
+    for team, roster in sorted(today.state.rosters.items()):
+        had = {k for k, _ in was.get(team, ())}
+        for k, _ in roster:
+            if k not in had and (team, k) not in won:
+                yield team, f"player {k} joined without a claim won this morning"
+
+
 #: The rules every day of every run is held to, in the order they are read.
 RULES: tuple[Rule, ...] = (
     Rule(
@@ -359,25 +375,33 @@ BID_RULES: tuple[Rule, ...] = (
 )
 
 
-def rules_of(waivers: str = "none") -> tuple[Rule, ...]:
-    """The rules a run under ``waivers`` (``shapes.WAIVERS``) is held to: :data:`RULES`, and
-    after them :data:`WAIVER_RULES` in a league by priority, or the wait and :data:`BID_RULES` in
-    a FAAB league."""
+#: A league's rule under continuous waivers (PR Fc), after its waivers' rules.
+CLAIMS_ONLY = Rule(
+    "claims_only", claims_only, "nobody joins a roster but by a claim won that morning"
+)
+
+
+def rules_of(waivers: str = "none", rule: str = DROPPED) -> tuple[Rule, ...]:
+    """The rules a run under ``waivers`` (``shapes.WAIVERS``) and the waiver ``rule``
+    (``shapes.WAIVER_RULES``, PR Fc) is held to: :data:`RULES`, and after them
+    :data:`WAIVER_RULES` in a league by priority, or the wait and :data:`BID_RULES` in a FAAB
+    league, and :data:`CLAIMS_ONLY` last under continuous waivers."""
     if waivers == "none":
         return RULES
+    more = (CLAIMS_ONLY,) if rule == CONTINUOUS else ()
     if waivers == "faab":
-        return (*RULES, WAIVER_RULES[0], *BID_RULES)
-    return (*RULES, *WAIVER_RULES)
+        return (*RULES, WAIVER_RULES[0], *BID_RULES, *more)
+    return (*RULES, *WAIVER_RULES, *more)
 
 
 class Auditor:
     """The rules over one run's days: it keeps each variant's day before (so a rule may compare
     with it) and every breach found, stamped with the path. The rules default to the setup's
-    (:func:`rules_of` its waivers)."""
+    (:func:`rules_of` its waivers and its waiver rule)."""
 
     def __init__(self, setup: Setup, rules: Sequence[Rule] | None = None, path: int | None = None):
         self.setup = setup
-        self.rules = tuple(rules_of(setup.waivers) if rules is None else rules)
+        self.rules = tuple(rules_of(setup.waivers, setup.waiver_rule) if rules is None else rules)
         self.path = path
         self.breaches: list[Breach] = []
         self._before: dict[int, Day] = {}
@@ -401,6 +425,7 @@ def names(rules: Sequence[Rule] | None = None) -> list[dict[str, str]]:
 
 __all__ = [
     "BID_RULES",
+    "CLAIMS_ONLY",
     "OUT",
     "RULES",
     "WAIVER_RULES",
@@ -412,6 +437,7 @@ __all__ = [
     "bid_paid",
     "budget_floor",
     "claim_priority",
+    "claims_only",
     "held_kind",
     "lands_next_day",
     "lineup",
