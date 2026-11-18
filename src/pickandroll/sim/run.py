@@ -709,8 +709,10 @@ def simulate(
         # Yesterday's moves land first, cleared held players back and the held-slot moves made
         # before them: on a Monday they were made on Sunday and spend the ending week's adds, so
         # the week's count starts over only once they are in. In a waiver league the claims on
-        # the players clearing today are decided before anything else lands (PR Fa), each won
-        # one charged to the same week as yesterday's moves: the week of the day before.
+        # the players clearing today are decided once the cleared held players are back, the
+        # rosters trimmed and the churns' held players gone (``policy.arrive``, Fc's review), and
+        # before the rest lands (PR Fa), each won one charged to the same week as yesterday's
+        # moves: the week of the day before.
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
@@ -719,12 +721,21 @@ def simulate(
         if waiting:
             states = [
                 policy.clear_waivers(
-                    s, day, spots, slot_counts, status, setup.waiver_days, setup.bidding
+                    policy.arrive(s, order, spots, status, value, values[vi], **waiver),
+                    day,
+                    spots,
+                    slot_counts,
+                    status,
+                    setup.waiver_days,
+                    setup.bidding,
                 )
-                for s in states
+                for vi, s in enumerate(states)
             ]
+        arrived = {"arrived": True} if waiting else {}
         states = [
-            policy.land(s, order, spots, slot_counts, status, value, values[vi], **waiver)
+            policy.land(
+                s, order, spots, slot_counts, status, value, values[vi], **waiver, **arrived
+            )
             for vi, s in enumerate(states)
         ]
         for vi, s in enumerate(states):
@@ -1270,6 +1281,7 @@ def replay_setup(
     budget: int = shapes.BUDGET,
     rival_scale: float = shapes.RIVAL_SCALE,
     h2h: str = ONE_WIN,
+    waiver_rule: str = shapes.DROPPED,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1304,11 +1316,18 @@ def replay_setup(
     ``rival_scale`` a market rival's bid is multiplied by. A categories league's head-to-head
     format (the format PR, ``shapes.H2H``): ``h2h`` ``each_category`` orders the standings by
     the category percentage, then head to head (``league.TIEBREAK_EACH``); the default counts
-    one win per matchup, as before. A points league names none."""
+    one win per matchup, as before. A points league names none. A waiver league's
+    ``waiver_rule`` (PR Fc, ``shapes.WAIVER_RULES``): ``continuous``, every add a claim, the
+    draft's leftovers claimable from the first morning; the default, a claim only on a dropped
+    player in his wait."""
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     if h2h not in shapes.H2H or (points and h2h != ONE_WIN):
         raise ValueError(f"head-to-head format {h2h!r} with scoring {scoring!r}")
+    if waiver_rule not in shapes.WAIVER_RULES or (
+        waivers == "none" and waiver_rule != shapes.DROPPED
+    ):
+        raise ValueError(f"waiver rule {waiver_rule!r} with waivers {waivers!r}")
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days = league_days(lines, players, scheduled)
@@ -1385,6 +1404,7 @@ def replay_setup(
         budget=budget,
         rival_scale=rival_scale,
         h2h=h2h,
+        waiver_rule=waiver_rule,
     )
 
 

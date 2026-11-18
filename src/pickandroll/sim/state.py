@@ -6,7 +6,8 @@ the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
 tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
 (PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
-priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by. The world
+priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by; under
+continuous waivers (PR Fc) every add a claim among them. The world
 (``run.World``) is apart: lines, availability and the beliefs belong to the path, never to an
 arm, so two arms of a pair see one world. Pure: frozen dataclasses,
 advanced by ``replace``.
@@ -21,6 +22,7 @@ from typing import Any
 
 from .engine import HELD, ONE_WIN, Calendar, Move, Player, Week, monday_of
 from .league import LeagueSpec
+from .shapes import CONTINUOUS, DROPPED
 
 Rates = Mapping[str, float]
 #: A roster as the simulator holds it: each player with the slot he sits in.
@@ -69,13 +71,15 @@ class Waiting:
 
 @dataclass(frozen=True)
 class Claim:
-    """A waiver claim placed and not yet decided (#172, PR Fa): its move (the add on waivers; the
-    drop, made only if the claim is won, or None for an open spot), the day it was placed, its
-    add's clear date (the morning it is decided), the week its add is charged to (the week of the
-    day before it lands, so the plan's and the world's weeks agree; None outside the calendar),
-    the held-slot moves it needs, made only if it is won, and whether its drop is a held player
-    (a churn, #221), who leaves on his own the morning after the claim is placed. In a FAAB league
-    (PR Fb) its sealed ``bid``, whole dollars set when it is placed (0 by priority)."""
+    """A waiver claim placed and not yet decided (#172, PR Fa): its move (the add on waivers, or
+    under continuous waivers any add, PR Fc; the drop, made only if the claim is won, or None for
+    an open spot), the day it was placed, its add's clear date (the morning it is decided: a
+    dropped player's clear date, or under continuous waivers the next morning for a player nobody
+    dropped lately), the week its add is charged to (the week of the day before it lands, so the
+    plan's and the world's weeks agree; None outside the calendar), the held-slot moves it needs,
+    made only if it is won, and whether its drop is a held player (a churn, #221), who leaves on
+    his own the morning after the claim is placed. In a FAAB league (PR Fb) its sealed ``bid``,
+    whole dollars set when it is placed (0 by priority)."""
 
     move: Move
     placed: date
@@ -153,8 +157,23 @@ class Setup:
     rival_scale: float = 1.0
     #: A categories league's head-to-head format (the format PR, ``shapes.H2H``): ``one_win``, a
     #: week one result in the standings; ``each_category``, each category's. A points league
-    #: holds the default and its week is one result on the points.
+    #: holds the default and its week is one result on the points. A categories ``spec`` of
+    #: another format is refused: the seats and the standings count one.
     h2h: str = ONE_WIN
+    #: Which of a waiver league's adds are claims (PR Fc, ``shapes.WAIVER_RULES``): ``dropped``,
+    #: a dropped player's in his wait, every other add a free agent's; ``continuous``, every add,
+    #: a claim on a player nobody dropped lately decided the next morning. Read only with waivers.
+    waiver_rule: str = DROPPED
+
+    def __post_init__(self) -> None:
+        # The seat's half of the format and the standings' half are one rule of the run (the
+        # format PR's review): a categories spec of another format is refused by name. A points
+        # spec holds the default and names no format.
+        if self.spec is not None and self.spec.scoring != "points" and self.spec.h2h != self.h2h:
+            raise ValueError(
+                f"head-to-head format {self.h2h!r} with a spec of the format {self.spec.h2h!r}: "
+                "the seats and the standings count one format"
+            )
 
     @property
     def waiting(self) -> bool:
@@ -165,6 +184,11 @@ class Setup:
     def bidding(self) -> bool:
         """Whether a claim carries a bid from its team's budget: a FAAB league (PR Fb)."""
         return self.waivers == "faab"
+
+    @property
+    def continuous(self) -> bool:
+        """Whether every add is a claim: a waiver league under continuous waivers (PR Fc)."""
+        return self.waiting and self.waiver_rule == CONTINUOUS
 
     @property
     def one_win(self) -> bool:
@@ -297,8 +321,9 @@ def initial(setup: Setup) -> SimState:
     """Day one's state from the setup. In a waiver league the first priority order is the
     reverse of the draft's (#172, PR Fa): the seat that picks last in the first round claims
     first (``snake_draft`` and ``board_draft`` take the seats in team order). Nobody is on
-    waivers: the draft's leftovers are free agents. In a FAAB league every team starts with the
-    league's budget (PR Fb)."""
+    waivers: the draft's leftovers are free agents, or under continuous waivers (PR Fc) players a
+    claim decides from the first morning, with no wait. In a FAAB league every team starts with
+    the league's budget (PR Fb)."""
     taken = {k for r in setup.rosters.values() for k, _ in r}
     return SimState(
         setup.start,

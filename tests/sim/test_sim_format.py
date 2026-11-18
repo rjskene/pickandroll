@@ -24,7 +24,7 @@ from pickandroll.sim import policy, shapes
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, st, wk
 from pickandroll.sim.state import initial
-from tests.sim.sim_league import KNOBS, make_setup
+from tests.sim.sim_league import KNOBS, every_category, make_setup, of_format
 from tests.sim.test_sim_points import TABLE, setup_of
 from tests.sim.test_sim_rules_run import pinned_clock, replay, spec, wire, written  # noqa: F401
 from tests.sim.test_sim_seasons import rounded
@@ -197,6 +197,25 @@ def test_a_replay_s_league_carries_the_format_into_its_standings(h2h):
     assert setup.spec.tiebreak == (lg.TIEBREAK if h2h == ONE_WIN else lg.TIEBREAK_EACH)
 
 
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_setup_and_its_spec_count_one_format(h2h):
+    """The seat's half of the format (``Setup.h2h``) and the standings' (``spec.h2h``) are one
+    rule: a categories spec of another format is refused by name, on either half."""
+    setup = of_format(make_setup(pool=12), h2h)
+    assert setup.h2h == setup.spec.h2h == h2h
+    other = EACH_CATEGORY if h2h == ONE_WIN else ONE_WIN
+    words = f"head-to-head format '{other}' with a spec of the format '{h2h}'"
+    with pytest.raises(ValueError, match=words):
+        replace(setup, h2h=other)
+    with pytest.raises(ValueError, match=f"head-to-head format '{h2h}' with a spec of the format '{other}'"):  # fmt: skip
+        replace(setup, spec=replace(setup.spec, h2h=other))
+    # No bracket read, nothing to disagree with; a points spec names no format.
+    assert replace(setup, spec=None, bracket_unread="unread", h2h=other).h2h == other
+    _, points = setup_of(scoring="points", points=TABLE)
+    assert replace(points, spec=replace(points.spec, h2h=EACH_CATEGORY)).h2h == ONE_WIN
+    assert every_category(make_setup(pool=12, bracket=False)).spec is None
+
+
 def test_a_replay_s_points_league_names_no_format_and_refuses_one():
     _, points = setup_of(scoring="points", points=TABLE)
     assert points.h2h == ONE_WIN and not points.one_win
@@ -225,7 +244,7 @@ def built_in(setup, team: int = 1, **knobs):
 def test_a_seat_weighs_a_week_in_its_format_s_measure(h2h):
     """The problem says the format, as the live build passes ``SeasonSettings.one_win``, and the
     engine's evaluator then values a week as the matchup's odds or its expected categories."""
-    setup = replace(make_setup(pool=12), h2h=h2h)
+    setup = of_format(make_setup(pool=12), h2h)
     b = built_in(setup)
     one_win = h2h == ONE_WIN
     assert b.problem.one_win is one_win
@@ -239,7 +258,7 @@ def test_a_seat_weighs_a_week_in_its_format_s_measure(h2h):
         want = sum(sum(won(o) for o in w) / len(w) for w in weeks)
         assert ev.value(key, ()) == pytest.approx(want)
     # The odds are the same in both formats: only the week's measure of them differs.
-    other = built_in(replace(setup, h2h=EACH_CATEGORY if one_win else ONE_WIN))
+    other = built_in(of_format(make_setup(pool=12), EACH_CATEGORY if one_win else ONE_WIN))
     assert mv.Evaluator(other.problem).odds("week", ()) == ev.odds("week", ())
 
 
@@ -324,7 +343,7 @@ def test_replay_refuses_the_pair_in_a_one_win_run_and_reads_it_under_every_categ
 def test_a_seat_that_bids_scales_by_the_engine_s_floor_in_its_format(h2h):
     """In a one-win FAAB league the typical gain until ten moves is the engine's floor in odds,
     not ``plan_floor_cats``; under every category the knob, as in PR Fb."""
-    setup = replace(make_setup(pool=12), waivers="faab", waiver_days=2, h2h=h2h)
+    setup = of_format(replace(make_setup(pool=12), waivers="faab", waiver_days=2), h2h)
     b = built_in(setup, plan_floor_cats=0.25)
     floor = st.PLAN_FLOOR_ODDS if h2h == ONE_WIN else 0.25
     assert st.floor_of(b.problem) == floor
