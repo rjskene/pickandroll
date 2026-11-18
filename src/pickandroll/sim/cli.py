@@ -9,6 +9,7 @@
     python -m pickandroll.sim replay --seasons 2024 --bbm-as espn --yahoo-as marcel --seats ...
     python -m pickandroll.sim replay --seasons 2024 --seats A.json B.json --no-peek 2023-12-04
     python -m pickandroll.sim validate --season 2024 --forecaster prior
+    python -m pickandroll.sim screen --arm BASE.json --seasons 2024 [--levers pool min_gain]
 
 ESPN's season id is the year the season ends in: 2025 is 2024-25, the hold-out. ``fetch-logs``
 makes one request a season through the same player view the draft-edge audit read, caches each
@@ -26,7 +27,11 @@ replay that names the confirmation season adds a line to its ledger; ``--no-peek
 path of one season against it changed after a date and writes nothing. ``validate`` runs gate 5
 on a replay of a recorded season (``--season``, ``--forecaster``) and writes what it had to work
 with. Every run's payload goes under ``data/sim/runs/`` with the code's commit, the fit's hash,
-the hold-out, the spec files verbatim and the execution model.
+the hold-out, the spec files verbatim and the execution model. ``screen`` nudges each lever of a
+fixed list once against a baseline arm (``sim/screen.py``), plays every pair as ``replay --arms``
+plays one, never on the hold-out or the confirmation season, and writes a folder under
+``data/sim/screens/``: a record a pair and the screen's own, so a screen stopped between two
+pairs is taken up again by the same command.
 
 Every command runs through :func:`guard`: at low priority (``nice``), never when its span would
 touch 04:45-06:45 in the machine's local time (the routines' window), never while a draft room is
@@ -37,7 +42,9 @@ user's word (``--announced`` says that has happened).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import math
 import os
@@ -58,6 +65,7 @@ from . import fit as fitmod
 from . import forecast as fc
 from . import readers as reader
 from . import run as rn
+from . import screen as sc
 from . import validate as vg
 from .engine import EACH_CATEGORY, ONE_WIN, mv, wk
 
@@ -276,7 +284,7 @@ def world_inputs(data: Path) -> tuple[rn.WorldInputs, dict[str, Any], str, Path]
 
 #: The commands whose outcome runs through the engine's evaluator (an exact tie there can fall
 #: either way with the process's hash seed).
-SIMULATING = ("replay", "validate")
+SIMULATING = ("replay", "validate", "screen")
 HASH_SEED_NOTE = (
     "PYTHONHASHSEED is unset: at an exact tie the outcome may differ between processes (an "
     "order-dependent sum in the engine's evaluator); a run to be reproduced sets PYTHONHASHSEED=0"
@@ -997,6 +1005,72 @@ def paths_for_pair(paths: int, teams: int = rn.REPLAY_TEAMS) -> int:
     return -(-max(1, paths) // teams) * teams
 
 
+def pair_league(
+    season: int,
+    lines: Any,
+    members: Any,
+    scheduled: Any,
+    forecaster: fc.Forecaster,
+    fixed: Fixed,
+    shape: str,
+    sources: Sources | None,
+    lag: int,
+    weights: Mapping[str, Mapping[str, float]],
+    news_sd: float,
+    arms: Mapping[str, rn.Arm],
+    pair: Sequence[str],
+    seed: int,
+    path: int,
+    market: Market = None,
+    grid: shapes.Grid = shapes.FIXED_GRID,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
+) -> tuple[shapes.Visit, dict[str, Any], dict[int, rn.World], int]:
+    """A pair's path before any day of it (:func:`task_paired`'s, which plays it, and
+    :func:`task_scale`'s, which reads the season scale on it): the path's visit, each arm's
+    league by its key in ``pair`` (one object when the two share a draft), each league's world
+    by the league's ``id``, and the pair's seat."""
+    v = shapes.visit(path, grid)
+    projection = projection_of(forecaster, fixed, lines, seed, path, shape)
+    forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
+
+    def world_of(setup: Any) -> rn.World:
+        return rn.replay_world(
+            setup,
+            lines,
+            lag,
+            seed,
+            path,
+            weights[forecaster.label],
+            news_sd=news_sd,
+            label=forecaster.label,
+            forecasts=forecasts,
+            split=splits_of(sources, arms),
+            weights_of=weights,
+        )
+
+    setups = pair_setups(
+        season,
+        lines,
+        members,
+        scheduled,
+        projection,
+        market,
+        arms,
+        pair,
+        forecaster.label,
+        forecasts,
+        seed,
+        path,
+        v.shape,
+        v.turn,
+        league_rules,
+    )
+    sa, sb = (setups[k] for k in pair)
+    worlds = {id(sa): world_of(sa)} if sa is sb else {id(sa): world_of(sa), id(sb): world_of(sb)}
+    me = seat_of(sa, v.turn)
+    return v, setups, worlds, me
+
+
 def task_paired(
     season: int,
     lines: Any,
@@ -1031,46 +1105,28 @@ def task_paired(
     The path plays its league shape on ``grid``, and the seat is the shape's ``teams[turn mod
     n]`` (``shapes.visit``, #172, PR D4b): both arms hold one shape and one seat. Every path
     plays the run's ``league_rules`` (PR D4c)."""
-    v = shapes.visit(path, grid)
-    projection = projection_of(forecaster, fixed, lines, seed, path, shape)
-    forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
-
-    def world_of(setup: Any) -> rn.World:
-        return rn.replay_world(
-            setup,
-            lines,
-            lag,
-            seed,
-            path,
-            weights[forecaster.label],
-            news_sd=news_sd,
-            label=forecaster.label,
-            forecasts=forecasts,
-            split=splits_of(sources, arms),
-            weights_of=weights,
-        )
-
-    a, b = (arms[k] for k in pair)
-    setups = pair_setups(
+    v, setups, worlds, me = pair_league(
         season,
         lines,
         members,
         scheduled,
-        projection,
-        market,
+        forecaster,
+        fixed,
+        shape,
+        sources,
+        lag,
+        weights,
+        news_sd,
         arms,
         pair,
-        forecaster.label,
-        forecasts,
         seed,
         path,
-        v.shape,
-        v.turn,
+        market,
+        grid,
         league_rules,
     )
+    a, b = (arms[k] for k in pair)
     sa, sb = (setups[k] for k in pair)
-    worlds = {id(sa): world_of(sa)} if sa is sb else {id(sa): world_of(sa), id(sb): world_of(sb)}
-    me = seat_of(sa, v.turn)
     unprojected = {
         k: rn.unprojected(
             setups[k],
@@ -1093,6 +1149,54 @@ def task_paired(
             rn.drafted_unprojected(x) for x in ([sa] if sa is sb else [sa, sb])
         ]
     return out
+
+
+def task_scale(
+    season: int,
+    lines: Any,
+    members: Any,
+    scheduled: Any,
+    forecaster: fc.Forecaster,
+    fixed: Fixed,
+    shape: str,
+    sources: Sources | None,
+    lag: int,
+    weights: Mapping[str, Mapping[str, float]],
+    news_sd: float,
+    arms: Mapping[str, rn.Arm],
+    pair: Sequence[str],
+    seed: int,
+    path: int,
+    market: Market = None,
+    grid: shapes.Grid = shapes.FIXED_GRID,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
+) -> dict[str, Any] | None:
+    """The season scale of the pair's arm A on one path (#172, PR H1: the screen's nudge of
+    ``season_weight`` is a share of it): ``run.scale_on`` on the league, the world and the
+    seat :func:`task_paired` would play, on the path's first simulated day. No day is played,
+    nothing is drawn and nothing decided; None where the arm holds no odds."""
+    _, setups, worlds, me = pair_league(
+        season,
+        lines,
+        members,
+        scheduled,
+        forecaster,
+        fixed,
+        shape,
+        sources,
+        lag,
+        weights,
+        news_sd,
+        arms,
+        pair,
+        seed,
+        path,
+        market,
+        grid,
+        league_rules,
+    )
+    sa = setups[pair[0]]
+    return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
 #: The replay's version in its payload: 12 since continuous waivers (#172, PR Fc), 11 since the
@@ -1640,11 +1744,47 @@ def spec_hash(spec: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
 
 
-def cmd_replay(args: argparse.Namespace) -> int:
-    ok, why = guard(NO_PEEK_HOURS if args.no_peek else 0.0, rooms=args.rooms)
-    if not ok:
-        print(f"refused: {why}")
-        return 2
+@dataclass(frozen=True)
+class ReplayPlan:
+    """A replay as :func:`replay_plan` leaves it, its inputs read and nothing played: the seasons,
+    the league shapes and rules, the table's spread, when it started, the no-peek day, the
+    forecasters, the stand-ins, the fit, the specs and their arms, the seats, whether it is a
+    pair, the tables, each season's read, the short drafts and the shapes read."""
+
+    seasons: list[int]
+    grid: shapes.Grid
+    league_rules: shapes.LeagueRules
+    spread: Any
+    started: datetime
+    day: date | None
+    named: Sequence[fc.Forecaster]
+    sources: Sources | None
+    inputs: rn.WorldInputs
+    fit: dict[str, Any]
+    sha: str
+    fit_path: Path
+    specs: list[dict[str, Any]]
+    arms: dict[str, rn.Arm]
+    seats: list[str]
+    paired: bool
+    tables: dict[int, tuple[adp.Table, str]]
+    reads: list[SeasonRead]
+    short: list[dict[str, Any]]
+    shapes_read: list[policy.Shape]
+
+
+def replay_plan(
+    args: argparse.Namespace,
+    specs: list[dict[str, Any]] | None = None,
+    read: Callable[..., SeasonRead] | None = None,
+) -> ReplayPlan | int:
+    """A replay's flags read, checked and refused by name as ``replay`` refuses them (the exit
+    code then), its fit, logs and arms read and its cells and weights printed: everything before
+    a task is made. ``specs``: the arms' specs when the caller holds them (``screen``, whose arm
+    B is arm A with one nudge); None reads ``args.arms`` or ``args.seats``, as ``replay`` does.
+    ``read``: what reads a season, :func:`read_season` by default (``screen`` hands one that
+    remembers, so its pairs share one read of a season)."""
+    read = read or read_season
     try:
         seasons = parse_seasons(args.seasons)
     except ValueError:
@@ -1747,7 +1887,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         named = fc.parse(args.forecasters)
         sources = sources_of(args.bbm_as, args.yahoo_as)
         inputs, fit, sha, fit_path = world_inputs(args.data)
-        specs = read_specs(args.arms if paired else args.seats)
+        if specs is None:
+            specs = read_specs(args.arms if paired else args.seats)
         made = arms_of(specs, sha)
         arms = believing(
             dict(zip(PAIR, made, strict=True)) if paired else {arm.name: arm for arm in made},
@@ -1778,7 +1919,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             return 2
     try:
         reads = [
-            read_season(args.data, t, named, sources, arms, args.seed, args.shape, league_rules)
+            read(args.data, t, named, sources, arms, args.seed, args.shape, league_rules)
             for t in seasons
         ]
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
@@ -1833,63 +1974,60 @@ def cmd_replay(args: argparse.Namespace) -> int:
     )
     if sources is not None and all(f.label != sources[0].label for f in named):
         print(UNPROJECTED_WARNING)
-    if day is not None:
-        (r,) = reads
-        if not r.served:
-            print(f"refused: no forecaster named serves {r.season}")
-            return 2
-        f0 = r.served[0]
-        first = shapes.visit(0, grid).shape
-        rules_ = "" if league_rules == shapes.PLAIN else f"; {league_rules.label()}"
-        print(f"no-peek check's league: path 0's, {first.label()}{rules_}")
-        t0 = clock.perf_counter()
-        try:
-            found, n, breaches = no_peek(
-                r.season,
-                r.lines,
-                r.members,
-                r.scheduled,
-                projection_of(f0, r.fixed, r.lines, args.seed, 0, args.shape),
-                inputs.lag,
-                r.weights[f0.label],
-                args.news_sd,
-                arms,
-                seats,
-                args.seed,
-                day,
-                f0.label,
-                forecasts_of(sources, r.fixed, r.lines, args.seed, 0, args.shape, arms),
-                splits_of(sources, arms),
-                r.weights,
-                paired,
-                None if spread is None else (tables[r.season][0].picks, spread),
-                first,
-                league_rules,
-            )
-        except ValueError as e:
-            print(f"refused: {e}")
-            return 2
-        took = clock.perf_counter() - t0
-        print(f"no-peek check on {day}: {n} day records a run, {took:.1f}s, nothing written")
-        for b in breaches:
-            print(
-                f"AUDIT ({b['run']} season): {b['rule']} on {b['day']}, seat {b['seat']}: {b['found']}"
-            )
-        if breaches:
-            print(f"AUDIT: {len(breaches)} breach(es); the check does not stand")
-            return AUDIT_EXIT
-        if found is not None and found[0] <= day:
-            print(
-                f"FAILED: the records part on {found[0]} (variant {found[1]}, "
-                f"{', '.join(found[2])}), at or before {day}"
-            )
-            return 1
-        if found is None:
-            print(f"agree through {day}; the runs never part (the change after it reached no seat)")
-        else:
-            print(f"agree through {day}; first difference on {found[0]} ({', '.join(found[2])})")
-        return 0
-    workers = args.workers or rn.workers_default()
+    return ReplayPlan(
+        seasons,
+        grid,
+        league_rules,
+        spread,
+        started,
+        day,
+        named,
+        sources,
+        inputs,
+        fit,
+        sha,
+        fit_path,
+        specs,
+        arms,
+        seats,
+        paired,
+        tables,
+        reads,
+        short,
+        shapes_read,
+    )
+
+
+@dataclass(frozen=True)
+class ReplayTasks:
+    """A replay's tasks as :func:`replay_tasks` makes them: the paths a cell (rounded up), each
+    path's visit, the task function, every task's arguments and key, the cells, and the task
+    timed first (the slowest by its league)."""
+
+    paths: int
+    visits: list[Any]
+    task: Any
+    tasks: list[tuple[Any, ...]]
+    keys: list[dict[str, Any]]
+    cells: int
+    slow: int
+
+
+def replay_tasks(plan: ReplayPlan, args: argparse.Namespace) -> ReplayTasks:
+    """The tasks of ``plan``'s run, a cell's paths rounded up as ``replay`` rounds them (said
+    when it does)."""
+    grid, league_rules, spread, sources, inputs, arms, seats, paired, tables, reads = (
+        plan.grid,
+        plan.league_rules,
+        plan.spread,
+        plan.sources,
+        plan.inputs,
+        plan.arms,
+        plan.seats,
+        plan.paired,
+        plan.tables,
+        plan.reads,
+    )
     paths = args.paths
     if len(grid.shapes) > 1:
         paths = shapes.round_up(args.paths, grid, paired)
@@ -1952,35 +2090,63 @@ def cmd_replay(args: argparse.Namespace) -> int:
             -p,
         ),
     )
-    t0 = clock.perf_counter()
-    first_run = task(*tasks[slow])
-    one = clock.perf_counter() - t0
-    hours = (
-        args.expected_hours
-        if args.expected_hours is not None
-        else estimate_hours(one, len(tasks), workers)
+    return ReplayTasks(paths, visits, task, tasks, keys, cells, slow)
+
+
+def replay_payload(
+    plan: ReplayPlan,
+    args: argparse.Namespace,
+    made: ReplayTasks,
+    results: Sequence[Mapping[str, Any]],
+    workers: int,
+    run_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The record of ``plan``'s run from every task's result, and its audit block: the paths the
+    audit voided left out of every figure. Nothing is written and no look is counted here."""
+    (
+        seasons,
+        grid,
+        league_rules,
+        spread,
+        started,
+        named,
+        sources,
+        fit,
+        sha,
+        fit_path,
+        specs,
+        arms,
+        seats,
+        paired,
+        tables,
+        reads,
+        short,
+        shapes_read,
+    ) = (
+        plan.seasons,
+        plan.grid,
+        plan.league_rules,
+        plan.spread,
+        plan.started,
+        plan.named,
+        plan.sources,
+        plan.fit,
+        plan.sha,
+        plan.fit_path,
+        plan.specs,
+        plan.arms,
+        plan.seats,
+        plan.paired,
+        plan.tables,
+        plan.reads,
+        plan.short,
+        plan.shapes_read,
     )
-    print(
-        f"{len(tasks)} tasks ({cells} cells x {paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
-    )
-    if len(grid.shapes) > 1:
-        print(
-            f"the task timed is path {slow}, on the grid's largest draft with its loosest add "
-            f"limit ({visits[slow].shape.label()}): the estimate errs long"
-        )
+    keys, paths, visits = made.keys, made.paths, made.visits
     rules = audit.rules_of(league_rules.waivers, league_rules.waiver_rule)
-    if args.dry_run:
-        return dry_run(keys[slow], first_run, rules)
-    ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
-    if not ok:
-        print(f"refused: {why}")
-        return 2
-    rest = rn.run_tasks(task, tasks[:slow] + tasks[slow + 1 :], workers)
-    results = [*rest[:slow], first_run, *rest[slow:]]
     keep, note = audited(keys, results, rules)
     keys = [k for k, ok_ in zip(keys, keep, strict=True) if ok_]
     results = [r for r, ok_ in zip(results, keep, strict=True) if ok_]
-    run_name = args.name or "replay-" + "-".join(str(t) for t in seasons)
     payload = base_payload(
         "replay",
         run_name,
@@ -2069,6 +2235,144 @@ def cmd_replay(args: argparse.Namespace) -> int:
         )
         if sources is not None:
             payload["result_is"] = ROOM_RESULT
+    return payload, note
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    ok, why = guard(NO_PEEK_HOURS if args.no_peek else 0.0, rooms=args.rooms)
+    if not ok:
+        print(f"refused: {why}")
+        return 2
+    plan = replay_plan(args)
+    if isinstance(plan, int):
+        return plan
+    (
+        seasons,
+        grid,
+        league_rules,
+        spread,
+        day,
+        named,
+        sources,
+        inputs,
+        sha,
+        specs,
+        arms,
+        seats,
+        paired,
+        tables,
+        reads,
+    ) = (
+        plan.seasons,
+        plan.grid,
+        plan.league_rules,
+        plan.spread,
+        plan.day,
+        plan.named,
+        plan.sources,
+        plan.inputs,
+        plan.sha,
+        plan.specs,
+        plan.arms,
+        plan.seats,
+        plan.paired,
+        plan.tables,
+        plan.reads,
+    )
+    if day is not None:
+        (r,) = reads
+        if not r.served:
+            print(f"refused: no forecaster named serves {r.season}")
+            return 2
+        f0 = r.served[0]
+        first = shapes.visit(0, grid).shape
+        rules_ = "" if league_rules == shapes.PLAIN else f"; {league_rules.label()}"
+        print(f"no-peek check's league: path 0's, {first.label()}{rules_}")
+        t0 = clock.perf_counter()
+        try:
+            found, n, breaches = no_peek(
+                r.season,
+                r.lines,
+                r.members,
+                r.scheduled,
+                projection_of(f0, r.fixed, r.lines, args.seed, 0, args.shape),
+                inputs.lag,
+                r.weights[f0.label],
+                args.news_sd,
+                arms,
+                seats,
+                args.seed,
+                day,
+                f0.label,
+                forecasts_of(sources, r.fixed, r.lines, args.seed, 0, args.shape, arms),
+                splits_of(sources, arms),
+                r.weights,
+                paired,
+                None if spread is None else (tables[r.season][0].picks, spread),
+                first,
+                league_rules,
+            )
+        except ValueError as e:
+            print(f"refused: {e}")
+            return 2
+        took = clock.perf_counter() - t0
+        print(f"no-peek check on {day}: {n} day records a run, {took:.1f}s, nothing written")
+        for b in breaches:
+            print(
+                f"AUDIT ({b['run']} season): {b['rule']} on {b['day']}, seat {b['seat']}: {b['found']}"
+            )
+        if breaches:
+            print(f"AUDIT: {len(breaches)} breach(es); the check does not stand")
+            return AUDIT_EXIT
+        if found is not None and found[0] <= day:
+            print(
+                f"FAILED: the records part on {found[0]} (variant {found[1]}, "
+                f"{', '.join(found[2])}), at or before {day}"
+            )
+            return 1
+        if found is None:
+            print(f"agree through {day}; the runs never part (the change after it reached no seat)")
+        else:
+            print(f"agree through {day}; first difference on {found[0]} ({', '.join(found[2])})")
+        return 0
+    workers = args.workers or rn.workers_default()
+    made = replay_tasks(plan, args)
+    paths, visits, task, tasks, keys, cells, slow = (
+        made.paths,
+        made.visits,
+        made.task,
+        made.tasks,
+        made.keys,
+        made.cells,
+        made.slow,
+    )
+    t0 = clock.perf_counter()
+    first_run = task(*tasks[slow])
+    one = clock.perf_counter() - t0
+    hours = (
+        args.expected_hours
+        if args.expected_hours is not None
+        else estimate_hours(one, len(tasks), workers)
+    )
+    print(
+        f"{len(tasks)} tasks ({cells} cells x {paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
+    )
+    if len(grid.shapes) > 1:
+        print(
+            f"the task timed is path {slow}, on the grid's largest draft with its loosest add "
+            f"limit ({visits[slow].shape.label()}): the estimate errs long"
+        )
+    rules = audit.rules_of(league_rules.waivers, league_rules.waiver_rule)
+    if args.dry_run:
+        return dry_run(keys[slow], first_run, rules)
+    ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
+    if not ok:
+        print(f"refused: {why}")
+        return 2
+    rest = rn.run_tasks(task, tasks[:slow] + tasks[slow + 1 :], workers)
+    results = [*rest[:slow], first_run, *rest[slow:]]
+    run_name = args.name or "replay-" + "-".join(str(t) for t in seasons)
+    payload, note = replay_payload(plan, args, made, results, workers, run_name)
     look = None
     if CONFIRMATION in seasons:
         look, ledger = reader.append_look(
@@ -2631,6 +2935,513 @@ def paired_blocks(
     }
 
 
+# --------------------------------------------------------------------------- screen
+#: A screen's paths a cell when ``--paths`` names none (the plan's figure).
+SCREEN_PATHS = 48
+#: The world's flags a screen's spec keeps (#172, PR H1): a folder started under one value of any
+#: is refused under another. The workers, the name, the data folder, the cap in minutes, the
+#: announcement and the estimate's override are not the world's.
+SCREEN_WORLD = (
+    "seasons",
+    "forecasters",
+    "shape",
+    "bbm_as",
+    "yahoo_as",
+    "adp",
+    "adp_spread",
+    "grid",
+    "league",
+    "scoring",
+    "points",
+    "held",
+    "waivers",
+    "waiver_days",
+    "waiver_rule",
+    "budget",
+    "rival_scale",
+    "h2h",
+    "news_sd",
+    "paths",
+    "seed",
+)
+#: What a screen is, in its record.
+SCREEN_NOTE = (
+    "a screen nudges each lever of its list once against the baseline arm, on the same paths, "
+    "each pair played by the code replay plays a pair with; it chooses no value, writes no knob "
+    "file and reads no live league"
+)
+
+
+def timed_task(task: Callable[..., Any], *args: Any) -> tuple[float, Any]:
+    """One task and the seconds it took, where it ran (a worker, or this process on one)."""
+    t0 = clock.perf_counter()
+    out = task(*args)
+    return clock.perf_counter() - t0, out
+
+
+def pair_args(args: argparse.Namespace, seasons: str) -> argparse.Namespace:
+    """``screen``'s flags as ``replay`` reads a pair's: the seasons named, two arms (their specs
+    are handed to :func:`replay_plan`, so no file is read), no room and no no-peek check."""
+    return argparse.Namespace(
+        **{
+            **vars(args),
+            "seasons": seasons,
+            "arms": [Path("a"), Path("b")],
+            "seats": None,
+            "no_peek": None,
+        }
+    )
+
+
+def remembering(read: Callable[..., SeasonRead] = read_season) -> Callable[..., SeasonRead]:
+    """:func:`read_season` that remembers: a screen's pairs name one world, so a season is read
+    once for each pair of beliefs its arms hold (what the read takes of the arms: nothing without
+    stand-ins, each arm's ``system`` and ``blend`` with them, in the arms' order, which is the
+    order the labels are kept in)."""
+    kept: dict[Any, SeasonRead] = {}
+
+    def again(
+        data: Path,
+        season: int,
+        named: Sequence[fc.Forecaster],
+        sources: Sources | None,
+        arms: Mapping[str, rn.Arm],
+        seed: int,
+        shape: str,
+        league_rules: shapes.LeagueRules = shapes.PLAIN,
+    ) -> SeasonRead:
+        systems = (
+            None
+            if sources is None
+            else tuple((str(a.knobs["system"]), repr(a.knobs["blend"])) for a in arms.values())
+        )
+        key = (
+            str(data),
+            season,
+            tuple(f.label for f in named),
+            systems,
+            seed,
+            shape,
+            repr(league_rules),
+        )
+        if key not in kept:
+            kept[key] = read(data, season, named, sources, arms, seed, shape, league_rules)
+        return kept[key]
+
+    return again
+
+
+def screen_pair(
+    args: argparse.Namespace,
+    specs: Sequence[Mapping[str, Any]],
+    read: Callable[..., SeasonRead],
+    said: set[str],
+    whose: str,
+) -> tuple[ReplayPlan, ReplayTasks] | int:
+    """One pair of a screen as ``replay`` plans it (:func:`replay_plan`, :func:`replay_tasks`),
+    or the exit code when ``replay`` refuses it. What the plan prints is printed once a screen:
+    a line said for an earlier pair is not said again (``said``)."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        plan = replay_plan(args, [dict(s) for s in specs], read)
+        made = None if isinstance(plan, int) else replay_tasks(plan, args)
+    if isinstance(plan, int) or made is None:
+        print(buf.getvalue(), end="")
+        print(f"refused: {whose} cannot be planned (the line above)")
+        return plan if isinstance(plan, int) else 2
+    for line in buf.getvalue().splitlines():
+        if line not in said:
+            said.add(line)
+            print(line)
+    return plan, made
+
+
+def screen_scale(
+    args: argparse.Namespace,
+    base: Mapping[str, Any],
+    read: Callable[..., SeasonRead],
+    said: set[str],
+    workers: int,
+) -> dict[str, Any] | int:
+    """The run's season scale (``screen.SCALE_NOTE``): the baseline on the surrogate tier, its
+    scale's ratio on each path of the first cell (:func:`task_scale`: no day is played), the
+    mean over the paths that have one. The exit code when the pair cannot be planned."""
+    spec = sc.applied(base, {"tier": "surrogate"})
+    got = screen_pair(args, [spec, spec], read, said, "the season scale's arm")
+    if isinstance(got, int):
+        return got
+    _, made = got
+    t0 = clock.perf_counter()
+    rows = rn.run_tasks(task_scale, made.tasks[: made.paths], workers)
+    ratios = [float(r["ratio"]) for r in rows if r is not None and r.get("ratio") is not None]
+    first = made.keys[0]
+    ratio = sum(ratios) / len(ratios) if ratios else None
+    print(
+        f"season scale: measured on {len(ratios)} of {made.paths} paths of the first cell "
+        f"({first['season']} {first['forecaster']}) in {clock.perf_counter() - t0:.0f}s: "
+        + ("none" if ratio is None else f"{ratio:.4g}")
+    )
+    return {
+        "ratio": ratio,
+        "paths": len(ratios),
+        "of": made.paths,
+        "cell": {"season": first["season"], "forecaster": first["forecaster"]},
+        "note": sc.SCALE_NOTE,
+    }
+
+
+def screen_spec(
+    args: argparse.Namespace, base: Mapping[str, Any], names: Sequence[str], plan: ReplayPlan
+) -> dict[str, Any]:
+    """What a screen's folder is started with and every later piece is held to: the code's
+    ``screen_version`` and ``replay_version`` (a pair played under another is another pair), the
+    baseline arm's spec verbatim, the levers named (in the list's order), the world's flags
+    (:data:`SCREEN_WORLD`; the seasons as read) and the fit's hash."""
+    return {
+        "screen_version": sc.SCREEN_VERSION,
+        "replay_version": REPLAY_VERSION,
+        "arm": dict(base),
+        "levers": list(names),
+        "world": {
+            k: list(plan.seasons) if k == "seasons" else getattr(args, k) for k in SCREEN_WORLD
+        },
+        "fit_sha": plan.sha,
+    }
+
+
+def screen_record(
+    name: str,
+    spec: Mapping[str, Any],
+    plan: ReplayPlan,
+    scale: Mapping[str, Any] | None,
+    measure: str,
+    rows: Sequence[sc.Row],
+    results: Mapping[str, Mapping[str, Any]],
+    timing: Mapping[str, Any],
+) -> dict[str, Any]:
+    """A screen's record: its spec, the code's commit and the fit's hash, the season scale used,
+    the measure and the rule, every row of the list in its order (a played pair's with its
+    result and its file, one still to play as left for the next piece), the survivors, what is
+    left, and under ``timing`` everything that is a time: each pair's estimate and the pieces'
+    start and end. Apart from ``timing`` a screen played in pieces records what one played
+    unbroken does."""
+    out = []
+    for r in rows:
+        d = r.payload()
+        if r.key in results:
+            d |= {"status": sc.PLAYED, "result": dict(results[r.key]), "file": f"{r.key}.json"}
+        elif r.status == sc.PLAY:
+            d["status"] = sc.LEFT
+        out.append(d)
+    rules = plan.league_rules
+    return {
+        "kind": "screen",
+        "name": name,
+        "screen_version": sc.SCREEN_VERSION,
+        "note": SCREEN_NOTE,
+        "spec": dict(spec),
+        "code_sha": reader.code_sha(ROOT),
+        "fit_sha": plan.sha,
+        "fit_file": str(plan.fit_path),
+        "hold_out": plan.fit.get("hold_out", HOLD_OUT),
+        "league": {"rules": rules.payload(), "label": rules.label()},
+        "measure": measure,
+        "rule": sc.RULE,
+        "scale": None if scale is None else dict(scale),
+        "rows": out,
+        "survivors": [d["key"] for d in out if (d.get("result") or {}).get("survives")],
+        "left": [d["key"] for d in out if d["status"] == sc.LEFT],
+        "timing": dict(timing),
+    }
+
+
+def cmd_screen(args: argparse.Namespace) -> int:
+    began = clock.perf_counter()
+    ok, why = guard(0.0, rooms=args.rooms)
+    if not ok:
+        print(f"refused: {why}")
+        return 2
+    if args.max_minutes is not None and not args.max_minutes > 0:
+        print("refused: --max-minutes is a span in minutes, above 0")
+        return 2
+    unknown = [n for n in args.levers or () if n not in sc.NAMES]
+    if unknown:
+        print(
+            f"refused: lever {unknown[0]!r} is not in the screen's list: one of "
+            f"{', '.join(sc.NAMES)}"
+        )
+        return 2
+    names = [n for n in sc.NAMES if not args.levers or n in args.levers]
+    seasons_text = args.seasons
+    if seasons_text is None:
+        latest = gate_season(args.data)
+        if latest is None:
+            print(
+                "refused: no season a screen may play has a log on file under "
+                f"{args.data / LOGS_DIR}"
+            )
+            return 2
+        seasons_text = str(latest)
+    try:
+        looked = parse_seasons(seasons_text)
+    except ValueError:
+        looked = []  # refused by name below, as replay refuses it
+    if CONFIRMATION in looked:
+        print(
+            f"refused: {CONFIRMATION} is the confirmation season; a screen is a search and never "
+            "plays it"
+        )
+        return 2
+    try:
+        base = json.loads(Path(args.arm).read_text())
+    except (OSError, ValueError) as e:
+        print(f"refused: --arm: {e}")
+        return 2
+    if not isinstance(base, dict):
+        print(f"refused: --arm: {args.arm} is not an arm's spec")
+        return 2
+    try:
+        rn.arm_of(base)
+    except (ValueError, KeyError) as e:
+        print(f"refused: --arm: {e.args[0] if e.args else e}")
+        return 2
+    wa = pair_args(args, seasons_text)
+    said: set[str] = set()
+    read = remembering()
+    got = screen_pair(wa, [base, base], read, said, "the baseline arm's world")
+    if isinstance(got, int):
+        return got
+    plan, _ = got
+    rules = plan.league_rules
+    measure = sc.measure_of(rules.scoring, rules.h2h)
+    ctx = sc.Context(rules.scoring, rules.waivers)
+    rows = sc.rows_of(base, names, plan.shapes_read, ctx)
+    workers = args.workers or rn.workers_default()
+    name = args.name or "screen-" + "-".join(str(t) for t in plan.seasons)
+    spec = screen_spec(args, base, names, plan)
+    try:
+        state = reader.read_screen(args.data, name)
+    except reader.SimReadError as e:
+        print(f"refused: {e}")
+        return 2
+    if state is not None:
+        differs = sc.spec_differs(state.get("spec") or {}, spec)
+        if differs is not None:
+            print(
+                f"refused: the screen {name!r} was started with another spec ({differs}); a "
+                "screen is resumed on the spec it was started with: name this one another "
+                "(--name)"
+            )
+            return 2
+    scale = (state or {}).get("scale")
+    if any(r.scale for r in rows):
+        if scale is None:
+            measured = screen_scale(wa, base, read, said, workers)
+            if isinstance(measured, int):
+                return measured
+            scale = measured
+        else:
+            kept = "none" if scale["ratio"] is None else f"{scale['ratio']:.4g}"
+            print(f"season scale: {kept}, as the screen measured it when it was started")
+        ctx = replace(ctx, scale=scale["ratio"], no_scale=sc.NO_RATIO)
+        rows = sc.rows_of(base, names, plan.shapes_read, ctx)
+    refused = [r for r in rows if r.status == sc.REFUSED]
+    for r in refused:
+        print(f"refused: {r.why}")
+    if refused:
+        return 2
+    results: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r.status != sc.PLAY:
+            continue
+        try:
+            pair = reader.read_screen_pair(args.data, name, r.key)
+        except reader.SimReadError as e:
+            print(f"refused: {e}")
+            return 2
+        if pair is None:
+            continue
+        if pair.get("specs") != {"a": dict(r.a or {}), "b": dict(r.b or {})}:
+            print(
+                f"refused: the screen {name!r} holds a pair {r.key} of other arms than this "
+                "screen's: name this one another (--name)"
+            )
+            return 2
+        results[r.key] = pair["screen"]["result"]
+    todo = [r for r in rows if r.status == sc.PLAY and r.key not in results]
+    before = dict((state or {}).get("timing") or {})
+    estimates: dict[str, dict[str, Any]] = dict(before.get("estimates") or {})
+    plans: dict[str, tuple[ReplayPlan, ReplayTasks]] = {}
+    for r in todo:
+        got = screen_pair(wa, [r.a or {}, r.b or {}], read, said, f"the pair of {r.key}")
+        if isinstance(got, int):
+            return got
+        plans[r.key] = got
+    firsts: dict[str, Any] = {}
+    untimed = [r for r in todo if r.key not in estimates]
+    if untimed:
+        t0 = clock.perf_counter()
+        timed = rn.run_tasks(
+            timed_task,
+            [(plans[r.key][1].task, *plans[r.key][1].tasks[plans[r.key][1].slow]) for r in untimed],
+            workers,
+        )
+        for r, (seconds, first) in zip(untimed, timed, strict=True):
+            estimates[r.key] = {"seconds_one": seconds, "tasks": len(plans[r.key][1].tasks)}
+            firsts[r.key] = first
+        print(
+            f"one task of each of {len(untimed)} pair(s) timed in "
+            f"{clock.perf_counter() - t0:.0f}s on {workers} workers"
+        )
+
+    def hours_of(key: str) -> float:
+        e = estimates[key]
+        return estimate_hours(float(e["seconds_one"]), int(e["tasks"]), workers)
+
+    left_hours = sum(hours_of(r.key) for r in todo)
+    whole_hours = (
+        args.expected_hours
+        if args.expected_hours is not None
+        else sum(hours_of(r.key) for r in rows if r.status == sc.PLAY and r.key in estimates)
+    )
+    listed = [r.payload() for r in rows]
+    texts = []
+    for r, d in zip(rows, listed, strict=True):
+        if r.key in results:
+            texts.append("played before")
+        elif r.status == sc.PLAY:
+            e = estimates[r.key]
+            texts.append(
+                f"to play: {e['tasks']} tasks, one took {e['seconds_one']:.1f}s, about "
+                f"{hours_of(r.key):.2f} h"
+            )
+        else:
+            texts.append(sc.status_words(d))
+    print(f"the screen {name}, its list as it would be played:")
+    for line_ in sc.listing(listed, texts):
+        print(line_)
+    print(
+        f"{len(todo)} pair(s) to play, about {left_hours:.2f} h on {workers} workers; the whole "
+        f"screen ({len(todo) + len(results)} pairs) about {whole_hours:.2f} h"
+    )
+    audit_rules = audit.rules_of(rules.waivers, rules.waiver_rule)
+    if args.dry_run:
+        code = 0
+        for r in untimed:
+            made = plans[r.key][1]
+            _, note = audited([made.keys[made.slow]], [firsts[r.key]], audit_rules)
+            if note["paths_voided"]:
+                print(f"the pair of {r.key}, its timed task:")
+                code = max(code, audit_exit(note))
+        print("dry run, nothing written")
+        return code
+    if todo:
+        if whole_hours > ANNOUNCE_HOURS and not args.announced:
+            print(
+                f"refused: a screen of about {whole_hours:g} h is announced on the tracker and "
+                "starts on the user's word, whatever a piece of it takes; --announced says that "
+                "has happened"
+            )
+            return 2
+        piece_hours = (
+            left_hours if args.max_minutes is None else min(left_hours, args.max_minutes / 60.0)
+        )
+        ok, why = guard(piece_hours, rooms=args.rooms, announced=True)
+        if not ok:
+            print(f"refused: {why}")
+            return 2
+    piece: dict[str, Any] = {
+        "started_at": datetime.now(UTC).isoformat(),
+        "finished_at": None,
+        "host": platform.node(),
+        "workers": workers,
+        "nice": NICE,
+        "hash_seed": hash_seed(),
+        "code_sha": reader.code_sha(ROOT),
+        "played": [],
+        "stopped": None,
+    }
+    # A run with nothing left to play of a screen on file is no piece: it writes the record
+    # again from the pairs' files (the same record, unless a piece died between a pair's file and
+    # the record) and prints the table.
+    pieces = list(before.get("pieces") or [])
+    if pieces and pieces[0].get("code_sha") != piece["code_sha"]:
+        print(
+            f"note: the screen was started on commit {pieces[0].get('code_sha')} and this run is "
+            f"on {piece['code_sha']}; each piece records its own"
+        )
+    if todo or state is None:
+        pieces.append(piece)
+    timing = {"estimates": estimates, "pieces": pieces}
+
+    def save() -> Path:
+        return reader.write_screen(
+            args.data,
+            name,
+            screen_record(name, spec, plan, scale, measure, rows, results, timing),
+        )
+
+    save()
+    code = 0
+    for r in todo:
+        minutes = 60.0 * hours_of(r.key)
+        spent = (clock.perf_counter() - began) / 60.0
+        if args.max_minutes is not None and spent + minutes > args.max_minutes:
+            piece["stopped"] = (
+                f"--max-minutes {args.max_minutes:g}: the pair of {r.key}, about {minutes:.1f} "
+                f"min, would pass it {spent:.1f} min from the start"
+            )
+            print(f"stopped: {piece['stopped']}")
+            break
+        pair_plan, made = plans[r.key]
+        pair_plan = replace(pair_plan, started=datetime.now(UTC))
+        t0 = clock.perf_counter()
+        if r.key in firsts:
+            rest = rn.run_tasks(
+                made.task, made.tasks[: made.slow] + made.tasks[made.slow + 1 :], workers
+            )
+            ran = [*rest[: made.slow], firsts.pop(r.key), *rest[made.slow :]]
+        else:
+            ran = rn.run_tasks(made.task, made.tasks, workers)
+        payload, note = replay_payload(pair_plan, wa, made, ran, workers, f"{name}-{r.key}")
+        standing = [x for x in ran if not x.get("breaches")]
+        result = sc.result_of(payload, standing, measure)
+        payload["screen"] = {
+            "name": name,
+            "screen_version": sc.SCREEN_VERSION,
+            **r.payload(),
+            "status": sc.PLAYED,
+            "result": result,
+        }
+        payload["finished_at"] = datetime.now(UTC).isoformat()
+        path = reader.write_screen_pair(args.data, name, r.key, payload)
+        results[r.key] = result
+        piece["played"].append(r.key)
+        save()
+        print(
+            f"{r.key}: {sc.result_words(result)} ({clock.perf_counter() - t0:.0f}s); written: "
+            f"{path}"
+        )
+        code = max(code, audit_exit(note))
+    piece["finished_at"] = datetime.now(UTC).isoformat()
+    record = screen_record(name, spec, plan, scale, measure, rows, results, timing)
+    path = reader.write_screen(args.data, name, record)
+    print(
+        f"the screen {name}: {sc.MEASURE_WORDS.get(measure, measure)}, B less A, one SE either "
+        "way (advisory: a survivor is a candidate for the tune, not a finding)"
+    )
+    for line_ in sc.table(record["rows"]):
+        print(line_)
+    if record["left"]:
+        print(
+            f"left for the next piece: {', '.join(record['left'])}; the same command plays "
+            "them and nothing played before"
+        )
+    print(f"written: {path}")
+    # A pair of an earlier piece whose audit voided a path keeps the screen's exit code.
+    return AUDIT_EXIT if any(x.get("voided") for x in results.values()) else code
+
+
 # --------------------------------------------------------------------------- validate
 def gate_dict(g: vg.Gate) -> dict[str, Any]:
     return {"name": g.name, "passed": g.passed, "season": g.season, "detail": g.detail}
@@ -2822,6 +3633,153 @@ def _run_args(p: argparse.ArgumentParser, paths: int) -> None:
     p.add_argument("--dry-run", action="store_true", help="estimate and write nothing")
 
 
+def _cell_args(p: argparse.ArgumentParser, seasons: str | None) -> None:
+    """The flags that name a run's cells (``replay``'s and ``screen``'s): its seasons, required
+    when ``seasons`` (the help's words for the default) is None, its forecasters and an
+    oracle's error."""
+    p.add_argument(
+        "--seasons",
+        required=seasons is None,
+        default=None,
+        help=f"ESPN season ids, e.g. 2024 or 2022,2023,2024 or 2022-2024; never {HOLD_OUT}"
+        + (f" (default {seasons})" if seasons else ""),
+    )
+    p.add_argument(
+        "--forecasters",
+        default="prior",
+        help="the run's forecasters, comma separated: prior, espn, marcel, oracle:<spread> "
+        "(default prior)",
+    )
+    p.add_argument(
+        "--shape",
+        choices=fc.SHAPES,
+        default="stat",
+        help="an oracle's error: stat, a draw a player and stat; minutes, a share of it common to "
+        "the player's stats (default stat)",
+    )
+
+
+def _world_args(p: argparse.ArgumentParser) -> None:
+    """The flags that name a run's world (``replay``'s and ``screen``'s): the two sources'
+    stand-ins, the draft market, the league's shape and rules, its waivers and its format, and
+    the told return date's spread."""
+    p.add_argument(
+        "--bbm-as",
+        default=None,
+        metavar="FORECASTER",
+        help="the forecaster standing in for the first live source (system bbm); with --yahoo-as",
+    )
+    p.add_argument(
+        "--yahoo-as",
+        default=None,
+        metavar="FORECASTER",
+        help="the forecaster standing in for the second live source (system yahoo); with --bbm-as",
+    )
+    p.add_argument(
+        "--adp",
+        choices=adp.SOURCES,
+        default="none",
+        help="what the rivals draft on: none, the run's forecaster as before; espn, the average "
+        "draft position in the season's own log (default none)",
+    )
+    p.add_argument(
+        "--adp-spread",
+        default=None,
+        metavar="BASE,GROWTH",
+        help="with --adp espn: a rival's error about the table, a normal draw at base + growth x "
+        "pick picks; given, never fitted here",
+    )
+    p.add_argument(
+        "--grid",
+        choices=tuple(GRIDS),
+        default="fixed",
+        help="the league shapes the paths visit: fixed, the one league of twelve teams, thirteen "
+        "slots, four adds a week and six playoff teams over three weeks; full, the ruled grid of "
+        "72, a run's paths rounded up to a multiple of 72 (default fixed)",
+    )
+    p.add_argument(
+        "--league",
+        default=None,
+        metavar="KEY=VALUE,...",
+        help="one league shape for the whole run, as teams=10,slots=15,adds=none,playoffs=4/2: "
+        "each a value of the grid's, a key left out the fixed shape's; not with --grid full",
+    )
+    p.add_argument(
+        "--scoring",
+        choices=shapes.SCORINGS,
+        default="categories",
+        help="how the run's league scores, on every path: categories, the nine; points, on "
+        "--points or ESPN's default table (default categories)",
+    )
+    p.add_argument(
+        "--points",
+        default=None,
+        metavar="STAT=W,...",
+        help="with --scoring points: the table, a stat's points per unit, as pts=1,reb=1.2; a "
+        "stat left out scores nothing (default ESPN's default table)",
+    )
+    p.add_argument(
+        "--held",
+        default=None,
+        metavar="IL=N,IL+=N",
+        help="the held slots after the bench, on every path, as IL=2,IL+=1: IL 0 to 2, IL+ 0 or 1 "
+        "(default none)",
+    )
+    p.add_argument(
+        "--waivers",
+        default="none",
+        metavar="KIND",
+        help="how a dropped player is added back, on every path: none, a free agent the next "
+        "morning; priority, he waits --waiver-days and a claim on him goes by rolling waiver "
+        "priority; faab, he waits and a claim carries a sealed bid from the team's budget, the "
+        "highest bid first, a tie by priority (default none)",
+    )
+    p.add_argument(
+        "--waiver-days",
+        default=None,
+        metavar="N",
+        help=f"with --waivers priority or faab: the days a dropped player waits, 1 to 7 (default "
+        f"{shapes.WAIVER_DAYS})",
+    )
+    p.add_argument(
+        "--waiver-rule",
+        default=None,
+        metavar="RULE",
+        help="with --waivers priority or faab, which adds are claims: dropped, a dropped player's "
+        "in his wait, every other add a free agent's the next morning; continuous, every add, "
+        "one on a player nobody dropped lately decided the next morning (default dropped)",
+    )
+    p.add_argument(
+        "--budget",
+        default=None,
+        metavar="DOLLARS",
+        help=f"with --waivers faab: the whole dollars each team starts with, 1 to 1000 (default "
+        f"{shapes.BUDGET})",
+    )
+    p.add_argument(
+        "--rival-scale",
+        default=None,
+        metavar="X",
+        help="with --waivers faab: what a market rival's bid is multiplied by, above 0, an "
+        "assumption to sweep (default 1)",
+    )
+    p.add_argument(
+        "--h2h",
+        default=None,
+        metavar="FORMAT",
+        help="a categories league's head-to-head format, on every path: one_win, a week is one "
+        "result, won by the side with more categories; each_category, each category of a week "
+        "is a result and the standings rank by the category percentage; not with --scoring "
+        "points (default one_win)",
+    )
+    p.add_argument(
+        "--news-sd",
+        type=float,
+        default=world.NEWS_SD_DAYS,
+        help=f"the told return date's spread in days (default {world.NEWS_SD_DAYS:g})",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n\n")[0])
     ap.add_argument("--data", type=Path, default=DATA, help="the data folder (default data/)")
@@ -2845,24 +3803,7 @@ def main(argv: list[str] | None = None) -> int:
     fi.add_argument("--dry-run", action="store_true", help="print the fit, write nothing")
     fi.set_defaults(func=cmd_fit)
     re_ = sub.add_parser("replay", help="a made-up league on a recorded season's lines")
-    re_.add_argument(
-        "--seasons",
-        required=True,
-        help=f"ESPN season ids, e.g. 2024 or 2022,2023,2024 or 2022-2024; never {HOLD_OUT}",
-    )
-    re_.add_argument(
-        "--forecasters",
-        default="prior",
-        help="the run's forecasters, comma separated: prior, espn, marcel, oracle:<spread> "
-        "(default prior)",
-    )
-    re_.add_argument(
-        "--shape",
-        choices=fc.SHAPES,
-        default="stat",
-        help="an oracle's error: stat, a draw a player and stat; minutes, a share of it common to "
-        "the player's stats (default stat)",
-    )
+    _cell_args(re_, None)
     re_.add_argument(
         "--seats", type=Path, nargs="+", default=None, help="a room: the arms' spec files"
     )
@@ -2874,121 +3815,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SPEC",
         help="the paired design: arm A's and arm B's spec files, B less A",
     )
-    re_.add_argument(
-        "--bbm-as",
-        default=None,
-        metavar="FORECASTER",
-        help="the forecaster standing in for the first live source (system bbm); with --yahoo-as",
-    )
-    re_.add_argument(
-        "--yahoo-as",
-        default=None,
-        metavar="FORECASTER",
-        help="the forecaster standing in for the second live source (system yahoo); with --bbm-as",
-    )
-    re_.add_argument(
-        "--adp",
-        choices=adp.SOURCES,
-        default="none",
-        help="what the rivals draft on: none, the run's forecaster as before; espn, the average "
-        "draft position in the season's own log (default none)",
-    )
-    re_.add_argument(
-        "--adp-spread",
-        default=None,
-        metavar="BASE,GROWTH",
-        help="with --adp espn: a rival's error about the table, a normal draw at base + growth x "
-        "pick picks; given, never fitted here",
-    )
-    re_.add_argument(
-        "--grid",
-        choices=tuple(GRIDS),
-        default="fixed",
-        help="the league shapes the paths visit: fixed, the one league of twelve teams, thirteen "
-        "slots, four adds a week and six playoff teams over three weeks; full, the ruled grid of "
-        "72, a run's paths rounded up to a multiple of 72 (default fixed)",
-    )
-    re_.add_argument(
-        "--league",
-        default=None,
-        metavar="KEY=VALUE,...",
-        help="one league shape for the whole run, as teams=10,slots=15,adds=none,playoffs=4/2: "
-        "each a value of the grid's, a key left out the fixed shape's; not with --grid full",
-    )
-    re_.add_argument(
-        "--scoring",
-        choices=shapes.SCORINGS,
-        default="categories",
-        help="how the run's league scores, on every path: categories, the nine; points, on "
-        "--points or ESPN's default table (default categories)",
-    )
-    re_.add_argument(
-        "--points",
-        default=None,
-        metavar="STAT=W,...",
-        help="with --scoring points: the table, a stat's points per unit, as pts=1,reb=1.2; a "
-        "stat left out scores nothing (default ESPN's default table)",
-    )
-    re_.add_argument(
-        "--held",
-        default=None,
-        metavar="IL=N,IL+=N",
-        help="the held slots after the bench, on every path, as IL=2,IL+=1: IL 0 to 2, IL+ 0 or 1 "
-        "(default none)",
-    )
-    re_.add_argument(
-        "--waivers",
-        default="none",
-        metavar="KIND",
-        help="how a dropped player is added back, on every path: none, a free agent the next "
-        "morning; priority, he waits --waiver-days and a claim on him goes by rolling waiver "
-        "priority; faab, he waits and a claim carries a sealed bid from the team's budget, the "
-        "highest bid first, a tie by priority (default none)",
-    )
-    re_.add_argument(
-        "--waiver-days",
-        default=None,
-        metavar="N",
-        help=f"with --waivers priority or faab: the days a dropped player waits, 1 to 7 (default "
-        f"{shapes.WAIVER_DAYS})",
-    )
-    re_.add_argument(
-        "--waiver-rule",
-        default=None,
-        metavar="RULE",
-        help="with --waivers priority or faab, which adds are claims: dropped, a dropped player's "
-        "in his wait, every other add a free agent's the next morning; continuous, every add, "
-        "one on a player nobody dropped lately decided the next morning (default dropped)",
-    )
-    re_.add_argument(
-        "--budget",
-        default=None,
-        metavar="DOLLARS",
-        help=f"with --waivers faab: the whole dollars each team starts with, 1 to 1000 (default "
-        f"{shapes.BUDGET})",
-    )
-    re_.add_argument(
-        "--rival-scale",
-        default=None,
-        metavar="X",
-        help="with --waivers faab: what a market rival's bid is multiplied by, above 0, an "
-        "assumption to sweep (default 1)",
-    )
-    re_.add_argument(
-        "--h2h",
-        default=None,
-        metavar="FORMAT",
-        help="a categories league's head-to-head format, on every path: one_win, a week is one "
-        "result, won by the side with more categories; each_category, each category of a week "
-        "is a result and the standings rank by the category percentage; not with --scoring "
-        "points (default one_win)",
-    )
-    re_.add_argument(
-        "--news-sd",
-        type=float,
-        default=world.NEWS_SD_DAYS,
-        help=f"the told return date's spread in days (default {world.NEWS_SD_DAYS:g})",
-    )
+    _world_args(re_)
     re_.add_argument(
         "--no-peek",
         default=None,
@@ -2997,6 +3824,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     _run_args(re_, paths=20)
     re_.set_defaults(func=cmd_replay)
+    sn = sub.add_parser(
+        "screen", help="each lever nudged once against a baseline arm, and what moved"
+    )
+    sn.add_argument(
+        "--arm",
+        type=Path,
+        required=True,
+        metavar="SPEC",
+        help="the baseline arm's spec file: arm A of every pair, arm B is A with one nudge",
+    )
+    sn.add_argument(
+        "--levers",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        help="the levers to screen, by name, in the list's order whatever the order named "
+        f"(default every lever of the list: {', '.join(sc.NAMES)})",
+    )
+    _cell_args(
+        sn, "the latest season on file that is neither the hold-out nor the confirmation season"
+    )
+    _world_args(sn)
+    sn.add_argument(
+        "--max-minutes",
+        type=float,
+        default=None,
+        metavar="N",
+        help="start no pair whose estimate would pass N minutes from the start: stop cleanly and "
+        "say what is left, which the same command plays later",
+    )
+    _run_args(sn, paths=SCREEN_PATHS)
+    sn.set_defaults(func=cmd_screen)
     va = sub.add_parser("validate", help="gate 5: the surrogate against the exact set on a replay")
     va.add_argument(
         "--season",
