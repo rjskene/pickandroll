@@ -1419,7 +1419,7 @@ knob file and reads no live league.
 - The cells and the world are named with `replay`'s flags: `--seasons` (default the latest season
   on file that is neither the hold-out nor the confirmation season), `--forecasters`, `--paths`
   (default 48), `--seed`, `--workers`, the league's shape and rules, the table, the waivers,
-  `--name`, `--dry-run`, `--announced`.
+  `--rival-bids`, `--name`, `--dry-run`, `--announced`.
 - The hold-out is refused as everywhere. The confirmation season is refused too: a screen is a
   search.
 
@@ -1512,8 +1512,8 @@ over the paths, not over the season's own chance.
   when the piece ends.
 - Running the same command again plays only the pairs with no record yet. It first checks the
   spec against the one the folder was started with: the baseline arm, the levers named, the
-  world's flags, `screen_version`, `replay_version` and the fit's hash. Another spec is refused
-  by name. Each piece records the code's commit it ran on, and a piece on another commit than
+  world's flags, `screen_version`, `replay_version`, the fit's hash and, when the rivals bid on
+  the price book (`--rival-bids book`), the book's. Another spec is refused by name. Each piece records the code's commit it ran on, and a piece on another commit than
   the first says so. A run with nothing left to play is no piece: it writes the record again
   from the pairs' files and prints the table.
 - `--max-minutes N` starts no pair whose estimate would pass N minutes from the start; the screen

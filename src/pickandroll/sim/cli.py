@@ -3072,6 +3072,7 @@ SCREEN_WORLD = (
     "waiver_rule",
     "budget",
     "rival_scale",
+    "rival_bids",
     "h2h",
     "news_sd",
     "paths",
@@ -3209,7 +3210,8 @@ def screen_spec(
     """What a screen's folder is started with and every later piece is held to: the code's
     ``screen_version`` and ``replay_version`` (a pair played under another is another pair), the
     baseline arm's spec verbatim, the levers named (in the list's order), the world's flags
-    (:data:`SCREEN_WORLD`; the seasons as read) and the fit's hash."""
+    (:data:`SCREEN_WORLD`; the seasons as read), the fit's hash and, in a run whose rivals bid on
+    the price book (PR Fd), the book's: a newer book is another world."""
     return {
         "screen_version": sc.SCREEN_VERSION,
         "replay_version": REPLAY_VERSION,
@@ -3219,6 +3221,7 @@ def screen_spec(
             k: list(plan.seasons) if k == "seasons" else getattr(args, k) for k in SCREEN_WORLD
         },
         "fit_sha": plan.sha,
+        **({} if plan.book is None else {"book_sha": plan.book[1]}),
     }
 
 
@@ -3256,6 +3259,7 @@ def screen_record(
         "code_sha": reader.code_sha(ROOT),
         "fit_sha": plan.sha,
         "fit_file": str(plan.fit_path),
+        **({} if plan.book is None else {"book_sha": plan.book[1], "book_file": str(plan.book[2])}),
         "hold_out": plan.fit.get("hold_out", HOLD_OUT),
         "league": {"rules": rules.payload(), "label": rules.label()},
         "measure": measure,

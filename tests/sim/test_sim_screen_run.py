@@ -24,6 +24,7 @@ from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from tests.sim.sim_league import KNOBS, make_data_dir
+from tests.sim.test_sim_rivals import fit_bids, table_rows, write_table
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
 #: Two seats of six slots, four adds a week, both in a one-week final.
@@ -396,6 +397,33 @@ def test_a_screen_is_resumed_only_on_the_spec_it_was_started_with(data: Path, wh
         code, out = screen(data, name="whole")
     assert code == 2 and "replay_version: started with" in out, out
     assert record(data, "whole") == whole[0]
+
+
+def test_a_screen_on_the_price_book_is_held_to_the_book(data: Path, whole):
+    """``--rival-bids book`` (PR Fd): the screen's spec and its record name the book the rivals
+    bid on, as each pair's record does, and a piece under a newer book is refused: a newer book
+    is another world. A screen that names no book holds none."""
+    assert "book_sha" not in whole[0]["spec"] and "book_sha" not in whole[0]
+    assert whole[0]["spec"]["world"]["rival_bids"] is None
+    write_table(data, table_rows())
+    assert fit_bids(data)[0] == 0
+    flags = ("--waivers", "faab", "--waiver-rule", "continuous", "--rival-bids", "book")
+    code, out = screen(data, *flags, levers=("surrogate_days",), name="book")
+    assert code == 0, out
+    rec = record(data, "book")
+    _, sha, where = reader.newest_book(data)
+    assert rec["spec"]["book_sha"] == rec["book_sha"] == sha and rec["book_file"] == str(where)
+    assert rec["spec"]["world"]["rival_bids"] == "book"
+    got = pair_of(data, "book", "surrogate_days-monday")
+    assert got["book_sha"] == sha and got["league"]["rules"]["rival_bids"] == "book"
+    # A newer book: the table without one of the rivals' wins, fitted again.
+    rows = table_rows()
+    del rows[2]
+    write_table(data, rows)
+    assert fit_bids(data)[0] == 0 and reader.newest_book(data)[1] != sha
+    code, out = screen(data, *flags, levers=("surrogate_days",), name="book")
+    assert code == 2 and "started with another spec (book_sha: started with" in out, out
+    assert record(data, "book") == rec
 
 
 def test_a_folder_that_is_not_this_screen_s_is_refused(data: Path):
