@@ -106,7 +106,8 @@ fit. The book holds:
 - `ours`: the user's claims won and lost in the table;
 - `notes`: what the book does not model, the list below.
 
-What the book does not model, each plainly (its `notes` say the same):
+What the book does not model, each plainly (its `notes` say the first six; the last two are of
+a run on the book, not of the table):
 
 1. **It is of winning bids, not of all bids.** Where several claims meet, a rival drawn on it bids
    as a winner did, so the simulated winning prices sit above the book.
@@ -114,9 +115,27 @@ What the book does not model, each plainly (its `notes` say the same):
    is assumed alike; `--rival-scale` is the sweep.
 3. **A bid does not read the rival's dollars left** beyond the clamp, nor the player.
 4. **The rate and `among` are the arm's**, set by hand against the book's `adds` and `ours`. No
-   measured figure is a default in the code.
+   measured figure is a default in the code. As a working default the rate is chosen on the weeks
+   the book covers only: the rivals' wins a rival team in each simulated path's first whole
+   weeks, as many as a league of the table holds, against the book's median. A rate so chosen
+   holds for the `among` it was chosen at: `among` changes how often the rivals' claims meet one
+   another, and so their adds, more than it changes how often the seat's claims are lost, which
+   the book's `ours` does not settle.
 5. **One view for every rival**; `among` stands for the managers' different tastes and needs.
 6. **`adds` is a lower bound**, as above.
+7. **The rivals' adds fall through the season, at every rate tried.** A rival that draws a move
+   makes one only when one of its best few is worth more than its weakest, and under `view`
+   `season` such mornings grow rarer as the weeks pass: the wire's best are soon on a roster, and
+   a belief is a running mean (`sim/belief.py`), which moves less with each game played. So a
+   rate that matches the book's `adds` in a season's first weeks gives fewer adds a week later
+   on, and a higher rate lifts the season's figure by much less than its own rise. The book holds
+   only a season's first weeks, so whether real managers slow the same way is not known here; a
+   refit when the table holds later weeks is the check.
+8. **A bid's rank reads the fortnight before, which is not like today while the season is
+   young.** In a season's first weeks the wire's best are being taken, so a move gains less than
+   the fortnight's before it, ranks low, and the rivals' bids sit a little under the book. Over
+   all their wins the simulated winning prices then sit about on the book, and above it only
+   where claims meet (item 1).
 
 ## The league (`sim/league.py`)
 
@@ -1163,9 +1182,10 @@ Who bids, and how:
   left out), `n` how many there are, and `U` the rival's draw on [0, 1) for its team and day,
   the one draw a claim the assumed form takes too (it takes `0.5 + U`). Until there are ten such
   moves, `u = U`. So a bigger move than the fortnight's usual bids higher on the book, and the
-  book's spread is kept whole. The prices travel with the run's rules and are never recorded but
-  by the book's hash; `--rival-scale` multiplies the price as it multiplies the assumed form, and
-  the seat's bids do not change.
+  book's spread is kept whole while the gains of one fortnight are like the next's ("The rivals'
+  book", item 8, says when they are not). The prices travel with the run's rules and are never
+  recorded but by the book's hash; `--rival-scale` multiplies the price as it multiplies the
+  assumed form, and the seat's bids do not change.
 - **A static seat** never claims.
 
 In a FAAB run `faab_sizing` is read by a seat that bids, and the plan floor of the league's scoring
