@@ -9,7 +9,7 @@ import sys
 import textwrap
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -265,3 +265,52 @@ def test_a_wait_on_the_shared_pool_ends_when_a_terminating_shutdown_stops_its_wo
     assert isinstance(out["raised"], pools.PoolStopped)
     assert out["ended"] - stopped < STOP_BOUND
     assert futures[2].cancelled()
+
+
+def test_a_worker_terminated_inside_a_slice_ends_the_wait_as_stopped_never_as_broken(
+    monkeypatch,
+):
+    """#425: a terminating shutdown can land inside one slice of the wait. The workers it stops
+    come back from that slice as done futures that raise ``BrokenProcessPool``; the wait checks
+    the shutdowns again after the slice, so it raises :class:`PoolStopped` and yields none of
+    them. Deterministic: the slice is a stand-in that runs the shutdown and returns the broken
+    future, as the race does."""
+    from concurrent.futures.process import BrokenProcessPool
+
+    broken, waiting_on = Future(), Future()
+    broken.set_exception(BrokenProcessPool("a child process terminated abruptly"))
+    slices = []
+
+    def slice_with_a_shutdown(pending, timeout, return_when):
+        slices.append(set(pending))
+        pools.shutdown_pool(terminate=True)  # lands while the slice waits
+        return {broken}, set(pending) - {broken}
+
+    monkeypatch.setattr(pools, "wait", slice_with_a_shutdown)
+    got = []
+    with pytest.raises(pools.PoolStopped):
+        got.extend(pools.completed([broken, waiting_on]))  # keeps what came before the raise
+    assert got == [] and len(slices) == 1
+    assert waiting_on.cancelled()  # what still waited is cancelled, as before a slice
+    # The one-future wait the survival build and the pricing rounds use ends the same way.
+    lone = Future()
+    lone.set_exception(BrokenProcessPool("a child process terminated abruptly"))
+
+    def lone_slice(pending, timeout, return_when):
+        pools.shutdown_pool(terminate=True)
+        return {lone}, set()
+
+    monkeypatch.setattr(pools, "wait", lone_slice)
+    with pytest.raises(pools.PoolStopped):
+        pools.result(lone)
+
+
+def test_a_slice_that_ends_without_a_shutdown_still_gives_its_futures():
+    """#425: the check after a slice stops only a wait a shutdown ended; a future done in the
+    slice comes as before, even one that raised."""
+    failed, fine = Future(), Future()
+    failed.set_exception(ValueError("the job's own failure"))
+    fine.set_result(3)
+    out = list(pools.completed([failed, fine]))
+    assert set(out) == {failed, fine}
+    assert pools.result(fine) == 3

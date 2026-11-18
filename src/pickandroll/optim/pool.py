@@ -118,7 +118,8 @@ def completed(futures: Iterable[Future]) -> Iterator[Future]:
     """``as_completed`` that a shutdown ends (#401): each future as it finishes, the wait taken in
     slices of :data:`WAIT_SLICE_SECONDS`. Once :func:`shutdown_pool` has run since the call, the
     futures still waiting are cancelled and :class:`PoolStopped` is raised, so the caller reports
-    a failure as for any other. Nothing else changes: every future comes, as it finishes."""
+    a failure as for any other; a slice the shutdown landed in yields nothing (#425). Nothing
+    else changes: every future comes, as it finishes."""
     return _completed(set(futures), _SHUTDOWNS)
 
 
@@ -130,13 +131,24 @@ def result(future: Future):
 
 
 def _completed(pending: set[Future], began: int) -> Iterator[Future]:
+    """The shutdowns are checked before each slice and again after it (#425): a terminating
+    shutdown inside a slice hands its stopped workers back from it as done futures raising
+    ``BrokenProcessPool``. Those are never yielded; the wait raises :class:`PoolStopped`, as
+    one begun before the shutdown always does."""
     while pending:
-        if _SHUTDOWNS != began:
-            for future in pending:
-                future.cancel()
-            raise PoolStopped(f"the process pools were shut down with {len(pending)} jobs waiting")
+        _stop_if_shut(pending, began)
         done, pending = wait(pending, timeout=WAIT_SLICE_SECONDS, return_when=FIRST_COMPLETED)
+        _stop_if_shut(pending, began)
         yield from done
+
+
+def _stop_if_shut(pending: set[Future], began: int) -> None:
+    """Cancel ``pending`` and raise :class:`PoolStopped` once :func:`shutdown_pool` has run
+    since ``began``."""
+    if _SHUTDOWNS != began:
+        for future in pending:
+            future.cancel()
+        raise PoolStopped(f"the process pools were shut down with {len(pending)} jobs waiting")
 
 
 def _close(pool: ProcessPoolExecutor, terminate: bool) -> None:
