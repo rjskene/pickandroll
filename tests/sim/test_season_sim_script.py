@@ -723,7 +723,8 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
 #: made-up season with a wire (seed 1, lag 1, path 0), by seat: one day differs for two seats. The
 #: seats then weighed expected categories, as they do in a league that counts every category, so
 #: the tests below name that format (the format PR); under the default, one win per matchup, the
-#: two tiers agree on every day (``test_sim_format``).
+#: two tiers agree on 14 of the 15 league-days, seat 6 differing on its fifth
+#: (``test_sim_format.ONE_WIN_MATCHES``).
 WIRE_MATCHES = {
     1: [True, True, True, False, True],
     6: [True, True, True, True, True],
