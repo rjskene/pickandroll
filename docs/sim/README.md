@@ -989,8 +989,16 @@ free agent lands the next morning, a contested one by the day's rotation. An add
 waivers is a **claim**: it waits for his clear date, and its drop and its held-slot moves are made
 only if it is won, but for a churn on a claim: its held player leaves the next morning, won or not,
 as the autopilot drops him on his own before the claim (which is why the engine offers a churn on a
-claim only when the held player is worth nothing net of his return). On the clear morning, before
-anything else lands, the claims on him are decided by rolling priority: the team with the best
+claim only when the held player is worth nothing net of his return). **The morning's order**, in
+every waiver league (`run.simulate`; Fc's review): first each team's cleared held players come
+back, its active roster is trimmed to its spots and the held players its churns' claims drop
+leave (`policy.arrive`); then the claims due are decided (`policy.clear_waivers`); then the rest
+of yesterday's queue lands (`policy.land`). A claim so meets the roster its team has that
+morning: a trim cannot take the player just claimed (it takes its weakest before he comes, and
+a claim whose drop it took fails), and a churn's claim finds the slot its held player leaves.
+Until Fc's review the claims came first, which let both happen; it moved only a league with held
+slots, on a morning a held player came back or a churn's held player left. On the clear morning
+the claims on him are decided by rolling priority: the team with the best
 priority that still has a claim open that morning wins its first (in the order it placed them) and
 goes to the back of the order; every other claim on that player is lost (no drop, counted as lost);
 repeat until no claim is open. A player nobody claimed is a free agent from that morning. A won
@@ -1111,8 +1119,10 @@ agent's. The draft's leftovers and a player who enters the league are claimable 
 morning, with no wait. A claim is placed today and decided on the morning its player clears: one
 on a player nobody dropped lately the next morning (the daily run), one on a dropped player on his
 clear date, the drop's morning plus the waiver days, as above. The next-morning landing and the
-day's rotation decide nothing. The clear morning (`policy.clear_waivers`) decides every claim due
-that morning in one pass, the claims on a free agent and on a dropped player alike, by the
+day's rotation decide nothing. The clear morning (`policy.clear_waivers`), once the cleared held
+players are back, the rosters trimmed and the churns' held players gone (the morning's order,
+above; under the rule nothing else lands, so a claim meets the morning's roster), decides every
+claim due that morning in one pass, the claims on a free agent and on a dropped player alike, by the
 league's waivers as above: by priority the best priority with a claim open takes its first and
 goes to the back; by FAAB the highest bid first, a tie by priority, the winner paying its bid, the
 order rolling only on a tie. Won, lost and failed mean what they mean above, a claim's drop and

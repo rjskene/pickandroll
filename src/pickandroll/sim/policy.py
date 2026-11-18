@@ -1482,6 +1482,71 @@ def _activate(
     return out
 
 
+def _leaves(
+    pool: set[int],
+    waivers: dict[int, Waiting],
+    waiver: tuple[date, int] | None,
+    k: int,
+    team: int,
+) -> None:
+    """``k`` leaves ``team``'s roster for the wire: on waivers in a waiver league."""
+    pool.add(k)
+    if waiver is not None:
+        waivers[k] = Waiting(waiver[0] + timedelta(waiver[1]), team)
+
+
+def arrive(
+    state: SimState,
+    order: Sequence[int],
+    spots: int | None = None,
+    status: Mapping[int, str | None] | None = None,
+    value: Mapping[int, float] | None = None,
+    values: Mapping[int, Mapping[int, float]] | None = None,
+    waiver: tuple[date, int] | None = None,
+) -> SimState:
+    """The first half of the morning (:func:`land`'s first steps), team by team in ``order``:
+    given the day's ``status`` and ``value`` (a team's own in ``values`` when it has one there:
+    its seat's forecaster's), each team's cleared held players come back and the active roster
+    is trimmed to ``spots`` (:func:`_activate`; each player it sends counts in the team's
+    ``forced_by``, never in ``executed_by`` or ``gone_by``); then the held players the churns'
+    claims drop (``pending_drops``) leave, on their own, as a churn's held drop does. Every
+    player who leaves goes on waivers until ``waiver``'s day plus its days (None without
+    waivers).
+
+    In a waiver league the runner calls it before the morning's claims are decided
+    (:func:`clear_waivers`, #172, Fc's review): a claim then meets the roster its team has that
+    morning, so a cleared held player's trim cannot take the player just claimed, and a churn's
+    claim finds the slot its held player leaves. Then :func:`land` makes the rest with
+    ``arrived``. Without a held slot nothing here moves: no held player comes back and no
+    roster is over its spots."""
+    rosters = {t: list(r) for t, r in state.rosters.items()}
+    pool = set(state.pool)
+    forced = dict(state.forced_by)
+    waivers = dict(state.waivers)
+    for team in order:
+        roster = rosters.setdefault(team, [])
+        own = (values or {}).get(team, value)
+        if status is not None and own is not None:
+            left = _activate(roster, spots, status, own)
+            for k in left:
+                _leaves(pool, waivers, waiver, k, team)
+            if left:
+                forced[team] = forced.get(team, 0) + len(left)
+        for k in state.pending_drops.get(team, ()):
+            idx = next((i for i, (pk, s) in enumerate(roster) if pk == k and s in mv.HELD), None)
+            if idx is not None:
+                del roster[idx]
+                _leaves(pool, waivers, waiver, k, team)
+    return replace(
+        state,
+        rosters={t: tuple(r) for t, r in rosters.items()},
+        pool=frozenset(pool),
+        forced_by=forced,
+        waivers=waivers,
+        pending_drops={},
+    )
+
+
 def land(
     state: SimState,
     order: Sequence[int],
@@ -1491,12 +1556,15 @@ def land(
     value: Mapping[int, float] | None = None,
     values: Mapping[int, Mapping[int, float]] | None = None,
     waiver: tuple[date, int] | None = None,
+    arrived: bool = False,
 ) -> SimState:
-    """Yesterday's queued moves land, team by team in ``order``. First, given the day's ``status``
+    """Yesterday's queued moves land, team by team in ``order``. First (:func:`arrive`, unless
+    ``arrived`` says the runner made it before the morning's claims), given the day's ``status``
     and ``value`` (a team's own in ``values`` when it has one there: its seat's forecaster's),
     each team's cleared held players come back and the active roster is trimmed to ``spots``
     (:func:`_activate`; each player it sends counts in the team's ``forced_by``, never in
-    ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
+    ``executed_by`` or ``gone_by``), and the held players the churns' claims drop leave. Then a
+    churn's held drop goes to the pool on his
     own, as the engine times it (#221), freeing his slot; then the held-slot moves it queued,
     each player to his held slot while the slot has room (``slot_counts``, the league's slots by
     kind) and, given ``status``, only if the slot accepts the status he has that morning
@@ -1510,12 +1578,16 @@ def land(
 
     ``waiver`` (today and the league's waiver days, #172, PR Fa; None without waivers): every
     player who leaves a roster this morning (a forced drop, a churn's held drop, a swap's drop)
-    goes on waivers until today plus the waiver days, and the held players the churns' claims
-    drop (``pending_drops``) leave first, on their own, as a churn's held drop does."""
+    goes on waivers until today plus the waiver days.
+
+    Each team's first steps all come before any team's moves (they did team by team before
+    Fc's review): no team's first steps read another's moves, so the order moves nothing."""
+    if not arrived:
+        state = arrive(state, order, spots, status, value, values, waiver)
     rosters = {t: list(r) for t, r in state.rosters.items()}
     pool = set(state.pool)
     adds_used = dict(state.adds_used)
-    executed, gone, forced = dict(state.executed_by), dict(state.gone_by), dict(state.forced_by)
+    executed, gone = dict(state.executed_by), dict(state.gone_by)
     refused = dict(state.held_refused_by)
     waivers = dict(state.waivers)
 
@@ -1524,24 +1596,10 @@ def land(
             by[team] = by.get(team, 0) + n
 
     def leaves(k: int, team: int) -> None:
-        """``k`` leaves ``team``'s roster for the wire: on waivers in a waiver league."""
-        pool.add(k)
-        if waiver is not None:
-            waivers[k] = Waiting(waiver[0] + timedelta(waiver[1]), team)
+        _leaves(pool, waivers, waiver, k, team)
 
     for team in order:
         roster = rosters.setdefault(team, [])
-        own = (values or {}).get(team, value)
-        if status is not None and own is not None:
-            left = _activate(roster, spots, status, own)
-            for k in left:
-                leaves(k, team)
-            count(forced, team, len(left))
-        for k in state.pending_drops.get(team, ()):
-            idx = next((i for i, (pk, s) in enumerate(roster) if pk == k and s in mv.HELD), None)
-            if idx is not None:
-                del roster[idx]
-                leaves(k, team)
         moves = state.pending.get(team, ())
         churned: set[int] = set()
         for m in moves:
@@ -1599,10 +1657,8 @@ def land(
         pending_held={},
         executed_by=executed,
         gone_by=gone,
-        forced_by=forced,
         held_refused_by=refused,
         waivers=waivers,
-        pending_drops={},
     )
 
 
@@ -1615,8 +1671,10 @@ def clear_waivers(
     waiver_days: int,
     bidding: bool = False,
 ) -> SimState:
-    """The morning of ``day`` in a waiver league (#172, PR Fa), before anything else lands: the
-    claims on every player whose clear date has come are decided by rolling priority. The team
+    """The morning of ``day`` in a waiver league (#172, PR Fa), once the cleared held players are
+    back, the rosters trimmed and the churns' held players gone (:func:`arrive`, Fc's review) and
+    before anything else lands: the claims on every player whose clear date has come are decided
+    by rolling priority. The team
     with the best priority (``state.priority``, best first) that still has a claim open this
     morning takes its first open claim (in the order it placed them). Its roster takes the
     player when the claim's drop is still on its active roster, or, for an open-spot claim, when

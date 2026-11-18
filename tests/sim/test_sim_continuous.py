@@ -54,13 +54,16 @@ def on_waivers(state: SimState, by: int, clears: date, *players: int) -> SimStat
     return replace(state, waivers={**state.waivers, **{k: Waiting(clears, by) for k in players}})
 
 
-def morning(setup, s: SimState, day: date) -> SimState:
-    """The morning of ``day`` as the runner plays it: the claims due decided, then yesterday's
-    queued moves landed in the day's rotation."""
+def morning(setup, s: SimState, day: date, status=None, value=None) -> SimState:
+    """The morning of ``day`` as the runner plays it: the cleared held players back, the rosters
+    trimmed and the churns' held players gone (``policy.arrive``, Fc's review; with ``status``
+    and ``value`` given), then the claims due decided, then the rest of yesterday's queue
+    landed, in the day's rotation."""
     spots, counts = spots_of(setup)
-    di = (day - setup.start).days
-    s = policy.clear_waivers(s, day, spots, counts, {}, setup.waiver_days, setup.bidding)
-    return policy.land(s, rn._rotation(setup.teams, di), spots, counts, waiver=(day, 2))
+    order = rn._rotation(setup.teams, (day - setup.start).days)
+    s = policy.arrive(s, order, spots, status, value, None, (day, 2))
+    s = policy.clear_waivers(s, day, spots, counts, status or {}, setup.waiver_days, setup.bidding)
+    return policy.land(s, order, spots, counts, status, value, None, (day, 2), arrived=True)
 
 
 # --------------------------------------------------------------------------- the rule

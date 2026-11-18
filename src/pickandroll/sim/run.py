@@ -709,8 +709,10 @@ def simulate(
         # Yesterday's moves land first, cleared held players back and the held-slot moves made
         # before them: on a Monday they were made on Sunday and spend the ending week's adds, so
         # the week's count starts over only once they are in. In a waiver league the claims on
-        # the players clearing today are decided before anything else lands (PR Fa), each won
-        # one charged to the same week as yesterday's moves: the week of the day before.
+        # the players clearing today are decided once the cleared held players are back, the
+        # rosters trimmed and the churns' held players gone (``policy.arrive``, Fc's review), and
+        # before the rest lands (PR Fa), each won one charged to the same week as yesterday's
+        # moves: the week of the day before.
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
@@ -719,12 +721,21 @@ def simulate(
         if waiting:
             states = [
                 policy.clear_waivers(
-                    s, day, spots, slot_counts, status, setup.waiver_days, setup.bidding
+                    policy.arrive(s, order, spots, status, value, values[vi], **waiver),
+                    day,
+                    spots,
+                    slot_counts,
+                    status,
+                    setup.waiver_days,
+                    setup.bidding,
                 )
-                for s in states
+                for vi, s in enumerate(states)
             ]
+        arrived = {"arrived": True} if waiting else {}
         states = [
-            policy.land(s, order, spots, slot_counts, status, value, values[vi], **waiver)
+            policy.land(
+                s, order, spots, slot_counts, status, value, values[vi], **waiver, **arrived
+            )
             for vi, s in enumerate(states)
         ]
         for vi, s in enumerate(states):
