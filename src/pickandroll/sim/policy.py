@@ -64,6 +64,14 @@ gain in the engine's units and bids $0; a market rival bids by an assumed form
 (:func:`rival_bid`); a static seat never claims.
 ``EXECUTIONS`` names the model in every run's payload.
 
+**Continuous waivers** (PR Fc, ``Setup.waiver_rule`` ``continuous``, by priority or by FAAB):
+every unowned player is on waivers at all times, so every add is a claim, placed today and
+decided on the morning its player clears: tomorrow for a player nobody dropped lately, a dropped
+player's clear date otherwise. :func:`clear_waivers` decides both in one pass by the league's
+waivers, :func:`queue` places every add as a claim under the claim rules, and the problem marks
+every candidate among ``claims``. Nothing lands as a free agent and the day's rotation decides
+nothing. With the rule not named nothing moves.
+
 **The head-to-head format** (the format PR, ``Setup.h2h``). In a categories league that counts one
 win per matchup (the default) the problem says so (``MoveProblem.one_win``, as the live build
 passes ``SeasonSettings.one_win``), so every tier that weighs (exact, surrogate, a mirror rival)

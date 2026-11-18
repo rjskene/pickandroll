@@ -6,7 +6,8 @@ the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
 tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
 (PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
-priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by. The world
+priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by; under
+continuous waivers (PR Fc) every add a claim among them. The world
 (``run.World``) is apart: lines, availability and the beliefs belong to the path, never to an
 arm, so two arms of a pair see one world. Pure: frozen dataclasses,
 advanced by ``replace``.
@@ -70,13 +71,15 @@ class Waiting:
 
 @dataclass(frozen=True)
 class Claim:
-    """A waiver claim placed and not yet decided (#172, PR Fa): its move (the add on waivers; the
-    drop, made only if the claim is won, or None for an open spot), the day it was placed, its
-    add's clear date (the morning it is decided), the week its add is charged to (the week of the
-    day before it lands, so the plan's and the world's weeks agree; None outside the calendar),
-    the held-slot moves it needs, made only if it is won, and whether its drop is a held player
-    (a churn, #221), who leaves on his own the morning after the claim is placed. In a FAAB league
-    (PR Fb) its sealed ``bid``, whole dollars set when it is placed (0 by priority)."""
+    """A waiver claim placed and not yet decided (#172, PR Fa): its move (the add on waivers, or
+    under continuous waivers any add, PR Fc; the drop, made only if the claim is won, or None for
+    an open spot), the day it was placed, its add's clear date (the morning it is decided: a
+    dropped player's clear date, or under continuous waivers the next morning for a player nobody
+    dropped lately), the week its add is charged to (the week of the day before it lands, so the
+    plan's and the world's weeks agree; None outside the calendar), the held-slot moves it needs,
+    made only if it is won, and whether its drop is a held player (a churn, #221), who leaves on
+    his own the morning after the claim is placed. In a FAAB league (PR Fb) its sealed ``bid``,
+    whole dollars set when it is placed (0 by priority)."""
 
     move: Move
     placed: date
