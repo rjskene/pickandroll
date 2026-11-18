@@ -1382,7 +1382,7 @@ def queue(
             kept.append(mv.Move(m.add, m.drop))
             continue
         if wait is None and m.add not in state.pool:
-            continue  # under continuous waivers, a claim on a player nobody owns
+            continue  # under continuous waivers: an add not in the pool (a team holds him)
         if wait is not None and wait.by == team:
             continue  # READD: his own drop, still waiting
         if m.add in claimed_adds or m.add in seen_adds:

@@ -1230,7 +1230,9 @@ held-slot moves refused because the slot no longer accepted the player the morni
 held-slot stints and their days; and the starters' games played. In a waiver league only (a run
 without waivers has no such keys, so its counts are as before PR Fa): the claims placed, won, lost
 to a better priority and failed, and of those decided, how many had a team ahead of the seat's
-when their player was decided and how many of those were lost. In a FAAB league only (PR Fb; a
+when their player was decided and how many of those were lost (by priority under continuous
+waivers, PR Fc, that is nearly every claim, a team being ahead in the order on almost every
+morning: it is not a count of contests). In a FAAB league only (PR Fb; a
 run by priority has none, so its counts are as before), after those: the dollars spent and the
 dollars left at the season's end; the claims won at $0, lost to a higher bid, lost on a tie and
 won with no other claim on the player that morning; the dollars won claims paid above the next
