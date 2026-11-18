@@ -102,7 +102,7 @@ def test_league_rules_out_of_the_plan_are_refused_by_name_before_any_path(wire: 
 
 
 def test_with_nothing_named_nothing_moves(wire: Path):
-    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 11, its
+    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 12, its
     league block naming today's rules; no line names them."""
     room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
     runs, outs = [], []
@@ -115,7 +115,7 @@ def test_with_nothing_named_nothing_moves(wire: Path):
     assert {k: v for k, v in one.items() if k not in WHEN} == {
         k: v for k, v in two.items() if k not in WHEN
     }
-    assert one["replay_version"] == 11
+    assert one["replay_version"] == 12
     assert one["league"]["rules"] == {
         "scoring": "categories",
         "points": None,
@@ -371,13 +371,14 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
     assert f"league rules, on every path: {rules.label()}" in out
     assert rules.label().endswith(", waivers by priority after 3 days")
     p = written(out)
-    assert p["replay_version"] == 11
+    assert p["replay_version"] == 12
     assert p["league"]["rules"] == {
         "scoring": "points",
         "points": dict(shapes.POINTS_DEFAULT),
         "held": [],
         "waivers": "priority",
         "waiver_days": 3,
+        "waiver_rule": "dropped",
     }
     assert p["executions"] == policy.EXECUTIONS_PRIORITY
     assert [r["name"] for r in p["audit"]["rules"]][-2:] == ["waiver_wait", "claim_priority"]
@@ -402,7 +403,7 @@ def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):
     rules = shapes.LeagueRules(waivers="faab", budget=50, rival_scale=2.0)
     assert f"league rules, on every path: {rules.label()}" in out
     p = written(out)
-    assert p["replay_version"] == ss.REPLAY_VERSION == 11
+    assert p["replay_version"] == ss.REPLAY_VERSION == 12
     assert p["league"]["rules"] == {
         "scoring": "categories",
         "points": None,
@@ -410,6 +411,7 @@ def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):
         "h2h": "one_win",
         "waivers": "faab",
         "waiver_days": shapes.WAIVER_DAYS,
+        "waiver_rule": "dropped",
         "budget": 50,
         "rival_scale": 2.0,
     }
@@ -450,3 +452,39 @@ def test_a_pair_that_differs_only_on_faab_sizing_is_one_seat_without_faab_and_tw
         read = policy.reads(arms["a"], r.shape, False)["faab_sizing"] == policy.READ
         assert read == (waivers == "faab")
         assert (ss.same_seats(arms, [r.shape], rivals=True) is None) == read
+
+
+def test_the_waiver_rule_out_of_the_plan_is_refused_by_name_before_any_path(wire: Path):
+    """PR Fc: which adds are claims is a waiver league's, dropped or continuous."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--dry-run")
+    for flags, why in (
+        (("--waiver-rule", "continuous"), "--waiver-rule continuous: which adds are claims is a"),
+        (("--waivers", "faab", "--waiver-rule", "fifo"), "--waiver-rule fifo: one of dropped, "),
+    ):
+        code, out = replay(wire, *room, *flags)
+        assert code == 2 and f"refused: {why}" in out, out
+        assert "tasks (" not in out
+
+
+def test_a_continuous_run_records_its_rule_its_model_its_notes_and_its_audit(wire: Path):
+    """``--waivers faab --waiver-rule continuous`` (PR Fc): the league block's rules name the
+    rule, its notes say every add is a claim (``waiver_rule_note``, and ``faab_note``'s clause on
+    which adds are bid on), the execution model has a name of its own, the audit holds
+    ``claims_only`` last and finds nothing, and every add landed is a claim won. The line that
+    says the rules is the one a dry run and the no-peek check print (``LeagueRules.label``)."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
+    code, out = replay(wire, *room, "--waivers", "faab", "--waiver-rule", "continuous")
+    assert code == 0, out
+    rules = shapes.LeagueRules(waivers="faab", waiver_rule="continuous")
+    assert f"league rules, on every path: {rules.label()}" in out and "continuous waivers" in out
+    p = written(out)
+    assert p["replay_version"] == 12 and p["replay_version_why"].startswith("12: continuous")
+    assert p["league"]["rules"] == {**rules.payload(), "waiver_rule": "continuous"}
+    assert p["league"]["faab_note"] == ss.FAAB_NOTE_CONTINUOUS
+    assert p["league"]["waiver_rule_note"] == ss.WAIVER_RULE_NOTE
+    assert p["executions"] == policy.EXECUTIONS_CONTINUOUS_FAAB == "claims_only_by_sealed_bids"
+    names = [r["name"] for r in p["audit"]["rules"]]
+    assert names[-1] == "claims_only" and p["audit"]["paths_voided"] == 0
+    for row in p["counts"]["by_season"]["2024"]["prior"].values():
+        assert row["landed"]["mean"] == row["claims_won"]["mean"], row
+        assert row["gone"]["mean"] == row["claims_failed"]["mean"], row

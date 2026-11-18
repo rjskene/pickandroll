@@ -304,7 +304,7 @@ def base_payload(
     """The payload's common part. ``arms`` by their key in the payload (``a`` and ``b`` in a
     pair, the names in a room): each arm's fields and its surrogate's pool and days; none
     (validate) for the live route's, the surrogate gate's. ``executions``, the run's execution
-    model (``policy.executions_of`` its waivers, PR Fa); ``measure``, what the run's format gives
+    model (``policy.executions_of`` its waivers, PR Fa, and its waiver rule, PR Fc); ``measure``, what the run's format gives
     a seat that weighs (``policy.measure``, the format PR; a replay's, beside it)."""
     fields = {k: arm.fields for k, arm in (arms or {}).items()} or {"gate": policy.Fields()}
     return {
@@ -419,7 +419,7 @@ def audited(
 ) -> tuple[list[bool], dict[str, Any]]:
     """Which tasks stand and the payload's audit block. A task with a breach is a voided path: it
     is left out of every aggregate, and each breach is listed with the task it voids. ``rules``,
-    the rules the run was held to (``audit.rules_of`` its waivers; :data:`audit.RULES` by
+    the rules the run was held to (``audit.rules_of`` its waivers and its waiver rule; :data:`audit.RULES` by
     default)."""
     keep = [not r.get("breaches") for r in results]
     return keep, {
@@ -741,7 +741,8 @@ def replay_setup_of(
     (``league``, #172, PR D4b; the fixed shape by default) under the run's league rules
     (``league_rules``, PR D4c: the scoring, a points table and the held slots after the
     shape's bench; PR Fa: the waivers; PR Fb: a FAAB league's budget and the rivals' bid
-    scale; the format PR: a categories league's head-to-head format; today's by default)."""
+    scale; the format PR: a categories league's head-to-head format; PR Fc: the waiver rule;
+    today's by default)."""
     args = league.setup_args()
     return rn.replay_setup(
         season,
@@ -759,6 +760,7 @@ def replay_setup_of(
         budget=league_rules.budget,
         rival_scale=league_rules.rival_scale,
         h2h=league_rules.h2h,
+        waiver_rule=league_rules.waiver_rule,
     )
 
 
@@ -1093,7 +1095,8 @@ def task_paired(
     return out
 
 
-#: The replay's version in its payload: 11 since the head-to-head format (#172, the format PR),
+#: The replay's version in its payload: 12 since continuous waivers (#172, PR Fc), 11 since the
+#: head-to-head format (the format PR),
 #: 10 since FAAB (PR Fb), 9 since the waivers (PR Fa), 8 since the league rules (PR D4c), 7 since the
 #: league generator (PR D4b), 6 since the draft market (PR D4a), each as its reason says; 5
 #: since the standalone cut (PR D3): the payload
@@ -1106,21 +1109,28 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 11
+REPLAY_VERSION = 12
 REPLAY_VERSION_WHY = (
+    "12: continuous waivers (--waiver-rule continuous, with --waivers priority or faab): every "
+    "unowned player is on waivers at all times, so every add is a claim, decided the next "
+    "morning (a dropped player's on his clear date) by the league's waivers, and nothing lands as "
+    "a free agent; the league block's rules name the waiver rule in every waiver run, and a "
+    "continuous run names its execution model (claims_only_by_priority, "
+    "claims_only_by_sealed_bids), says the rule in its league block's notes and is held to one "
+    "audit rule more (claims_only); with the rule not named the figures are version 11's, but in "
+    "a waiver run with held slots: every waiver league's morning now brings the cleared held "
+    "players back, trims the rosters and lets the churns' held players go before the claims due "
+    "are decided, where it decided them first (PR Fa's order, in which a cleared player's trim "
+    "could take a player just claimed and a churn's claim found no room in the slot its held "
+    "player was leaving), so such a run moves where a claim is decided on a morning a held "
+    "player comes back or a churn's held player leaves. "
     "11: the head-to-head format (--h2h): a categories league counts one win per matchup (the "
     "default) or every category, whose standings order the teams by the category percentage, "
     "then head to head; a seat that weighs (the exact and the surrogate tiers, a mirror rival) "
     "weighs a week in the format's measure, the matchup's win odds in a one-win league, where the "
     "plan floor is the engine's own; the league block's rules name the format and the record its "
     "measure; under each_category, and in a run whose seats weigh nothing, the figures are "
-    "version 10's. "
-    "10: FAAB (--waivers faab, --budget, --rival-scale): a claim carries a sealed bid from its "
-    "team's budget, the highest bid takes the player and pays it, a tie to the better priority; "
-    "the seat bids by the live rule, a market rival by an assumed form; the league block's rules "
-    "name the budget and the rivals' scale, the audit holds three rules more and the counts "
-    "count the dollars and the bids; with nothing named, and by priority, the figures are "
-    "version 9's"
+    "version 10's"
 )
 #: What a replay under a table drafts on (#172, PR D4a), for its payload.
 ADP_RIVAL = (
@@ -1705,8 +1715,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
         waivers, waiver_days = shapes.parse_waivers(args.waivers, args.waiver_days)
         budget, scale = shapes.parse_budget(waivers, args.budget, args.rival_scale)
         h2h = shapes.parse_h2h(args.scoring, args.h2h)
+        waiver_rule = shapes.parse_waiver_rule(waivers, args.waiver_rule)
         league_rules = shapes.LeagueRules(
-            args.scoring, table, held, waivers, waiver_days, budget, scale, h2h
+            args.scoring, table, held, waivers, waiver_days, budget, scale, h2h, waiver_rule
         )
     except ValueError as e:
         print(f"refused: {e}")
@@ -1957,7 +1968,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"the task timed is path {slow}, on the grid's largest draft with its loosest add "
             f"limit ({visits[slow].shape.label()}): the estimate errs long"
         )
-    rules = audit.rules_of(league_rules.waivers)
+    rules = audit.rules_of(league_rules.waivers, league_rules.waiver_rule)
     if args.dry_run:
         return dry_run(keys[slow], first_run, rules)
     ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
@@ -1979,7 +1990,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         fit,
         workers,
         arms,
-        policy.executions_of(league_rules.waivers),
+        policy.executions_of(league_rules.waivers, league_rules.waiver_rule),
         policy.measure(league_rules.points is not None, league_rules.one_win),
     )
     payload |= replay_notes({str(r.season): r.fits for r in reads}, args.news_sd)
@@ -2419,6 +2430,28 @@ FAAB_NOTE = (
     "across rival_scale 0.5, 1 and 2 depends on the league. A static seat never claims. The bid "
     "counts are the world's knowledge of every bid; no seat reads them"
 )
+#: The clause of :data:`FAAB_NOTE` that says which adds are bid on, and what a FAAB run under
+#: continuous waivers (#172, PR Fc) says in its place: the note is otherwise the same, and a run
+#: with the rule not named records :data:`FAAB_NOTE` as before.
+FAAB_FREE = "only a dropped player waiting his days is bid on, a free agent costs $0"
+FAAB_EVERY = (
+    "under continuous waivers every add is a claim and is bid on, one on a player nobody dropped "
+    "lately decided the next morning; no add is a free agent's"
+)
+FAAB_NOTE_CONTINUOUS = FAAB_NOTE.replace(FAAB_FREE, FAAB_EVERY)
+#: How a league under continuous waivers adds (#172, PR Fc), in such a run's league block, by
+#: priority or by FAAB; a run with the rule not named has none.
+WAIVER_RULE_NOTE = (
+    "continuous waivers: every unowned player is on waivers at all times, the draft's leftovers "
+    "from the first morning, so every add is a claim: one on a player nobody dropped lately is "
+    "decided the next morning (a working default: no league's clear time is read), one on a "
+    "dropped player on his clear date, the drop's morning plus the waiver days; no add lands as "
+    "a free agent and the day's rotation decides nothing. The clear morning decides every claim "
+    "due in one pass, by the league's waivers (rolling priority, or sealed bids), a claim's drop "
+    "and held-slot moves made only if it is won and a churn's held player leaving the next "
+    "morning, won or not. The claim counts then cover every add: landed equals claims_won and "
+    "gone equals claims_failed"
+)
 
 
 def league_block(
@@ -2430,8 +2463,9 @@ def league_block(
     """A replay's league (#172, PR D4b): the grid named, its shapes in order, the visit rule,
     each path's shape index and turn, and the drafts that may not fill; and the run's league
     rules (PR D4c: the scoring, the points table or null, the held slots), with what a points
-    league's metrics are in a points run, in a FAAB run how the bids are made (PR Fb), and in a
-    run that counts every category how its standings rank (the format PR)."""
+    league's metrics are in a points run, in a FAAB run how the bids are made (PR Fb), in a
+    run that counts every category how its standings rank (the format PR), and under continuous
+    waivers how the league adds (PR Fc)."""
     return {
         "grid": grid.name,
         "axes": {k: list(v) for k, v in grid.axes().items()},
@@ -2442,9 +2476,16 @@ def league_block(
         "note": LEAGUE_NOTE,
         "rules": league_rules.payload(),
         **({"points_note": POINTS_NOTE} if league_rules.scoring == "points" else {}),
-        **({"faab_note": FAAB_NOTE} if league_rules.bidding else {}),
+        **({"faab_note": faab_note(league_rules)} if league_rules.bidding else {}),
         **({"h2h_note": H2H_NOTE} if league_rules.h2h == EACH_CATEGORY else {}),
+        **({"waiver_rule_note": WAIVER_RULE_NOTE} if league_rules.continuous else {}),
     }
+
+
+def faab_note(league_rules: shapes.LeagueRules) -> str:
+    """A FAAB run's note on its bids: :data:`FAAB_NOTE`, or under continuous waivers (PR Fc)
+    :data:`FAAB_NOTE_CONTINUOUS`."""
+    return FAAB_NOTE_CONTINUOUS if league_rules.continuous else FAAB_NOTE
 
 
 def axis_key(value: Any) -> str:
@@ -2910,6 +2951,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         help=f"with --waivers priority or faab: the days a dropped player waits, 1 to 7 (default "
         f"{shapes.WAIVER_DAYS})",
+    )
+    re_.add_argument(
+        "--waiver-rule",
+        default=None,
+        metavar="RULE",
+        help="with --waivers priority or faab, which adds are claims: dropped, a dropped player's "
+        "in his wait, every other add a free agent's the next morning; continuous, every add, "
+        "one on a player nobody dropped lately decided the next morning (default dropped)",
     )
     re_.add_argument(
         "--budget",

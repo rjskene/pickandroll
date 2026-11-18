@@ -64,6 +64,14 @@ gain in the engine's units and bids $0; a market rival bids by an assumed form
 (:func:`rival_bid`); a static seat never claims.
 ``EXECUTIONS`` names the model in every run's payload.
 
+**Continuous waivers** (PR Fc, ``Setup.waiver_rule`` ``continuous``, by priority or by FAAB):
+every unowned player is on waivers at all times, so every add is a claim, placed today and
+decided on the morning its player clears: tomorrow for a player nobody dropped lately, a dropped
+player's clear date otherwise. :func:`clear_waivers` decides both in one pass by the league's
+waivers, :func:`queue` places every add as a claim under the claim rules, and the problem marks
+every candidate among ``claims``. Nothing lands as a free agent and the day's rotation decides
+nothing. With the rule not named nothing moves.
+
 **The head-to-head format** (the format PR, ``Setup.h2h``). In a categories league that counts one
 win per matchup (the default) the problem says so (``MoveProblem.one_win``, as the live build
 passes ``SeasonSettings.one_win``), so every tier that weighs (exact, surrogate, a mirror rival)
@@ -103,6 +111,7 @@ from .engine import (
     wk,
 )
 from .league import fpts
+from .shapes import CONTINUOUS, DROPPED
 from .state import (
     BENCH,
     FAILED,
@@ -124,13 +133,20 @@ EXECUTIONS_PRIORITY = "free_agents_next_day_claims_by_priority"
 #: A FAAB league's (#172, PR Fb): as by priority, but each claim carries a sealed bid from its
 #: team's budget, and the claims are decided highest bid first, a tie by waiver priority.
 EXECUTIONS_FAAB = "free_agents_next_day_claims_by_sealed_bids"
+#: Under continuous waivers (#172, PR Fc): every add a claim, decided the next morning or on a
+#: dropped player's clear date, by rolling priority or by sealed bids; no free agent.
+EXECUTIONS_CONTINUOUS_PRIORITY = "claims_only_by_priority"
+EXECUTIONS_CONTINUOUS_FAAB = "claims_only_by_sealed_bids"
 
 
-def executions_of(waivers: str) -> str:
-    """The execution model a run's payload names under ``waivers`` (``shapes.WAIVERS``): the
-    name it always had without waivers, a name of its own for each kind of waivers."""
+def executions_of(waivers: str, rule: str = DROPPED) -> str:
+    """The execution model a run's payload names under ``waivers`` (``shapes.WAIVERS``) and the
+    waiver ``rule`` (``shapes.WAIVER_RULES``, PR Fc): the name it always had without waivers, a
+    name of its own for each kind of waivers, and under continuous waivers for each again."""
     if waivers == "none":
         return EXECUTIONS
+    if rule == CONTINUOUS:
+        return EXECUTIONS_CONTINUOUS_FAAB if waivers == "faab" else EXECUTIONS_CONTINUOUS_PRIORITY
     return EXECUTIONS_FAAB if waivers == "faab" else EXECUTIONS_PRIORITY
 
 
@@ -528,14 +544,16 @@ def problem_of(
     # date when he is on waivers and it is later, as the live build sets ``effective`` from the
     # wire's clear dates (PR Fa). The candidates are the whole wire, waivers included, and
     # those on waivers are ``claims`` (#221: a churn on one is offered only when the held player
-    # is worth nothing net of his return), as the live build marks the wire's "W".
+    # is worth nothing net of his return), as the live build marks the wire's "W". Under
+    # continuous waivers (PR Fc) every candidate is a claim, as every entry of the live queue is
+    # a waiver entry in such a league; one nobody dropped lately clears tomorrow.
     effective_day = day + LANDS_AFTER
     candidates = tuple(members_of(setup, sorted(k for k in state.pool if k in beliefs), status))
     effective = {
         k: max(effective_day, state.waivers[k].clears) if k in state.waivers else effective_day
         for k, _ in candidates
     }
-    claims = frozenset(k for k, _ in candidates if k in state.waivers)
+    claims = frozenset(k for k, _ in candidates if setup.continuous or k in state.waivers)
     limit = setup.max_weekly_adds
     used = int(state.adds_used.get(me, 0))
     # The engine charges a move to the week its day falls in, and a move's day here is the day
@@ -1284,7 +1302,11 @@ def queue(
     on the typical gain of the moves the seat recommended over the fortnight, today's
     counted, as the live queue), by the market's rule for a market rival (:func:`rival_bid` on
     the market rivals' typical gain over the fortnight before today), and $0 for a decision
-    without a basis. A free agent's add carries no bid."""
+    without a basis. A free agent's add carries no bid.
+
+    Under continuous waivers (``setup.continuous``, PR Fc) every add is a claim: on a player
+    nobody dropped lately it clears tomorrow, on a dropped player on his clear date, by the same
+    rules; nothing is queued to land as a free agent."""
     tomorrow = state.day + timedelta(1)
     moves = list(decision.moves)
     basis = decision.basis if setup is not None and setup.bidding else None
@@ -1298,6 +1320,7 @@ def queue(
         moves += [m for m, _ in due]
         scaled += [basis.plan[j] if basis is not None and basis.plan else 0.0 for _, j in due]
     waiting = setup is not None and setup.waiting
+    continuous = setup is not None and setup.continuous
     used = int(state.adds_used.get(team, 0))
     mine = state.claims.get(team, ()) if waiting else ()
     this = setup.week_of(state.day) if waiting and setup is not None else None
@@ -1347,7 +1370,7 @@ def queue(
         if len(kept) + len(placed) >= max(0, daily_cap):
             break
         wait = state.waivers.get(m.add) if waiting else None
-        if wait is None:
+        if wait is None and not continuous:
             full = used + len(kept) if this is None else charged(this.number)
             if limit is not None and full >= limit:
                 continue
@@ -1358,14 +1381,19 @@ def queue(
             seen_adds.add(m.add)
             kept.append(mv.Move(m.add, m.drop))
             continue
-        if wait.by == team:
+        if wait is None and m.add not in state.pool:
+            continue  # under continuous waivers: an add not in the pool (a team holds him)
+        if wait is not None and wait.by == team:
             continue  # READD: his own drop, still waiting
         if m.add in claimed_adds or m.add in seen_adds:
             continue  # ALREADY_CLAIMED
         if m.drop is not None and m.drop in claimed_drops:
             continue  # DROP_CLAIMED
         assert setup is not None
-        week = setup.week_of(max(tomorrow, wait.clears) - timedelta(1))
+        # A dropped player's claim is decided on his clear date; under continuous waivers one on
+        # a player nobody dropped lately the next morning.
+        clears = tomorrow if wait is None else wait.clears
+        week = setup.week_of(max(tomorrow, clears) - timedelta(1))
         number = None if week is None else week.number
         if limit is not None and number is not None and charged(number) >= limit:
             continue  # NO_ADDS
@@ -1374,9 +1402,7 @@ def queue(
         if m.drop is not None:
             claimed_drops.add(m.drop)
         churn = m.drop is not None and m.drop in held_keys
-        placed.append(
-            Claim(mv.Move(m.add, m.drop), state.day, wait.clears, number, (), churn, bid(i))
-        )
+        placed.append(Claim(mv.Move(m.add, m.drop), state.day, clears, number, (), churn, bid(i)))
     pending = dict(state.pending)
     pending[team] = tuple(kept)
     need = sum(1 for m in kept if m.drop is None or m.drop in held_keys)
@@ -1456,6 +1482,71 @@ def _activate(
     return out
 
 
+def _leaves(
+    pool: set[int],
+    waivers: dict[int, Waiting],
+    waiver: tuple[date, int] | None,
+    k: int,
+    team: int,
+) -> None:
+    """``k`` leaves ``team``'s roster for the wire: on waivers in a waiver league."""
+    pool.add(k)
+    if waiver is not None:
+        waivers[k] = Waiting(waiver[0] + timedelta(waiver[1]), team)
+
+
+def arrive(
+    state: SimState,
+    order: Sequence[int],
+    spots: int | None = None,
+    status: Mapping[int, str | None] | None = None,
+    value: Mapping[int, float] | None = None,
+    values: Mapping[int, Mapping[int, float]] | None = None,
+    waiver: tuple[date, int] | None = None,
+) -> SimState:
+    """The first half of the morning (:func:`land`'s first steps), team by team in ``order``:
+    given the day's ``status`` and ``value`` (a team's own in ``values`` when it has one there:
+    its seat's forecaster's), each team's cleared held players come back and the active roster
+    is trimmed to ``spots`` (:func:`_activate`; each player it sends counts in the team's
+    ``forced_by``, never in ``executed_by`` or ``gone_by``); then the held players the churns'
+    claims drop (``pending_drops``) leave, on their own, as a churn's held drop does. Every
+    player who leaves goes on waivers until ``waiver``'s day plus its days (None without
+    waivers).
+
+    In a waiver league the runner calls it before the morning's claims are decided
+    (:func:`clear_waivers`, #172, Fc's review): a claim then meets the roster its team has that
+    morning, so a cleared held player's trim cannot take the player just claimed, and a churn's
+    claim finds the slot its held player leaves. Then :func:`land` makes the rest with
+    ``arrived``. Without a held slot nothing here moves: no held player comes back and no
+    roster is over its spots."""
+    rosters = {t: list(r) for t, r in state.rosters.items()}
+    pool = set(state.pool)
+    forced = dict(state.forced_by)
+    waivers = dict(state.waivers)
+    for team in order:
+        roster = rosters.setdefault(team, [])
+        own = (values or {}).get(team, value)
+        if status is not None and own is not None:
+            left = _activate(roster, spots, status, own)
+            for k in left:
+                _leaves(pool, waivers, waiver, k, team)
+            if left:
+                forced[team] = forced.get(team, 0) + len(left)
+        for k in state.pending_drops.get(team, ()):
+            idx = next((i for i, (pk, s) in enumerate(roster) if pk == k and s in mv.HELD), None)
+            if idx is not None:
+                del roster[idx]
+                _leaves(pool, waivers, waiver, k, team)
+    return replace(
+        state,
+        rosters={t: tuple(r) for t, r in rosters.items()},
+        pool=frozenset(pool),
+        forced_by=forced,
+        waivers=waivers,
+        pending_drops={},
+    )
+
+
 def land(
     state: SimState,
     order: Sequence[int],
@@ -1465,12 +1556,15 @@ def land(
     value: Mapping[int, float] | None = None,
     values: Mapping[int, Mapping[int, float]] | None = None,
     waiver: tuple[date, int] | None = None,
+    arrived: bool = False,
 ) -> SimState:
-    """Yesterday's queued moves land, team by team in ``order``. First, given the day's ``status``
+    """Yesterday's queued moves land, team by team in ``order``. First (:func:`arrive`, unless
+    ``arrived`` says the runner made it before the morning's claims), given the day's ``status``
     and ``value`` (a team's own in ``values`` when it has one there: its seat's forecaster's),
     each team's cleared held players come back and the active roster is trimmed to ``spots``
     (:func:`_activate`; each player it sends counts in the team's ``forced_by``, never in
-    ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
+    ``executed_by`` or ``gone_by``), and the held players the churns' claims drop leave. Then a
+    churn's held drop goes to the pool on his
     own, as the engine times it (#221), freeing his slot; then the held-slot moves it queued,
     each player to his held slot while the slot has room (``slot_counts``, the league's slots by
     kind) and, given ``status``, only if the slot accepts the status he has that morning
@@ -1484,12 +1578,16 @@ def land(
 
     ``waiver`` (today and the league's waiver days, #172, PR Fa; None without waivers): every
     player who leaves a roster this morning (a forced drop, a churn's held drop, a swap's drop)
-    goes on waivers until today plus the waiver days, and the held players the churns' claims
-    drop (``pending_drops``) leave first, on their own, as a churn's held drop does."""
+    goes on waivers until today plus the waiver days.
+
+    Each team's first steps all come before any team's moves (they did team by team before
+    Fc's review): no team's first steps read another's moves, so the order moves nothing."""
+    if not arrived:
+        state = arrive(state, order, spots, status, value, values, waiver)
     rosters = {t: list(r) for t, r in state.rosters.items()}
     pool = set(state.pool)
     adds_used = dict(state.adds_used)
-    executed, gone, forced = dict(state.executed_by), dict(state.gone_by), dict(state.forced_by)
+    executed, gone = dict(state.executed_by), dict(state.gone_by)
     refused = dict(state.held_refused_by)
     waivers = dict(state.waivers)
 
@@ -1498,24 +1596,10 @@ def land(
             by[team] = by.get(team, 0) + n
 
     def leaves(k: int, team: int) -> None:
-        """``k`` leaves ``team``'s roster for the wire: on waivers in a waiver league."""
-        pool.add(k)
-        if waiver is not None:
-            waivers[k] = Waiting(waiver[0] + timedelta(waiver[1]), team)
+        _leaves(pool, waivers, waiver, k, team)
 
     for team in order:
         roster = rosters.setdefault(team, [])
-        own = (values or {}).get(team, value)
-        if status is not None and own is not None:
-            left = _activate(roster, spots, status, own)
-            for k in left:
-                leaves(k, team)
-            count(forced, team, len(left))
-        for k in state.pending_drops.get(team, ()):
-            idx = next((i for i, (pk, s) in enumerate(roster) if pk == k and s in mv.HELD), None)
-            if idx is not None:
-                del roster[idx]
-                leaves(k, team)
         moves = state.pending.get(team, ())
         churned: set[int] = set()
         for m in moves:
@@ -1573,10 +1657,8 @@ def land(
         pending_held={},
         executed_by=executed,
         gone_by=gone,
-        forced_by=forced,
         held_refused_by=refused,
         waivers=waivers,
-        pending_drops={},
     )
 
 
@@ -1589,8 +1671,10 @@ def clear_waivers(
     waiver_days: int,
     bidding: bool = False,
 ) -> SimState:
-    """The morning of ``day`` in a waiver league (#172, PR Fa), before anything else lands: the
-    claims on every player whose clear date has come are decided by rolling priority. The team
+    """The morning of ``day`` in a waiver league (#172, PR Fa), once the cleared held players are
+    back, the rosters trimmed and the churns' held players gone (:func:`arrive`, Fc's review) and
+    before anything else lands: the claims on every player whose clear date has come are decided
+    by rolling priority. The team
     with the best priority (``state.priority``, best first) that still has a claim open this
     morning takes its first open claim (in the order it placed them). Its roster takes the
     player when the claim's drop is still on its active roster, or, for an open-spot claim, when
@@ -1615,9 +1699,16 @@ def clear_waivers(
     pays exactly its bid, and the claim is made as above. The order rolls only when the win broke
     a tie (another claim open on the player with the same bid): the winner goes to the back. A
     claim decided after another on its player failed counts as behind; a lost one always does.
-    The bid counts (``state.BID_COUNTS``) follow."""
+    The bid counts (``state.BID_COUNTS``) follow.
+
+    Under continuous waivers (PR Fc) a claim on a player nobody dropped lately is due the morning
+    after it is placed (its ``clears``), and it is decided here, in the same pass and by the same
+    rules as the claims on the players whose wait ends this morning: one morning, one way to
+    decide. With the rule not named every claim is on a player on waivers whose clear date is
+    its own, so the players due are those clearing, as before."""
     clearing = {k for k, w in state.waivers.items() if w.clears <= day}
-    if not clearing:
+    due = clearing | {c.move.add for cs in state.claims.values() for c in cs if c.clears <= day}
+    if not due:
         return replace(state, resolved=()) if state.resolved else state
     rosters = {t: list(r) for t, r in state.rosters.items()}
     pool, waivers = set(state.pool), dict(state.waivers)
@@ -1627,11 +1718,9 @@ def clear_waivers(
     counts = {t: dict(c) for t, c in state.claim_counts.items()}
     order = list(state.priority)
     open_: dict[int, list[Claim]] = {
-        t: [c for c in cs if c.move.add in clearing] for t, cs in state.claims.items()
+        t: [c for c in cs if c.move.add in due] for t, cs in state.claims.items()
     }
-    claims = {
-        t: tuple(c for c in cs if c.move.add not in clearing) for t, cs in state.claims.items()
-    }
+    claims = {t: tuple(c for c in cs if c.move.add not in due) for t, cs in state.claims.items()}
     log: list[Resolved] = []
 
     def tally(team: int, outcome: str, behind: bool) -> None:
