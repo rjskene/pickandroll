@@ -18,11 +18,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from pickandroll.sim import audit, shapes
 from pickandroll.sim import cli as ss
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
-from pickandroll.sim import shapes
 from tests.sim.sim_league import KNOBS, make_data_dir
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
@@ -396,6 +396,73 @@ def test_a_screen_is_resumed_only_on_the_spec_it_was_started_with(data: Path, wh
         code, out = screen(data, name="whole")
     assert code == 2 and "replay_version: started with" in out, out
     assert record(data, "whole") == whole[0]
+
+
+def test_a_folder_that_is_not_this_screen_s_is_refused(data: Path):
+    """A pair's file holding other arms than this screen's row, and a record that cannot be read,
+    refuse the run by name: nothing is played over them and nothing is rewritten."""
+    code, out = screen(data, levers=("weeks_ahead",), name="held")
+    assert code == 0, out
+    folder = data / reader.SCREENS_DIR / "held"
+    file = folder / "weeks_ahead-6.json"
+    kept = file.read_text()
+    other = json.loads(kept)
+    other["specs"]["b"]["weeks_ahead"] = 5
+    file.write_text(json.dumps(other))
+    code, out = screen(data, levers=("weeks_ahead",), name="held")
+    assert code == 2, out
+    assert "refused: the screen 'held' holds a pair weeks_ahead-6 of other arms" in out
+    assert "to play" not in out
+    file.write_text(kept)
+    record_file = folder / reader.SCREEN_FILE
+    whole_record = record_file.read_text()
+    record_file.write_text(whole_record[: len(whole_record) // 2])
+    code, out = screen(data, levers=("weeks_ahead",), name="held")
+    assert code == 2 and f"refused: {record_file} is not JSON" in out, out
+    record_file.write_text(whole_record)
+    code, out = screen(data, levers=("weeks_ahead",), name="held")
+    assert code == 0 and "0 pair(s) to play" in out and "played before" in out, out
+
+
+# --------------------------------------------------------------------------- the audit
+def plant(mp: pytest.MonkeyPatch, path: int) -> None:
+    """One breach on the first day of ``path``, found as a rule's would be. Nothing else in the
+    run changes: the audit only reads."""
+    real = audit.Auditor.check
+
+    def check(self, today):
+        found = real(self, today)
+        if self.path == path and not getattr(self, "planted", False):
+            self.planted = True
+            b = audit.Breach(today.day, today.variant, 1, "planted", "the test's breach", self.path)
+            self.breaches.append(b)
+            found = [*found, b]
+        return found
+
+    mp.setattr(audit.Auditor, "check", check)
+
+
+def test_a_pair_whose_audit_voids_a_path_keeps_the_screen_s_exit_code(data: Path):
+    """A breach voids its path in the pair it is found in, as in a replay: the pair's figures are
+    over the paths left (here one, which has no SE, so nothing clears the bar), the table says a
+    path was voided, and the screen exits with the audit's code, in that piece and in any later
+    run of the folder."""
+    with pytest.MonkeyPatch.context() as mp:
+        plant(mp, 1)
+        code, out = screen(data, levers=("surrogate_days",), name="voided")
+    assert code == ss.AUDIT_EXIT, out
+    assert "voided 1 path(s); they are listed in the payload" in out
+    got = pair_of(data, "voided", "surrogate_days-monday")
+    assert got["audit"]["voided"] == [{"season": 2024, "forecaster": "prior", "path": 1}]
+    result = rows_of(record(data, "voided"))["surrogate_days-monday"]["result"]
+    assert (result["paths"], result["voided"]) == (1, 1) and not result["survives"]
+    cell = result["cells"]["2024"]["prior"]
+    assert cell["paths"] == 1 and not cell["clears"]
+    assert cell["difference"]["matchup_wins"]["se"] is None
+    assert "(SE n/a) over 1 paths; 1 path(s) voided" in out
+    # A later run of the folder plays nothing and keeps the code.
+    code, out = screen(data, levers=("surrogate_days",), name="voided")
+    assert code == ss.AUDIT_EXIT and "0 pair(s) to play" in out, out
 
 
 # --------------------------------------------------------------------------- the refusals
