@@ -1,7 +1,8 @@
 """The rivals' adds and bids (#172, PR Fd): a market rival whose view follows the season and that
 picks among its best few (the arm's ``opponents`` block, ``view`` and ``among``), the price book
 ``fit-bids`` writes from the public leagues' winning bids, a rival's bid drawn on it
-(``--rival-bids book``), the record, and Rule 1's pins. Made-up leagues and a made-up table,
+(``--rival-bids book``), the record, a season with a held slot under the public leagues' rules
+and the new rivals, and Rule 1's pins. Made-up leagues and a made-up table,
 fixed seeds. A test whose seat weighs runs in both head-to-head formats, or says why it names
 one (the format PR's Rule 4); a market rival weighs nothing."""
 
@@ -20,6 +21,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pytest
 
+from pickandroll.season import moves as mv
 from pickandroll.sim import bids, policy, shapes
 from pickandroll.sim import cli as ss
 from pickandroll.sim import opponents as op
@@ -469,6 +471,39 @@ def test_rivals_that_follow_the_season_meet_the_seat_s_claims(waivers, h2h):
     assert rivals, "the rivals won no claim"
 
 
+#: The first of seeds 1 to 3 and paths 0 to 2, tried in that order, on which the season below
+#: plays as its test says in both formats (``~/sim-notes/vm/scratch/fd/held_public.py``; all nine
+#: do).
+HELD_PUBLIC_PATH = (1, 0)
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_season_with_a_held_slot_under_the_public_rules_and_the_new_rivals_plays_clean(h2h):
+    """Every new kind played with held slots once (the lesson of Fc's finding 1): a six-week
+    made-up league of four seats with an IL slot and twelve free agents under the public leagues'
+    rules (FAAB, continuous waivers, a dropped player after two days, $100), the rivals' bids on a
+    made-up book, the surrogate in seat 1 among market rivals at 0.6 a day that follow the season
+    and pick among their best three. The audit finds nothing, the seat makes a held stint that
+    ends and wins a claim, and the rivals win claims. The public leagues count every category;
+    the test runs one win too (the format PR's Rule 4)."""
+    base = league("faab", held_slots=("IL",), pool=12)
+    setup = of_format(replace(base, rival_bids=BOOK, rival_prices=PRICES), h2h)
+    assert (setup.waiver_rule, setup.waiver_days, setup.budget) == (CONTINUOUS, 2, 100)
+    u = arm("U", "surrogate", opponents="market")
+    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *HELD_PUBLIC_PATH)
+    seen: list = []
+    variant = {**{t: op.Market(0.6, op.SEASON, 3) for t in setup.teams}, 1: u.seat()}
+    (result,) = rn.simulate(setup, w, [variant], on_day=lambda r: seen.append(r.state))
+    assert result.breaches == ()
+    assert result.counts[1]["held_stints"] >= 1
+    held = [{k for k, slot in s.rosters[1] if slot in mv.HELD} for s in seen]
+    active = [set(s.active(1)) for s in seen]
+    ended = {k for i, h in enumerate(held) for k in h if any(k in a for a in active[i + 1 :])}
+    assert ended, "no held stint of the seat ended"
+    assert any(r.team == 1 and r.outcome == WON for s in seen for r in s.resolved)
+    assert any(r.team != 1 and r.outcome == WON for s in seen for r in s.resolved)
+
+
 # --------------------------------------------------------------------------- the record
 @pytest.fixture(scope="module")
 def wire(tmp_path_factory) -> Path:
@@ -558,9 +593,9 @@ def test_a_run_on_the_book_records_its_rules_its_book_and_the_arms_rival_keys(wi
 # --------------------------------------------------------------------------- Rule 1
 #: Rule 1's pins: Fc's made-up season (``test_sim_continuous.season_digest``, seed 1, path 0) with
 #: nothing new named, without waivers and under continuous waivers by priority in one win and by
-#: FAAB under every category, as Fc's head ``7fa6f15`` gave them
-#: (``~/sim-notes/vm/scratch/fd/rule1_pins.py``, the same digest on Fc's head and on this PR); the
-#: dropped rule's are Fc's own (``BEFORE_PRIORITY``, ``BEFORE_FAAB``).
+#: FAAB under every category, as main ``9602e3f`` (Fc's merge, #423) gives them
+#: (``~/sim-notes/vm/scratch/fd/rule1_pins.py``: the same digests on Fc's head ``7fa6f15``, on
+#: main and on this PR); the dropped rule's are Fc's own (``BEFORE_PRIORITY``, ``BEFORE_FAAB``).
 FC_NONE = "5590c9bdfb24161164e8c7af29e901c224ffb94f87a12d15729a8ca11b308a11"
 FC_PRIORITY_CONTINUOUS = "74b1a3dd5b76b82beb4d43dc3fef2ba7707f9c662cd204f0670da0d885c1d61f"
 FC_FAAB_CONTINUOUS = "ce8652605209047fc0b893ca8550b747352517adb21f6828c8f95cd6e9bd6ea7"
@@ -576,8 +611,8 @@ def test_rule_1_with_nothing_new_named_a_season_plays_as_fc_s():
     assert season_digest(faab) == FC_FAAB_CONTINUOUS
 
 
-#: The league block with nothing new named, every key byte for byte as Fc's head ``7fa6f15`` gave
-#: it (the rules' ``rival_bids`` aside: ``assumed`` in every FAAB run, absent in every other), over
+#: The league block with nothing new named, every key byte for byte as main ``9602e3f`` gives it,
+#: as Fc's head ``7fa6f15`` did (the rules' ``rival_bids`` aside: ``assumed`` in every FAAB run, absent in every other), over
 #: Fc's six rules and three under continuous waivers (``rule1_pins.py``).
 BLOCKS_FC = "42445c1b9de1ea4b33678bf4241ff1b8e31909263e45a9ca430d1acaaaa378d2"
 BLOCK_RULES_FD = (
