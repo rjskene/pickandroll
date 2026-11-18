@@ -13,7 +13,7 @@ from pickandroll.sim import audit, policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import mv, wk
 from pickandroll.sim.state import initial
-from tests.sim.sim_league import arm, make_setup, rates, replay_of
+from tests.sim.sim_league import arm, every_category, make_setup, rates, replay_of
 
 
 def league():
@@ -234,7 +234,9 @@ def test_the_held_slot_paths_void_no_path():
     held moves counted."""
     refused = 0.0
     for seed in (3, 5, 8):
-        setup = make_setup(held_slots=("IL", "IL+"), seed=seed, weeks=8)
+        # Every category counted (the format PR): the executor reads no format, and the refusal
+        # needs seats that move often, as these do on expected categories.
+        setup = every_category(make_setup(held_slots=("IL", "IL+"), seed=seed, weeks=8))
         for path in range(6):
             w = replay_of(setup, 11, path)
             out = rn.paired(setup, w, arm("A", "exact"), arm("B", "surrogate"), me=1)

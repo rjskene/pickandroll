@@ -5,7 +5,10 @@ A week is scored as the record scores a real one (``season.scorecard``): percent
 makes and attempts to Yahoo's three decimals, the lower turnovers winning, a tie half. The
 standings order teams by win percentage and then by the tiebreak, parameterised because the
 settings page does not print the regular season's: total category wins, then head to head (a
-points league's: points for, then head to head, PR D4c: its category wins are its wins). The
+points league's: points for, then head to head, PR D4c: its category wins are its wins). A
+categories league counts one win per matchup by default; one that counts every category (the
+format PR, ``LeagueSpec.h2h``) orders its teams by the category percentage instead, then head to
+head (:data:`TIEBREAK_EACH`). The playoffs are the same bracket play in either format. The
 bracket seeds the top ``playoff_teams`` with ``byes`` byes, reseeds each round (best against
 worst) or plays the fixed bracket when the league does not reseed, and a playoff tie sends the
 higher seed through. The bracket's rules come from the settings page (PR 2a):
@@ -21,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from .engine import FPTS, PCT, SeasonSettings, total, won
+from .engine import EACH_CATEGORY, FPTS, ONE_WIN, PCT, SeasonSettings, total, won
 
 #: The tiebreak order the standings apply after win percentage.
 TIEBREAK = ("category_wins", "head_to_head")
@@ -29,6 +32,10 @@ TIEBREAK = ("category_wins", "head_to_head")
 #: percentage would fall to head to head and then to the team's number; points for decides
 #: first, the quantity a points league's standings page prints.
 TIEBREAK_POINTS = ("points_for", "head_to_head")
+#: A league that counts every category's (#172, the format PR): ordered by the category
+#: percentage, a tie falls to head to head (the weeks' results between the tied teams), then to
+#: the team's number. A working default: a league may break a tie otherwise.
+TIEBREAK_EACH = ("head_to_head",)
 #: The playoff tie-breakers the settings page prints, by the rule the bracket plays.
 TIEBREAKS: Mapping[str, str] = {"higher seed wins": "higher_seed"}
 Totals = Mapping[str, float]
@@ -60,6 +67,10 @@ class LeagueSpec:
     reseed: bool = True
     #: The playoff tie-breaker the bracket plays, a value of :data:`TIEBREAKS`.
     playoff_tiebreak: str = "higher_seed"
+    #: A categories league's head-to-head format (the format PR, ``season.state``'s words):
+    #: ``one_win``, the standings count a week's result; ``each_category``, each category's.
+    #: A points league's week is one result, and it holds the default.
+    h2h: str = ONE_WIN
 
     @property
     def regular_weeks(self) -> tuple[int, ...]:
@@ -82,7 +93,10 @@ class LeagueSpec:
         bracket's rules from the settings page. Refuses (:class:`BracketUnread`) a league whose
         settings page has not been read for the playoff tie-breaker and reseeding, one with
         divisions (not played), a tie-breaker not in :data:`TIEBREAKS`, or playoff weeks that
-        do not make a bracket of the playoff teams."""
+        do not make a bracket of the playoff teams. The head-to-head format is not read: the
+        spec holds the default, one win per matchup, whatever ``settings.h2h`` says, and the
+        ``tiebreak`` the caller passes; a replay's league names its own format (``replay
+        --h2h``, the format PR)."""
         unread = [
             k for k in ("playoff_tiebreak", "playoff_reseeding") if getattr(settings, k) is None
         ]
@@ -214,13 +228,22 @@ def _h2h(
     return score
 
 
+def each_category(spec: LeagueSpec) -> bool:
+    """Whether ``spec``'s standings count every category: a categories league of that format."""
+    return spec.scoring != "points" and spec.h2h == EACH_CATEGORY
+
+
 def standings(results: Mapping[int, Mapping[int, WeekResult]], spec: LeagueSpec) -> list[Standing]:
     """The teams ranked after the regular weeks in ``results`` (week to team to result): by win
-    percentage, then the tiebreak in ``spec.tiebreak`` order, then the team id."""
+    percentage over the weeks' results, or in a league that counts every category by the category
+    percentage (category wins, a tie half, over the categories played); then the tiebreak in
+    ``spec.tiebreak`` order, then the team id. Each row keeps the weeks' results and the category
+    wins in either format: only the order reads it."""
     rows: dict[int, Standing] = {}
+    played: dict[int, float] = {}
     for team in spec.teams:
         w = l = t = 0
-        cw = pf = 0.0
+        cw = pf = n = 0.0
         for week in results:
             r = results[week].get(team)
             if r is None:
@@ -230,10 +253,18 @@ def standings(results: Mapping[int, Mapping[int, WeekResult]], spec: LeagueSpec)
             t += r.outcome == "T"
             cw += r.category_wins
             pf += r.points_for
+            n += r.won + r.lost + r.tied
         rows[team] = Standing(team, w, l, t, cw, points_for=pf)
-    ordered = sorted(rows.values(), key=lambda s: (-s.pct, s.team))
+        played[team] = n
+
+    def first(s: Standing) -> float:
+        if each_category(spec):
+            return s.category_wins / played[s.team] if played[s.team] else 0.0
+        return s.pct
+
+    ordered = sorted(rows.values(), key=lambda s: (-first(s), s.team))
     # Break ties level by level: a group tied on everything before a level is ordered by it.
-    keys: dict[int, list[float]] = {s.team: [-s.pct] for s in ordered}
+    keys: dict[int, list[float]] = {s.team: [-first(s)] for s in ordered}
     for level in spec.tiebreak:
         groups: dict[tuple[float, ...], list[Standing]] = {}
         for s in ordered:

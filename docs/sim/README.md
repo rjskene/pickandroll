@@ -91,6 +91,21 @@ week is one result on its fantasy points, which the week's result and the standi
 for), and a tie on win percentage goes to points for, then head to head (`TIEBREAK_POINTS`, PR
 D4c): its category wins are its wins again, so the team's number would decide it otherwise.
 
+**The head-to-head format** (`LeagueSpec.h2h`, the format PR; the user's ruling of 2026-11-17, #172
+comment 6956804083: "lets do win per matchup for now; but we should be able to run sims just as
+easily on every category as well"). A categories league counts **one win per matchup** by
+default (`one_win`): a week is one result, won by the side with more categories, and the
+standings order as above. A league that counts **every category** (`each_category`) scores each
+category of each week as a win, a loss or a tie, and orders its teams by the category percentage
+(category wins, a tie half, over the categories played), then head to head (the weeks' results
+between the tied teams), then the team's number (`TIEBREAK_EACH`). That tiebreak is a working
+default: a league may break a tie otherwise, and none is read. Each team's `matchup_wins`,
+`category_wins` and record are kept in either format: only the rank, and what rests on it (the
+playoffs made, the title, the verdict), reads the format. The playoffs are the same bracket play
+in both: a playoff matchup goes to the side with more categories, the higher seed through a tie.
+A points league's week is one result already, and it names no format. The names are the engine's
+(`season.state.ONE_WIN`, `EACH_CATEGORY`, through `sim/engine.py`).
+
 A replay's league is made up, so its bracket is the replay's own: on the fixed shape the top six of
 twelve over the last three weeks (a league shape names its own, **The league shapes**), the byes the
 rounds need, reseeded, the higher seed through a tie (`run.replay_setup`).
@@ -102,7 +117,9 @@ wins only.
 ## The gates (`sim/validate.py`)
 
 `validate` is gate 5 alone: the surrogate's set equal to the exact set on four of five sampled
-league-days, for seats 1, 6 and 12, on a replay of a recorded season (**The gates as they stand**).
+league-days, for seats 1, 6 and 12, on a replay of a recorded season (**The gates as they stand**),
+in the head-to-head format named (`--h2h`, one win per matchup by default, the format PR), so the
+two tiers are compared in the measure the seats weigh.
 Gates 1 and 4 tested the drawn world (team-week totals and missed games under its noise and its
 hazard) and went with it; gates 2, 3 and 6 read a live league's recorded weeks, scorecard and
 exports (**What was removed and when**).
@@ -148,6 +165,32 @@ charges a free agent, never the week it lands in: one made on Sunday spends the 
 and plays from Monday, and Monday's count starts over only once it is in. Each day's starters are
 the most valuable set the slots hold among the players whose team plays and whom the policy has not
 heard are out; their lines are the week's totals.
+
+**The seat's measure** (the format PR). In a categories league that counts one win per matchup
+(the default) the problem says so (`MoveProblem.one_win`, as `api.season_moves.build` passes
+`SeasonSettings.one_win`), and every tier that weighs (the exact and the surrogate tiers, a mirror
+rival) values a week as the matchup's win odds (`weekly.matchup_won`, averaged over the week's
+opponents and summed over the horizon's weeks) instead of its expected categories won, through
+the engine's own `Evaluator`: the simulator names neither. The exact tier executing `weighted`
+follows the format too, one measure a seat; live, the Strategy panel stays on expected
+categories in every league (`api/season_strategy.py`, the master's ruling on #397), a working
+default here. In a one-win league the plan's floor is the engine's own (`stream.floor_of`:
+`PLAN_FLOOR_ODDS`, 3 points of the matchup's odds), ahead of the `plan_floor_cats` knob, which
+nobody reads there. A league that counts every category, and a points league, are valued as
+before. The ranking tier, a market rival and a static seat read no odds and do not change. The
+record names the measure once, beside `executions` (`measure`: `matchup`, `categories` or
+`points`, `moves.measure_of`'s words, `policy.measure`): what the format gives a seat that
+weighs, recorded even when no seat of the run does.
+
+What the format does not model, each plainly:
+
+1. **The lineup.** Live, a one-win league's crowded-day lineup is picked on the matchup's odds
+   (`lineup.win_starters`); the simulator's lineup (`policy.starters_of`) has never been that
+   optimiser, in either format.
+2. **The Strategy panel's measure** is not the simulator's: live it stays on expected
+   categories; here the exact tier executing `weighted` weighs the format's measure (above).
+3. **A league's own tiebreak** for every category is not read: the standings break a tie on head
+   to head, then the team's number (**The league**).
 
 ## The knobs, the fields and the season term (`sim/policy.py`, PR C)
 
@@ -227,7 +270,10 @@ was the signed medians' quotient, which flips sign or blows up when the season f
 zero). It is recorded per arm (`season_scale.by_arm`: the mean over paths of each figure, and how
 many paths gave one) for every replay, at any `season_weight`, 0 included; null on
 the ranking tier and a static seat. A dry run prints the four. It draws nothing, changes no
-outcome and is no part of a solve.
+outcome and is no part of a solve. Its gain is in the league's measure: in a one-win league the
+matchup's win odds (the note says so in every one-win run, the format PR), as it is in matchups
+won on the points in a points league, so its `ratio` differs by format: a `season_weight` set in
+one format is not the other's. The term itself (a value times games) is the same in both.
 
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters
@@ -242,7 +288,7 @@ built:
 | `protection_floor` | any seat that moves (exact, surrogate, ranking) | a static seat makes no move |
 | `daily_cap` | exact, surrogate | the ranking tier queues one move a day, under any cap |
 | `horizon_weight` | exact executing `weighted` | any other arm |
-| `plan_floor_cats` | exact drawing and executing the week plan, categories; in a FAAB run any exact or surrogate seat and a mirror rival, categories (the typical gain until ten moves, PR Fb) | any other arm or league |
+| `plan_floor_cats` | exact drawing and executing the week plan, in a categories league that counts every category; in such a FAAB run any exact or surrogate seat and a mirror rival (the typical gain until ten moves, PR Fb) | any other arm or league; in a one-win league nobody: the engine's plan floor is its own there (the format PR) |
 | `plan_floor_points` | the same, points | any other arm or league |
 | `season_weight` | exact, surrogate | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read | no term, or no bracket |
@@ -261,7 +307,13 @@ gets no knob and no reader: live it only labels a claim's odds in the moves answ
 Every replay payload carries the table, one per arm (`reads`): no league shape moves what a seat
 reads, and the league rules (the scoring, the held slots and the waivers, "The league shapes") are
 the run's, one set for every path. In a points run (`--scoring points`) `plan_floor_points` is read where
-`plan_floor_cats` was, and `plan_floor_cats` is not, with the reason. A replay refuses two arms
+`plan_floor_cats` was, and `plan_floor_cats` is not, with the reason. In a one-win league (the
+default since the format PR) nobody reads `plan_floor_cats`: the engine's floor there is its own
+constant (`stream.PLAN_FLOOR_ODDS`), ahead of the knob; a seat that would read it under
+`--h2h each_category` says so, and every other reason is the same in both formats. A pair that
+differs only on `plan_floor_cats` is refused in a one-win run and runs under `each_category` on
+an arm that executes the plan. The shape's label leaves the format out: one format a run, named in
+`league.rules.h2h`. A replay refuses two arms
 that differ only in knobs and fields that neither reads in the run: they are the same seat, and
 the message names each such knob, why it is not read and what would read it (a pair that
 differs only on `plan_floor_points` is refused in a categories run and runs in a points run on
@@ -345,9 +397,9 @@ Each command runs as `python -m pickandroll.sim <command>`:
   believes by its `system` (below). `--adp espn --adp-spread <base>,<growth>` drafts the league on
   the season's table of average draft positions instead ("The draft market"); `--adp none` is the
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
-  `--scoring points` (with `--points`), `--held` and `--waivers` (with `--waiver-days`, and under
-  `faab` `--budget` and `--rival-scale`) set the run's league rules ("The league shapes"). The
-  payload (`replay_version` 10) keys by season what is one season's: the forecasters,
+  `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days`, and under
+  `faab` `--budget` and `--rival-scale`) and `--h2h` set the run's league rules ("The league
+  shapes"). The payload (`replay_version` 11) keys by season what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
   the league was drafted on, and `league` the league shapes the paths played and the league rules.
@@ -413,6 +465,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
   the latest replayable season on file; the hold-out is refused as the replay refuses it, the
   confirmation season because a gate needs no look at it), drafted on the forecaster named
   (default `prior`); since the standalone cut it is the only gate (**The gates as they stand**).
+  `--h2h one_win|each_category` names the format it plays (default `one_win`).
 
 An arm's spec file names its tier, every one of the twelve knobs, its opponents and what it
 executes, may name its four fields (their defaults otherwise) and may name the fit it was written
@@ -486,7 +539,10 @@ version 4's; 6 since the draft market (PR D4a), its figures version 5's under `-
 since the league shapes (PR D4b), its figures version 6's on the fixed shape; and 8 since the
 league rules (PR D4c), its figures version 7's with nothing named (the nine categories, no held
 slot); 9 since the waivers (PR Fa), its figures version 8's with nothing named (no waivers); 10
-since FAAB (PR Fb), its figures version 9's with nothing named and by priority.
+since FAAB (PR Fb), its figures version 9's with nothing named and by priority; 11 since the
+head-to-head format (the format PR), its figures version 10's under `--h2h each_category` and in
+a run whose seats weigh nothing, while with nothing named a seat that weighs now weighs the
+matchup's odds.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -816,16 +872,18 @@ and the run prints it and records it (`league.short_draft`).
 **What a run records.** The `league` block: the grid's name, its axes, its shapes in order, the
 visit rule in a sentence, each path's shape index and turn, the short drafts, and the league
 rules (`rules`: the scoring, the points table or null, the held slots, and in a waiver run the
-waivers and the wait, and in a FAAB run the budget and the rivals' bid scale; a points run adds
-`points_note`, what its metrics are, and its season scale's note says what the gain is there; a
-FAAB run adds `faab_note`, how the bids are made, and that the live rule's flags are not
-modelled). A pair's
+waivers and the wait, in a FAAB run the budget and the rivals' bid scale, and in a categories
+run the head-to-head format, `h2h`; a points run adds `points_note`, what its metrics are, and its
+season scale's note says what the gain is there; a FAAB run adds `faab_note`, how the bids are
+made, and that the live rule's flags are not modelled; a run that counts every category adds
+`h2h_note`, how its standings rank). Beside `executions` every replay records its `measure`, what
+the format gives a seat that weighs (**The state and the policy**). A pair's
 `seat.by_path` is each path's seat (on the fixed shape, as before). The knob reads table is one
 per arm, as before: no axis of the grid changes what a seat reads (`policy.Shape`), and a test
 says so.
 
-**The league rules** (`shapes.LeagueRules`, PR D4c, PR Fa). How the run's league scores, what it
-holds and how it waives: one set for every path of a run, never an axis of the grid. The grid is the user's ruling
+**The league rules** (`shapes.LeagueRules`, PR D4c, PR Fa, PR Fb, the format PR). How the run's
+league scores, what it holds, how it waives and how its standings count: one set for every path of a run, never an axis of the grid. The grid is the user's ruling
 and its order is part of every record; as axes they would multiply it by twelve (two scorings,
 six sets of held slots); a week in a points league and one in a categories league are different
 quantities, and one verdict pooled over both would mix them; and the knobs they exist for are
@@ -857,13 +915,26 @@ read in one kind only (a run that asks about `plan_floor_points` is a points run
   whole dollars each team starts with, 1 to 1000, default 100; `--rival-scale`, what a market
   rival's bid is multiplied by, above 0, default 1. Both are the run's settings, never axes of
   the grid. Below, "FAAB".
-- **The default** (`shapes.PLAIN`): the nine categories, no held slot, no waivers. With nothing
-  named nothing moves: a replay's record equals the one before PR D4c key for key, apart from
-  `league.rules`, the version and its reason (the claim counts and the waivers' keys in
-  `league.rules` are a waiver run's only, PR Fa; the bid counts, the budget's keys and
-  `faab_note` a FAAB run's, PR Fb, and a run by priority records as it did before). A run that names rules prints one line with
-  them, and the no-peek check and the dry run say them too. `validate` takes none of the three:
-  it plays the fixed shape, the nine categories and no held slot, and says so.
+- **The head-to-head format** (the format PR, `--h2h one_win|each_category`, default `one_win`,
+  refused by name with `--scoring points`: a points league's week is one result already). One
+  win per matchup, or every category ("The league"). It is the run's, never an axis of the grid:
+  a sweep over both formats is two runs. The label says `every category counted` under
+  `each_category` and nothing under the default, as it says nothing of a league without waivers,
+  so today's label is unchanged. The format moves the standings and the seats together: a seat
+  that weighs weighs the format's measure (**The state and the policy**), so no run can name
+  the mix every replay played before it (one-win standings, seats on expected categories).
+- **The default** (`shapes.PLAIN`): the nine categories counted one win per matchup, no held
+  slot, no waivers. With nothing named nothing moves: a replay's record equals the one before PR
+  D4c key for key, apart from `league.rules`, the version and its reason (the claim counts and
+  the waivers' keys in `league.rules` are a waiver run's only, PR Fa; the bid counts, the
+  budget's keys and `faab_note` a FAAB run's, PR Fb, and a run by priority records as it did
+  before; since the format PR a categories run's `league.rules` names its format, `one_win` by
+  default, and `h2h_note` is an `each_category` run's). A run that names rules prints one line
+  with them, and the no-peek check and the dry run say them too. `validate` takes none of the three:
+  it plays the fixed shape, the nine categories and no held slot, and says so; it takes `--h2h`
+  (the format PR), one win per matchup by default. Since the format PR a seat that weighs moves
+  under the default, which it weighs in the matchup's odds; under `--h2h each_category`, and in a
+  run whose seats weigh nothing, the figures are the ones before it.
 
 What a replay with them does not model, each plainly:
 
@@ -964,7 +1035,7 @@ Who bids, and how:
   | input | here | live |
   |---|---|---|
   | `gain` | the move's own gain on the judging horizon from the seat's own solve: the set's value less the set without it (`policy.gains_of`), on the engine's evaluator without the season term; a week-plan step's week increment (`stream.step_gains`) | the logged gain on `three` (`marginal`, the same difference); a plan step's score, its week increment plus the queue's weight times its three weeks' increment (`plans.step_score`) |
-  | `typical` | `typical_gain` over the gains of the moves the seat recommended in the last 14 days, today's included: the plan floor until ten | `typical_gain` over `season_queue.recent_gains`, the last 14 days' recommended three weeks' sets, today's included |
+  | `typical` | `typical_gain` over the gains of the moves the seat recommended in the last 14 days, today's included: the plan floor until ten (the engine's, `stream.floor_of`: the knob, or in a one-win league its own floor in the matchup's odds, the format PR) | `typical_gain` over `season_queue.recent_gains`, the last 14 days' recommended three weeks' sets, today's included |
   | `budget` | the seat's dollars left that day | `season_queue.budget_of`, the league's FAAB balance |
   | `flag` | none: the live rule's flags are not modelled, and the payload says so | the day's flag on the player |
   | `sizing` | the arm's `faab_sizing` | the knob |
@@ -990,12 +1061,13 @@ Who bids, and how:
 - **A static seat** never claims.
 
 In a FAAB run `faab_sizing` is read by a seat that bids, and the plan floor of the league's scoring
-by the same seats (the typical gain until ten moves). The audit holds the bids to three rules in
+by the same seats (the typical gain until ten moves); in a one-win league that floor is the
+engine's own and `plan_floor_cats` is read by nobody (the format PR). The audit holds the bids to three rules in
 place of `claim_priority` and the counts count the dollars (below).
 
 What FAAB does not model, each plainly:
 
-1. **The rivals' bids are assumed**, their form and their typical gain alike; the next PR fits
+1. **The rivals' bids are assumed**, their form and their typical gain alike; a later PR fits
    them. The counts of what the seat paid above the next bid and fell short by are the world's
    knowledge of every bid: no seat reads them.
 2. **Flags are not modelled**: live, a flagged player's bid is raised by its flag's factor; here
@@ -1008,6 +1080,10 @@ What FAAB does not model, each plainly:
    increment plus the queue's weight times its three weeks' increment), until PR E brings the
    queue's weight.
 7. `validate` plays the fixed league without waivers.
+8. **A one-win league's bid has no live rule.** Live, the one league that counts one win per
+   matchup never enters the queue, and the queue's floors stay in categories
+   (`docs/AUTOPILOT.md`, #412). Here its gain is the matchup's odds and its typical gain until ten
+   moves the engine's floor in odds, a working default (the format PR).
 
 **Not yet.** The ruling of 2026-11-07
 makes the market rivals' add rate a parameter of the league shape, with a default written as a
@@ -1121,6 +1197,11 @@ run.
   `validate` prints a line for each seat and day: equal or not, and the two worths to four
   decimals. It names no player. The worths do not enter the gate's rule: a seat still passes on
   its matches alone, and `validate`'s exit code is what it was.
+- The format (the format PR): `--h2h one_win|each_category`, default `one_win`. Gate 5 builds its
+  league in the format named, so the two tiers solve the problem the seats play and the worths
+  are in its measure (the matchup's odds by default). Under `each_category` its answers are the
+  ones before the format PR. The block's `rules` names the format; the record holds no
+  `measure` (the format's words say it).
 
 ## Runs
 

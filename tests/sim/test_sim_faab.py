@@ -17,8 +17,9 @@ from pickandroll.sim import audit, nopeek, policy
 from pickandroll.sim import counts as ct
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
+from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, st
 from pickandroll.sim.state import FAILED, LOST, WON, Claim, Resolved, SimState, Waiting, initial
-from tests.sim.sim_league import KNOBS, arm, make_setup, recorded_lines
+from tests.sim.sim_league import KNOBS, arm, every_category, make_setup, recorded_lines
 
 DAY = timedelta(1)
 
@@ -312,8 +313,16 @@ def built_on(setup, team: int = 1, **knobs):
     return policy.problem_of(setup, s, team, {**KNOBS, **knobs}, setup.projection, {}, {})
 
 
-def test_the_exact_and_the_surrogate_tier_bid_on_their_moves_own_gains_and_ranking_bids_nothing():
-    setup = league(pool=12)
+#: A bid's typical gain until ten moves, by format (the format PR): the engine's plan floor, which
+#: in a one-win league is its own in the matchup's odds, and where every category counts the knob.
+FLOOR_BY_FORMAT = [(ONE_WIN, st.PLAN_FLOOR_ODDS), (EACH_CATEGORY, 0.25)]
+
+
+@pytest.mark.parametrize(("h2h", "floor"), FLOOR_BY_FORMAT)
+def test_the_exact_and_the_surrogate_tier_bid_on_their_moves_own_gains_and_ranking_bids_nothing(
+    h2h, floor
+):
+    setup = league(pool=12) if h2h == ONE_WIN else every_category(league(pool=12))
     b = built_on(setup, faab_sizing=0.5, plan_floor_cats=0.25)
     assert b.bids
     exact = policy.exact(b, with_plan=False)
@@ -323,7 +332,7 @@ def test_the_exact_and_the_surrogate_tier_bid_on_their_moves_own_gains_and_ranki
     rec = mv.recommend(ev, "three", [c for c, _ in b.problem.candidates])
     if tuple(pm.move for pm in rec.moves) == exact.moves:
         assert exact.basis.gains == pytest.approx([pm.marginal["three"] for pm in rec.moves])
-    assert (exact.basis.sizing, exact.basis.floor) == (0.5, 0.25)
+    assert (exact.basis.sizing, exact.basis.floor) == (0.5, floor)
     sur = policy.surrogate(b)
     assert sur.basis is not None and sur.basis.gains == policy.gains_of(ev, "three", sur.moves)
     assert policy.ranking(b).basis is None
@@ -338,9 +347,15 @@ def test_the_exact_and_the_surrogate_tier_bid_on_their_moves_own_gains_and_ranki
 
 def test_a_seat_that_bids_reads_faab_sizing_and_its_plan_floor_in_a_faab_league():
     faab = policy.Shape(waivers="faab")
+    each = policy.Shape(waivers="faab", h2h=EACH_CATEGORY)
     points = policy.Shape("points", waivers="faab")
     for tier in ("exact", "surrogate"):
         reads = policy.reads(rn.Arm("X", tier, KNOBS, {}), faab)
+        # In a one-win league the plan floor is the engine's own (the format PR); where every
+        # category counts, a seat that bids reads the knob.
+        assert reads["faab_sizing"] == policy.READ
+        assert reads["plan_floor_cats"] == policy.ONE_WIN_FLOOR
+        reads = policy.reads(rn.Arm("X", tier, KNOBS, {}), each)
         assert reads["faab_sizing"] == reads["plan_floor_cats"] == policy.READ
         assert reads["plan_floor_points"] != policy.READ
         assert (
@@ -464,9 +479,10 @@ PAID_PATH = (1, 0)
 
 def test_a_surrogate_seat_wins_a_claim_it_paid_for():
     """The test that catches a seat that never bids above $0: a six-week made-up league of four
-    seats and twelve free agents, waivers by FAAB, the surrogate in seat 1 (at the engine's
-    categories plan floor, 0.1, its typical gain until ten moves) among market rivals at a rate
-    of 0.3 a day. The seat wins a claim and pays for it, every team's dollars are its budget
+    seats and twelve free agents, waivers by FAAB, the surrogate in seat 1 among market rivals
+    at a rate of 0.3 a day (its arm names the engine's categories plan floor, 0.1, its typical
+    gain until ten moves where every category counts; in this one-win league, since the format
+    PR, the typical is the engine's own floor in the matchup's odds). The seat wins a claim and pays for it, every team's dollars are its budget
     less what its won claims bid, and the audit finds nothing. PAID_PATH is the first of seeds 1
     and 2 and paths 0 and 1, tried in that order, on which the seat wins a claim above $0."""
     setup = league(pool=12)
@@ -503,14 +519,21 @@ def test_a_claim_s_bid_is_part_of_the_day_s_digest():
 
 def test_the_refusal_of_a_pair_apart_only_on_a_plan_floor_names_a_seat_that_bids():
     """Two surrogate arms apart only on ``plan_floor_cats``: the same seat outside a FAAB run,
-    and the refusal says a seat that bids reads it there; two seats in a FAAB run."""
+    and the refusal says a seat that bids reads it there, in a league that counts every category
+    (the format PR); two seats in a FAAB run that counts every category, one in a one-win FAAB
+    run, where the plan floor is the engine's own."""
     a = rn.Arm("A", "surrogate", KNOBS, {})
     b = rn.Arm("B", "surrogate", {**KNOBS, "plan_floor_cats": 0.5}, {})
-    (why,) = rn.same_seat(a, b, [policy.Shape(waivers="priority")], rivals=False)
-    assert why == (
-        "plan_floor_cats (only the exact tier draws a week plan; read by the exact tier drawing "
-        "and executing the week plan in a categories league), and in a categories FAAB run by a "
-        "seat that bids (the exact or the surrogate tier, a mirror rival), its typical gain until "
-        "ten moves"
-    )
-    assert rn.same_seat(a, b, [policy.Shape(waivers="faab")], rivals=False) is None
+    for h2h in (ONE_WIN, EACH_CATEGORY):
+        (why,) = rn.same_seat(a, b, [policy.Shape(waivers="priority", h2h=h2h)], rivals=False)
+        assert why == (
+            "plan_floor_cats (only the exact tier draws a week plan; read by the exact tier "
+            "drawing and executing the week plan in a categories league), and in a categories "
+            "FAAB run by a seat that bids (the exact or the surrogate tier, a mirror rival), its "
+            "typical gain until ten moves; either only in a league that counts every category "
+            "(--h2h each_category)"
+        )
+    (why,) = rn.same_seat(a, b, [policy.Shape(waivers="faab")], rivals=False)
+    assert why.startswith(f"plan_floor_cats ({policy.ONE_WIN_FLOOR}; read by the exact tier")
+    each = policy.Shape(waivers="faab", h2h=EACH_CATEGORY)
+    assert rn.same_seat(a, b, [each], rivals=False) is None

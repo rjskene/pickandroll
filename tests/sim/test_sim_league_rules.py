@@ -13,7 +13,13 @@ def test_the_default_rules_are_today_s_league():
     assert plain == shapes.LeagueRules()
     assert (plain.scoring, plain.points, plain.held, plain.table) == ("categories", None, (), None)
     assert plain.slots(shapes.SLOTS) == shapes.SLOTS
-    assert plain.payload() == {"scoring": "categories", "points": None, "held": []}
+    # The format PR: a categories league records its head-to-head format, one win by default.
+    assert plain.payload() == {
+        "scoring": "categories",
+        "points": None,
+        "held": [],
+        "h2h": "one_win",
+    }
     assert plain.label() == "the nine categories, no held slot"
 
 
@@ -141,8 +147,9 @@ def test_the_rules_label_and_payload_say_the_scoring_the_table_and_the_held_slot
 def test_the_default_rules_have_no_waivers_and_record_as_before():
     plain = shapes.PLAIN
     assert (plain.waivers, plain.waiver_days, plain.waiting) == ("none", 2, False)
-    # A league without waivers records the three keys of PR D4c and labels as it did.
-    assert set(plain.payload()) == {"scoring", "points", "held"}
+    # A league without waivers records the three keys of PR D4c (and the format's since the
+    # format PR) and labels as it did.
+    assert set(plain.payload()) == {"scoring", "points", "held", "h2h"}
     assert shapes.LeagueRules(held=("IL",)) == shapes.LeagueRules(
         "categories", None, ("IL",), "none", 2
     )
@@ -156,6 +163,7 @@ def test_a_waiver_league_says_its_wait_in_the_label_and_the_payload():
         "scoring": "categories",
         "points": None,
         "held": [],
+        "h2h": "one_win",
         "waivers": "priority",
         "waiver_days": 2,
     }
@@ -223,6 +231,7 @@ def test_a_faab_league_says_its_budget_and_the_rivals_scale_in_the_label_and_the
         "scoring": "categories",
         "points": None,
         "held": [],
+        "h2h": "one_win",
         "waivers": "faab",
         "waiver_days": 2,
         "budget": 100,

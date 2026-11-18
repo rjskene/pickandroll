@@ -59,7 +59,7 @@ from . import forecast as fc
 from . import readers as reader
 from . import run as rn
 from . import validate as vg
-from .engine import mv, wk
+from .engine import EACH_CATEGORY, ONE_WIN, mv, wk
 
 #: The repository: this file is ``src/pickandroll/sim/cli.py``.
 ROOT = Path(__file__).resolve().parents[3]
@@ -299,11 +299,13 @@ def base_payload(
     workers: int,
     arms: Mapping[str, rn.Arm] | None = None,
     executions: str = EXECUTIONS,
+    measure: str | None = None,
 ) -> dict[str, Any]:
     """The payload's common part. ``arms`` by their key in the payload (``a`` and ``b`` in a
     pair, the names in a room): each arm's fields and its surrogate's pool and days; none
     (validate) for the live route's, the surrogate gate's. ``executions``, the run's execution
-    model (``policy.executions_of`` its waivers, PR Fa)."""
+    model (``policy.executions_of`` its waivers, PR Fa); ``measure``, what the run's format gives
+    a seat that weighs (``policy.measure``, the format PR; a replay's, beside it)."""
     fields = {k: arm.fields for k, arm in (arms or {}).items()} or {"gate": policy.Fields()}
     return {
         "kind": kind,
@@ -318,6 +320,7 @@ def base_payload(
         "fit_file": str(fit_path),
         "hold_out": fit.get("hold_out", HOLD_OUT),
         "executions": executions,
+        **({"measure": measure} if measure is not None else {}),
         "fields": {k: f.payload() for k, f in fields.items()},
         "surrogate": {
             k: {"pool": f.pool, "days": list(f.surrogate_days), "plan": "daily"}
@@ -525,10 +528,22 @@ SCALE_NOTE_POINTS = (
 )
 
 
-def scale_note(scoring: str = "categories") -> str:
-    """The season scale's note for a run that scores by ``scoring``: a points run's says what
-    the gain is there; a categories run's is :data:`SCALE_NOTE` as it was."""
-    return SCALE_NOTE + SCALE_NOTE_POINTS if scoring == "points" else SCALE_NOTE
+#: What the season scale's gain is in a one-win league (#172, the format PR), whatever the seats.
+SCALE_NOTE_ONE_WIN = (
+    " In this league, which counts one win per matchup, the gain is in the matchup's win odds: "
+    "each week's chance of winning the matchup (a later week's the mean over the field), summed "
+    "over the key's weeks, not its expected categories; so the ratio is in odds, and a "
+    "season_weight set in one format is not the other's."
+)
+
+
+def scale_note(scoring: str = "categories", h2h: str = ONE_WIN) -> str:
+    """The season scale's note for a run that scores by ``scoring`` in the head-to-head format
+    ``h2h``: a points run's and a one-win run's say what the gain is there; a run that counts
+    every category has :data:`SCALE_NOTE` as it was."""
+    if scoring == "points":
+        return SCALE_NOTE + SCALE_NOTE_POINTS
+    return SCALE_NOTE + SCALE_NOTE_ONE_WIN if h2h == ONE_WIN else SCALE_NOTE
 
 
 def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
@@ -726,7 +741,7 @@ def replay_setup_of(
     (``league``, #172, PR D4b; the fixed shape by default) under the run's league rules
     (``league_rules``, PR D4c: the scoring, a points table and the held slots after the
     shape's bench; PR Fa: the waivers; PR Fb: a FAAB league's budget and the rivals' bid
-    scale; today's by default)."""
+    scale; the format PR: a categories league's head-to-head format; today's by default)."""
     args = league.setup_args()
     return rn.replay_setup(
         season,
@@ -743,6 +758,7 @@ def replay_setup_of(
         waiver_days=league_rules.waiver_days,
         budget=league_rules.budget,
         rival_scale=league_rules.rival_scale,
+        h2h=league_rules.h2h,
     )
 
 
@@ -1077,8 +1093,8 @@ def task_paired(
     return out
 
 
-#: The replay's version in its payload: 10 since FAAB (#172, PR Fb), 9 since the waivers (PR
-#: Fa), 8 since the league rules (PR D4c), 7 since the
+#: The replay's version in its payload: 11 since the head-to-head format (#172, the format PR),
+#: 10 since FAAB (PR Fb), 9 since the waivers (PR Fa), 8 since the league rules (PR D4c), 7 since the
 #: league generator (PR D4b), 6 since the draft market (PR D4a), each as its reason says; 5
 #: since the standalone cut (PR D3): the payload
 #: names nothing of a live league or a drawn world (its ``gap``, ``refresh`` and ``tau`` are
@@ -1090,8 +1106,15 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 10
+REPLAY_VERSION = 11
 REPLAY_VERSION_WHY = (
+    "11: the head-to-head format (--h2h): a categories league counts one win per matchup (the "
+    "default) or every category, whose standings order the teams by the category percentage, "
+    "then head to head; a seat that weighs (the exact and the surrogate tiers, a mirror rival) "
+    "weighs a week in the format's measure, the matchup's win odds in a one-win league, where the "
+    "plan floor is the engine's own; the league block's rules name the format and the record its "
+    "measure; under each_category, and in a run whose seats weigh nothing, the figures are "
+    "version 10's. "
     "10: FAAB (--waivers faab, --budget, --rival-scale): a claim carries a sealed bid from its "
     "team's budget, the highest bid takes the player and pays it, a tie to the better priority; "
     "the seat bids by the live rule, a market rival by an assumed form; the league block's rules "
@@ -1681,8 +1704,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
         held = shapes.parse_held(args.held) if args.held is not None else ()
         waivers, waiver_days = shapes.parse_waivers(args.waivers, args.waiver_days)
         budget, scale = shapes.parse_budget(waivers, args.budget, args.rival_scale)
+        h2h = shapes.parse_h2h(args.scoring, args.h2h)
         league_rules = shapes.LeagueRules(
-            args.scoring, table, held, waivers, waiver_days, budget, scale
+            args.scoring, table, held, waivers, waiver_days, budget, scale, h2h
         )
     except ValueError as e:
         print(f"refused: {e}")
@@ -1956,6 +1980,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         workers,
         arms,
         policy.executions_of(league_rules.waivers),
+        policy.measure(league_rules.points is not None, league_rules.one_win),
     )
     payload |= replay_notes({str(r.season): r.fits for r in reads}, args.news_sd)
     payload |= {
@@ -2011,12 +2036,25 @@ def cmd_replay(args: argparse.Namespace) -> int:
         payload["pool"]["draft"] = ADP_POOL.format(days=rn.OPENING_DAYS)
     if paired:
         payload |= paired_blocks(
-            keys, results, arms, paths, grid, league_rules.scoring, league_rules.waivers
+            keys,
+            results,
+            arms,
+            paths,
+            grid,
+            league_rules.scoring,
+            league_rules.waivers,
+            league_rules.h2h,
         )
         payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
     else:
         payload |= room_blocks(
-            keys, results, seats, grid, league_rules.scoring, league_rules.waivers
+            keys,
+            results,
+            seats,
+            grid,
+            league_rules.scoring,
+            league_rules.waivers,
+            league_rules.h2h,
         )
         if sources is not None:
             payload["result_is"] = ROOM_RESULT
@@ -2244,11 +2282,12 @@ def room_blocks(
     grid: shapes.Grid = shapes.FIXED_GRID,
     scoring: str = "categories",
     waivers: str = "none",
+    h2h: str = ONE_WIN,
 ) -> dict[str, Any]:
     """A room's figures, keyed by season and then by forecaster: each arm's outcomes and counts
     pooled over its seats and the paths that stand (the counts' note the run's ``waivers``',
-    :func:`counts_note`), each arm's season scale by season (its note the run's ``scoring``'s,
-    :func:`scale_note`), the unprojected count by cell."""
+    :func:`counts_note`), each arm's season scale by season (its note the run's ``scoring``'s
+    and format's, :func:`scale_note`), the unprojected count by cell."""
     by_cell: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
     counts_by_cell: dict[str, dict[str, dict[str, list[Any]]]] = {}
     unprojected: dict[str, dict[str, list[Any]]] = {}
@@ -2273,7 +2312,7 @@ def room_blocks(
             for t, by_label in by_cell.items()
         },
         "season_scale": {
-            "note": scale_note(scoring),
+            "note": scale_note(scoring, h2h),
             "by_season": {
                 t: {arm: scale_of(rows) for arm, rows in d.items()} for t, d in scales.items()
             },
@@ -2349,6 +2388,19 @@ POINTS_NOTE = (
 )
 
 
+#: How a league that counts every category ranks its teams (#172, the format PR), in such a run's
+#: league block; a run of the default format, one win per matchup, has none, as before.
+H2H_NOTE = (
+    "each category of each regular week is a win, a loss or a tie, and the standings order the "
+    "teams by the category percentage (category wins, a tie half, over the categories played), "
+    "then head to head (the weeks' results between the tied teams), then the team's number, a "
+    "working default (a league may break a tie otherwise); matchup_wins, category_wins and the "
+    "record are the weeks' results as in the default format, only the rank and what rests on it "
+    "read the format; a playoff matchup goes to the side with more categories, the higher seed "
+    "through a tie, as in the default"
+)
+
+
 #: How a FAAB league's bids are made (#172, PR Fb), in a FAAB run's league block.
 FAAB_NOTE = (
     "a claim's sealed bid is set when it is placed, clamped to its team's dollars left that day "
@@ -2378,7 +2430,8 @@ def league_block(
     """A replay's league (#172, PR D4b): the grid named, its shapes in order, the visit rule,
     each path's shape index and turn, and the drafts that may not fill; and the run's league
     rules (PR D4c: the scoring, the points table or null, the held slots), with what a points
-    league's metrics are in a points run, and in a FAAB run how the bids are made (PR Fb)."""
+    league's metrics are in a points run, in a FAAB run how the bids are made (PR Fb), and in a
+    run that counts every category how its standings rank (the format PR)."""
     return {
         "grid": grid.name,
         "axes": {k: list(v) for k, v in grid.axes().items()},
@@ -2390,6 +2443,7 @@ def league_block(
         "rules": league_rules.payload(),
         **({"points_note": POINTS_NOTE} if league_rules.scoring == "points" else {}),
         **({"faab_note": FAAB_NOTE} if league_rules.bidding else {}),
+        **({"h2h_note": H2H_NOTE} if league_rules.h2h == EACH_CATEGORY else {}),
     }
 
 
@@ -2459,12 +2513,13 @@ def paired_blocks(
     grid: shapes.Grid = shapes.FIXED_GRID,
     scoring: str = "categories",
     waivers: str = "none",
+    h2h: str = ONE_WIN,
 ) -> dict[str, Any]:
     """The pair's figures, keyed by season and then by forecaster: each arm's outcomes, the
     difference (B less A) over the paths that stand with how many are distinct, the counts by arm
     and for the rivals (their note the run's ``waivers``', :func:`counts_note`), each arm's season
-    scale by season (its note the run's ``scoring``'s, :func:`scale_note`), the unprojected count by
-    cell and arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of
+    scale by season (its note the run's ``scoring``'s and format's, :func:`scale_note`), the
+    unprojected count by cell and arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of
     more than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b)."""
     rows: dict[str, dict[str, list[Mapping[str, Any]]]] = {}
     scales: dict[str, dict[str, list[Any]]] = {}
@@ -2501,7 +2556,7 @@ def paired_blocks(
         "difference": "b less a",
         "results": {t: {label: cell(rs) for label, rs in d.items()} for t, d in rows.items()},
         "season_scale": {
-            "note": scale_note(scoring),
+            "note": scale_note(scoring, h2h),
             "by_season": {
                 t: {side: scale_of(rs) for side, rs in d.items()} for t, d in scales.items()
             },
@@ -2580,21 +2635,24 @@ def season_refused(data: Path, season: int) -> str | None:
 
 
 def gate_surrogate(
-    data: Path, season: int, f: fc.Forecaster, lag: int, seed: int
+    data: Path, season: int, f: fc.Forecaster, lag: int, seed: int, h2h: str = ONE_WIN
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Gate 5 on a replay (#172, PR D3): the league, the belief's weights and the world built as
     ``replay`` builds them for ``season`` and forecaster ``f`` (:func:`read_season`,
     :func:`replay_setup_of`, ``run.replay_world`` at the label's own weights), path 0; on each of
     the :data:`GATE_DAYS` after the first simulated day, for each of :func:`gate_seats`, whether
     the surrogate's set equals the exact set from day one's rosters (``checks.surrogate_matches``),
-    at the knobs' defaults (``policy.KNOB_DEFAULTS``) and the fields' (``policy.DEFAULT_FIELDS``).
-    One gate row a seat, and the block that names what the gate ran on. Refused
-    (``readers.SimReadError``) when ``f`` cannot serve the season."""
-    r = read_season(data, season, [f], None, {}, seed, GATE_SHAPE)
+    at the knobs' defaults (``policy.KNOB_DEFAULTS``) and the fields' (``policy.DEFAULT_FIELDS``),
+    in the head-to-head format ``h2h`` (the format PR: one win per matchup by default, so the two
+    tiers are compared in the measure the seats play). One gate row a seat, and the block that
+    names what the gate ran on. Refused (``readers.SimReadError``) when ``f`` cannot serve the
+    season."""
+    rules = shapes.LeagueRules(h2h=h2h)
+    r = read_season(data, season, [f], None, {}, seed, GATE_SHAPE, rules)
     if not r.served:
         raise reader.SimReadError(f"{f.label} cannot serve {season}: {r.skipped[f.label]}")
     projection = projection_of(f, r.fixed, r.lines, seed, 0, GATE_SHAPE)
-    setup = replay_setup_of(season, r.lines, r.members, r.scheduled, projection)
+    setup = replay_setup_of(season, r.lines, r.members, r.scheduled, projection, league_rules=rules)
     w = rn.replay_world(
         setup, r.lines, lag, seed, 0, r.weights[f.label], label=f.label, weights_of=r.weights
     )
@@ -2632,7 +2690,7 @@ def gate_surrogate(
         ),
         "records": GATE_RECORDS,
         "league": f"the fixed league shape ({shapes.FIXED.label()}); gate 5 is not run on a grid",
-        "rules": shapes.PLAIN.payload(),
+        "rules": rules.payload(),
     }
     return rows, block
 
@@ -2665,13 +2723,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 2
     try:
         forecaster = fc.parse_one(args.forecaster)
+        h2h = shapes.parse_h2h("categories", args.h2h)
         inputs, fit, sha, fit_path = world_inputs(args.data)
     except (reader.SimReadError, ValueError, OSError) as e:
         print(f"refused: {e}")
         return 2
+    rules = shapes.LeagueRules(h2h=h2h)
     t0 = clock.perf_counter()
     try:
-        surrogate, block = gate_surrogate(args.data, season, forecaster, inputs.lag, args.seed)
+        surrogate, block = gate_surrogate(args.data, season, forecaster, inputs.lag, args.seed, h2h)
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
         return 2
@@ -2700,9 +2760,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "league-days "
         f"({len(block['seats'])} seats x {len(block['days'])} days) in {took:.1f}s"
     )
+    # The label leaves the default format unsaid; gate 5's line says it in either.
+    under = rules.label() if h2h != ONE_WIN else f"{rules.label()}, {shapes.H2H_WORDS[h2h]}"
     print(
-        f"gate 5 plays the fixed league shape: {shapes.FIXED.label()}, under "
-        f"{shapes.PLAIN.label()} (validate takes no --scoring, --points or --held)"
+        f"gate 5 plays the fixed league shape: {shapes.FIXED.label()}, under {under} (validate "
+        "takes no --scoring, --points or --held; --h2h names the format)"
     )
     print(f"written: {path}" if path else "dry run, nothing written")
     return 0
@@ -2864,6 +2926,15 @@ def main(argv: list[str] | None = None) -> int:
         "assumption to sweep (default 1)",
     )
     re_.add_argument(
+        "--h2h",
+        default=None,
+        metavar="FORMAT",
+        help="a categories league's head-to-head format, on every path: one_win, a week is one "
+        "result, won by the side with more categories; each_category, each category of a week "
+        "is a result and the standings rank by the category percentage; not with --scoring "
+        "points (default one_win)",
+    )
+    re_.add_argument(
         "--news-sd",
         type=float,
         default=world.NEWS_SD_DAYS,
@@ -2889,6 +2960,13 @@ def main(argv: list[str] | None = None) -> int:
         "--forecaster",
         default=GATE_FORECASTER,
         help=f"gate 5's replay's forecaster (default {GATE_FORECASTER})",
+    )
+    va.add_argument(
+        "--h2h",
+        default=None,
+        metavar="FORMAT",
+        help="gate 5's league's head-to-head format, the measure its seats weigh in: one_win, the "
+        "matchup's odds; each_category, expected categories (default one_win)",
     )
     va.add_argument("--seed", type=int, default=1)
     va.add_argument("--name", default=None)

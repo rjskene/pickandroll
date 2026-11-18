@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
 
-from .engine import HELD, Calendar, Move, Player, Week, monday_of
+from .engine import HELD, ONE_WIN, Calendar, Move, Player, Week, monday_of
 from .league import LeagueSpec
 
 Rates = Mapping[str, float]
@@ -151,6 +151,10 @@ class Setup:
     #: and what a market rival's bid is multiplied by.
     budget: int = 100
     rival_scale: float = 1.0
+    #: A categories league's head-to-head format (the format PR, ``shapes.H2H``): ``one_win``, a
+    #: week one result in the standings; ``each_category``, each category's. A points league
+    #: holds the default and its week is one result on the points.
+    h2h: str = ONE_WIN
 
     @property
     def waiting(self) -> bool:
@@ -161,6 +165,12 @@ class Setup:
     def bidding(self) -> bool:
         """Whether a claim carries a bid from its team's budget: a FAAB league (PR Fb)."""
         return self.waivers == "faab"
+
+    @property
+    def one_win(self) -> bool:
+        """Whether a week is one result and its matchup's odds are what a seat weighs: a
+        categories league of the ``one_win`` format."""
+        return self.scoring != "points" and self.h2h == ONE_WIN
 
     @property
     def season_end(self) -> date:
