@@ -290,12 +290,9 @@ def test_the_two_sources_lever_is_played_under_the_run_s_stand_ins(data: Path):
     """With the two sources' stand-ins named, ``system`` is read, on the surrogate tier: a pair
     to the other source and one to the mix at 0.5. The screen reads a season once for each pair
     of beliefs its arms hold, and a pair whose arms hold two beliefs is still the same pair run
-    by ``replay`` (Rule 1). ``blend``'s rows are listed beside it and left out of the run (their
-    making is ``test_sim_screen.py``'s)."""
+    by ``replay`` (Rule 1). ``blend``'s pairs are made in ``test_sim_screen.py`` and not played
+    here: an oracle's stand-in is drawn a path, which is slow for a test."""
     flags = ("--bbm-as", "prior", "--yahoo-as", "oracle:0.2")
-    code, out = screen(data, *flags, "--dry-run", levers=("blend",), name="mix")
-    assert code == 0 and out.count("to play: 2 tasks, one took") == 2, out
-    assert "[both arms: system blend, blend 0.5]" in out
     code, out = screen(data, *flags, levers=("system",), name="sources")
     assert code == 0, out
     rows = rows_of(record(data, "sources"))
@@ -423,7 +420,7 @@ def test_a_screen_refuses_by_name_before_any_path(data: Path, monkeypatch):
         ({"arm": "nowhere"}, (), "refused: --arm: "),
         ({"arm": "bad"}, (), "refused: --arm: spec key 'pol' is not one the simulator reads"),
         ({}, ("--waivers", "sealed"), "refused: --waivers sealed: one of none, priority, faab"),
-        ({}, ("--waiver-days", "3"), "refused: waiver days 3 with waivers none"),
+        ({}, ("--waiver-days", "3"), "refused: --waiver-days 3: a dropped player's wait is"),
     ):
         code, out = screen(data, *flags, name="refused", **kw)
         assert code == 2 and why in out, out
