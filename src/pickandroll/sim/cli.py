@@ -3,6 +3,7 @@
     python -m pickandroll.sim fetch-logs --seasons 2022-2026   # ESPN's per-game logs, cached
     python -m pickandroll.sim fit                              # the world's fit, frozen with a hash
     python -m pickandroll.sim fit --dry-run                    # the fit printed, nothing written
+    python -m pickandroll.sim fit-bids                         # the rivals' price book, with a hash
     python -m pickandroll.sim replay --seasons 2022-2024 --forecasters prior,espn --seats A.json B.json
     python -m pickandroll.sim replay --seasons 2022-2024 --forecasters prior,espn --arms A.json B.json
     python -m pickandroll.sim replay --seasons 2024 --forecasters oracle:0.1 --shape minutes ...
@@ -59,7 +60,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import adp, audit, checks, gamelogs, nopeek, policy, shapes, world
+from . import adp, audit, bids, checks, gamelogs, nopeek, policy, shapes, world
 from . import counts as ct
 from . import fit as fitmod
 from . import forecast as fc
@@ -270,6 +271,61 @@ def cmd_fit(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- the price book (PR Fd)
+def describe_book(book: Mapping[str, Any]) -> str:
+    """A price book in a few lines, for the terminal (its figures stay under ``data/``)."""
+    prices = bids.prices_of(book)
+    total = sum(n for _, n in prices)
+    zero = sum(n for s, n in prices if s == 0)
+    adds = book["adds"]
+
+    def x(v: Any) -> str:
+        return "none" if v is None else f"{v:.3g}"
+
+    head = (
+        f"book: {book['rows_kept']} rivals' winning bids of {book['rows_read']} rows, "
+        f"{len(book['leagues'])} leagues, claims {book['first_claim']} to {book['last_claim']}, "
+        f"table sha256 {book['table_sha256']}"
+    )
+    shares = (
+        f"prices (shares of the budget): {len(prices)} distinct, {zero} of {total} at $0, the "
+        f"median {x(bids.quantile(prices, 0.5))}, the top {x(prices[-1][0])}"
+    )
+    weeks = (
+        f"adds ({adds['unit']}): {adds['weeks']} whole league-weeks, the median "
+        f"{x(adds['median'])}, the quartiles {x(adds['q1'])} and {x(adds['q3'])}"
+    )
+    ours = f"ours: {book['ours']['won']} won, {book['ours']['lost']} lost"
+    return f"{head}\n{shares}\n{weeks}\n{ours}"
+
+
+def cmd_fit_bids(args: argparse.Namespace) -> int:
+    """The price book from the winning-bids table (``bids.book_of``), written as the fit is:
+    ``data/sim/bids/<date>/book.json`` with ``book.sha256`` beside it. It reads no game log, so no
+    season is involved; the table's hash is checked first and only ``bids.READ`` is read."""
+    ok, why = guard(0.0, rooms=args.rooms)
+    if not ok:
+        print(f"refused: {why}")
+        return 2
+    try:
+        rows, table_sha, _ = reader.bids_rows(args.data)
+        book = bids.book_of(rows, table_sha)
+    except (reader.SimReadError, bids.BookError) as e:
+        print(f"refused: {e}")
+        return 2
+    sha = reader.fit_hash(book)
+    print(describe_book(book))
+    if args.dry_run:
+        print(f"sha256 {sha} (dry run, nothing written)")
+        return 0
+    out = args.data / reader.BIDS_DIR / datetime.now(UTC).date().isoformat()
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "book.json").write_text(json.dumps(book, indent=1, sort_keys=True))
+    (out / "book.sha256").write_text(sha + "\n")
+    print(f"written: {out / 'book.json'} sha256 {sha}")
+    return 0
+
+
 # --------------------------------------------------------------------------- the runs' common ground
 def read_specs(paths: Sequence[Path]) -> list[dict[str, Any]]:
     return [json.loads(Path(p).read_text()) for p in paths]
@@ -308,12 +364,15 @@ def base_payload(
     arms: Mapping[str, rn.Arm] | None = None,
     executions: str = EXECUTIONS,
     measure: str | None = None,
+    book: tuple[Mapping[str, Any], str, Path] | None = None,
 ) -> dict[str, Any]:
     """The payload's common part. ``arms`` by their key in the payload (``a`` and ``b`` in a
     pair, the names in a room): each arm's fields and its surrogate's pool and days; none
     (validate) for the live route's, the surrogate gate's. ``executions``, the run's execution
     model (``policy.executions_of`` its waivers, PR Fa, and its waiver rule, PR Fc); ``measure``, what the run's format gives
-    a seat that weighs (``policy.measure``, the format PR; a replay's, beside it)."""
+    a seat that weighs (``policy.measure``, the format PR; a replay's, beside it); ``book``, the
+    price book its rivals bid on (``readers.newest_book``, PR Fd): its hash, its file and its
+    table's hash beside the fit's, in a run that names it only."""
     fields = {k: arm.fields for k, arm in (arms or {}).items()} or {"gate": policy.Fields()}
     return {
         "kind": kind,
@@ -326,6 +385,15 @@ def base_payload(
         "code_sha": reader.code_sha(ROOT),
         "fit_sha": sha,
         "fit_file": str(fit_path),
+        **(
+            {
+                "book_sha": book[1],
+                "book_file": str(book[2]),
+                "book_table_sha256": book[0].get("table_sha256"),
+            }
+            if book is not None
+            else {}
+        ),
         "hold_out": fit.get("hold_out", HOLD_OUT),
         "executions": executions,
         **({"measure": measure} if measure is not None else {}),
@@ -750,7 +818,7 @@ def replay_setup_of(
     (``league_rules``, PR D4c: the scoring, a points table and the held slots after the
     shape's bench; PR Fa: the waivers; PR Fb: a FAAB league's budget and the rivals' bid
     scale; the format PR: a categories league's head-to-head format; PR Fc: the waiver rule;
-    today's by default)."""
+    PR Fd: how the rivals bid, and the book's prices; today's by default)."""
     args = league.setup_args()
     return rn.replay_setup(
         season,
@@ -769,6 +837,8 @@ def replay_setup_of(
         rival_scale=league_rules.rival_scale,
         h2h=league_rules.h2h,
         waiver_rule=league_rules.waiver_rule,
+        rival_bids=league_rules.rival_bids,
+        rival_prices=league_rules.rival_prices,
     )
 
 
@@ -1213,8 +1283,17 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 12
+REPLAY_VERSION = 13
 REPLAY_VERSION_WHY = (
+    "13: the rivals' adds and bids: a market rival's opponents block may name view (draft, the "
+    "draft-day ranking all season, the default; or season, the run's forecaster's per-game value "
+    "that morning, a player heard out never picked) and among (one of its best few worth more "
+    "than its weakest, each as likely; 1 by default); --rival-bids book, with --waivers faab, "
+    "draws a market rival's bid on the price book fit-bids writes from the public leagues' "
+    "winning bids, at its move's rank among the market's moves of the fortnight; the league "
+    "block's rules name rival_bids in every FAAB run, and a run on the book records the book's "
+    "file and hashes and says so in its FAAB note; with nothing new named the figures are "
+    "version 12's. "
     "12: continuous waivers (--waiver-rule continuous, with --waivers priority or faab): every "
     "unowned player is on waivers at all times, so every add is a claim, decided the next "
     "morning (a dropped player's on his clear date) by the league's waivers, and nothing lands as "
@@ -1227,14 +1306,7 @@ REPLAY_VERSION_WHY = (
     "are decided, where it decided them first (PR Fa's order, in which a cleared player's trim "
     "could take a player just claimed and a churn's claim found no room in the slot its held "
     "player was leaving), so such a run moves where a claim is decided on a morning a held "
-    "player comes back or a churn's held player leaves. "
-    "11: the head-to-head format (--h2h): a categories league counts one win per matchup (the "
-    "default) or every category, whose standings order the teams by the category percentage, "
-    "then head to head; a seat that weighs (the exact and the surrogate tiers, a mirror rival) "
-    "weighs a week in the format's measure, the matchup's win odds in a one-win league, where the "
-    "plan floor is the engine's own; the league block's rules name the format and the record its "
-    "measure; under each_category, and in a run whose seats weigh nothing, the figures are "
-    "version 10's"
+    "player comes back or a churn's held player leaves"
 )
 #: What a replay under a table drafts on (#172, PR D4a), for its payload.
 ADP_RIVAL = (
@@ -1749,7 +1821,8 @@ class ReplayPlan:
     """A replay as :func:`replay_plan` leaves it, its inputs read and nothing played: the seasons,
     the league shapes and rules, the table's spread, when it started, the no-peek day, the
     forecasters, the stand-ins, the fit, the specs and their arms, the seats, whether it is a
-    pair, the tables, each season's read, the short drafts and the shapes read."""
+    pair, the tables, each season's read, the short drafts and the shapes read, and the price
+    book its rivals bid on when the run names it (PR Fd)."""
 
     seasons: list[int]
     grid: shapes.Grid
@@ -1771,6 +1844,7 @@ class ReplayPlan:
     reads: list[SeasonRead]
     short: list[dict[str, Any]]
     shapes_read: list[policy.Shape]
+    book: tuple[Mapping[str, Any], str, Path] | None = None
 
 
 def replay_plan(
@@ -1856,8 +1930,18 @@ def replay_plan(
         budget, scale = shapes.parse_budget(waivers, args.budget, args.rival_scale)
         h2h = shapes.parse_h2h(args.scoring, args.h2h)
         waiver_rule = shapes.parse_waiver_rule(waivers, args.waiver_rule)
+        rival_bids = shapes.parse_rival_bids(waivers, args.rival_bids)
         league_rules = shapes.LeagueRules(
-            args.scoring, table, held, waivers, waiver_days, budget, scale, h2h, waiver_rule
+            args.scoring,
+            table,
+            held,
+            waivers,
+            waiver_days,
+            budget,
+            scale,
+            h2h,
+            waiver_rule,
+            rival_bids,
         )
     except ValueError as e:
         print(f"refused: {e}")
@@ -1887,6 +1971,10 @@ def replay_plan(
         named = fc.parse(args.forecasters)
         sources = sources_of(args.bbm_as, args.yahoo_as)
         inputs, fit, sha, fit_path = world_inputs(args.data)
+        book = None
+        if league_rules.rival_bids == shapes.BOOK:
+            book = reader.newest_book(args.data)
+            league_rules = replace(league_rules, rival_prices=bids.prices_of(book[0]))
         if specs is None:
             specs = read_specs(args.arms if paired else args.seats)
         made = arms_of(specs, sha)
@@ -1995,6 +2083,7 @@ def replay_plan(
         reads,
         short,
         shapes_read,
+        book,
     )
 
 
@@ -2158,6 +2247,7 @@ def replay_payload(
         arms,
         policy.executions_of(league_rules.waivers, league_rules.waiver_rule),
         policy.measure(league_rules.points is not None, league_rules.one_win),
+        plan.book,
     )
     payload |= replay_notes({str(r.season): r.fits for r in reads}, args.news_sd)
     payload |= {
@@ -2743,6 +2833,25 @@ FAAB_EVERY = (
     "lately decided the next morning; no add is a free agent's"
 )
 FAAB_NOTE_CONTINUOUS = FAAB_NOTE.replace(FAAB_FREE, FAAB_EVERY)
+#: The clause of :data:`FAAB_NOTE` on the market rivals' bids, and what a run on the price book
+#: (#172, PR Fd, ``--rival-bids book``) says in its place; a run that names none says
+#: :data:`FAAB_ASSUMED` as before.
+FAAB_ASSUMED = (
+    "A market rival bids round(rival_scale x gain / typical x noise) on its own view, the typical "
+    f"over every market rival's moves of the {policy.RIVAL_BIDS.days} days before (its own gain "
+    f"until {policy.RIVAL_BIDS.least}), the noise uniform on [{policy.RIVAL_BIDS.noise[0]:g}, "
+    f"{policy.RIVAL_BIDS.noise[1]:g}): an assumed form, not a fit, so a result that flips sign "
+    "across rival_scale 0.5, 1 and 2 depends on the league."
+)
+FAAB_BOOK = (
+    "A market rival bids round(rival_scale x budget x Q(u)) on the price book (fit-bids: the "
+    "public leagues' rivals' winning bids as shares of their budget; its hash, its file and its "
+    "table's hash recorded with the fit's), Q the book's quantile and u = (below + U) / (n + 1), below the market rivals' "
+    f"moves of the {policy.RIVAL_BIDS.days} days before that gained less on the view than its "
+    f"move, n how many there are and U uniform on [0, 1) (U alone until {policy.RIVAL_BIDS.least}): "
+    "a book of winning bids, so where several claims meet the simulated winning prices sit above "
+    "it, and a result that flips sign across rival_scale 0.5, 1 and 2 depends on the league."
+)
 #: How a league under continuous waivers adds (#172, PR Fc), in such a run's league block, by
 #: priority or by FAAB; a run with the rule not named has none.
 WAIVER_RULE_NOTE = (
@@ -2787,9 +2896,13 @@ def league_block(
 
 
 def faab_note(league_rules: shapes.LeagueRules) -> str:
-    """A FAAB run's note on its bids: :data:`FAAB_NOTE`, or under continuous waivers (PR Fc)
-    :data:`FAAB_NOTE_CONTINUOUS`."""
-    return FAAB_NOTE_CONTINUOUS if league_rules.continuous else FAAB_NOTE
+    """A FAAB run's note on its bids: :data:`FAAB_NOTE`, under continuous waivers (PR Fc) with
+    :data:`FAAB_EVERY` for :data:`FAAB_FREE` (:data:`FAAB_NOTE_CONTINUOUS`), and on the price book
+    (PR Fd) with :data:`FAAB_BOOK` for :data:`FAAB_ASSUMED`."""
+    note = FAAB_NOTE_CONTINUOUS if league_rules.continuous else FAAB_NOTE
+    if league_rules.rival_bids == shapes.BOOK:
+        note = note.replace(FAAB_ASSUMED, FAAB_BOOK)
+    return note
 
 
 def axis_key(value: Any) -> str:
@@ -3764,6 +3877,14 @@ def _world_args(p: argparse.ArgumentParser) -> None:
         "assumption to sweep (default 1)",
     )
     p.add_argument(
+        "--rival-bids",
+        default=None,
+        metavar="HOW",
+        help="with --waivers faab, how a market rival bids: assumed, the assumed form; book, a "
+        "draw on the newest price book under data/sim/bids/ (fit-bids writes it) (default "
+        "assumed)",
+    )
+    p.add_argument(
         "--h2h",
         default=None,
         metavar="FORMAT",
@@ -3802,6 +3923,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     fi.add_argument("--dry-run", action="store_true", help="print the fit, write nothing")
     fi.set_defaults(func=cmd_fit)
+    fb = sub.add_parser(
+        "fit-bids",
+        help="the rivals' price book from the public leagues' winning bids, written with a hash",
+    )
+    fb.add_argument("--dry-run", action="store_true", help="print the book, write nothing")
+    fb.set_defaults(func=cmd_fit_bids)
     re_ = sub.add_parser("replay", help="a made-up league on a recorded season's lines")
     _cell_args(re_, None)
     re_.add_argument(

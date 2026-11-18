@@ -578,6 +578,18 @@ column shows, each move valued on its own from its day as the log values it
   re-solves, and takes the linear program's set only when the guard allows it, else the
   search's stands (both options, A and B). The private league is guarded the same way: it is the
   same engine, and the user still makes every move there by hand.
+- **The pool (#424).** The search, its re-solves and the solve without the guard all search
+  one pool per horizon (`season_moves.pool_for`): the 30 candidates whose best single swap gains
+  most (`POOL`, in that order), then the best 30 by their best single swap the guard admits
+  (`GUARD_POOL`, above `MIN_GAIN`), each not already in. A pool cut before the guard ran left the
+  search little or nothing when the guard refused most of the 30 (all 30 in 251146's three
+  weeks on 2026-11-18), while adds just below it with an admitted move were never searched. The
+  top 30 stay: an add whose best swap the guard refuses may come with another drop, or join a set
+  the guard admits as a whole. Without a guard the pool is the 30 alone. The strategy engine
+  appends the same list (the two horizons' interleaved, 30 in all) to its own `pool`. The
+  payload's `search.pools` gives each horizon's `size` and `admitted` (how many the guard's list
+  added), `search.guarded` the guard's list, and the log's `pool` block carries them (`pools`;
+  the strategy entry's `size` and `admitted`). The guard itself stays a hard block.
 - **What it held back.** On each horizon the engine solves once more without the guard,
   re-solves and all (a re-solve can find the costly set a plain search misses; only when the
   guard refused a set, since otherwise the solve was the unguarded one). When that set beats the guarded one on the horizon and its rest of the season is below
@@ -621,7 +633,8 @@ counts categories. Every value is the move model's evaluator, so the card agrees
 and Matchup cards.
 
 The pool is the 30 candidates whose best single swap gains most, the two horizons' rankings
-interleaved so the best on either is in; `pool` (up to 60) is a query parameter. Two solvers
+interleaved so the best on either is in; `pool` (up to 60) is a query parameter. Since #424 the
+adds the season guard admits follow them, as on the Moves card ("The season guard"). Two solvers
 answer each weight (option A, provisional until the user rules):
 
 - **The exact search**: the move model's search (greedy exact swaps and the replacement pass) on

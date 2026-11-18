@@ -238,6 +238,7 @@ def test_a_faab_league_says_its_budget_and_the_rivals_scale_in_the_label_and_the
         "waiver_rule": "dropped",
         "budget": 100,
         "rival_scale": 1.0,
+        "rival_bids": "assumed",
     }
     named = shapes.LeagueRules("points", shapes.POINTS_DEFAULT, ("IL",), "faab", 3, 250, 0.5)
     assert named.label() == (

@@ -425,7 +425,8 @@ def test_rule_1_with_the_rule_not_named_a_season_plays_as_the_format_pr_s():
 
 
 #: The league block with the rule not named, every key byte for byte as main 2708829 gave it
-#: (the rules' ``waiver_rule`` aside, the one key Rule 1 adds), over the six rules of
+#: (the rules' ``waiver_rule`` aside, the one key Rule 1 adds, and PR Fd's ``rival_bids`` in a
+#: FAAB run, ``assumed`` when nothing is named), over the six rules of
 #: :data:`BLOCK_RULES` (``~/sim-notes/vm/scratch/fc/block_pin.py``, on main and on this PR).
 BLOCKS_BEFORE = "121dfc4cce6333c240b3cc590219d088b2570e9d3c4b3801121e5e488706b631"
 FAAB_NOTE_BEFORE = "7fe817806c4fd4f7681d9dced83373d83293666f2eca6fc87cde486c026fa694"
@@ -448,6 +449,7 @@ def test_rule_1_with_the_rule_not_named_the_league_block_and_its_notes_are_today
     for rules in BLOCK_RULES:
         block = block_of(rules)
         assert block["rules"].pop("waiver_rule", DROPPED) == DROPPED
+        assert block["rules"].pop("rival_bids", shapes.ASSUMED) == shapes.ASSUMED
         assert "waiver_rule_note" not in block
         blocks.append(block)
     assert hashlib.sha256(json.dumps(blocks, sort_keys=True).encode()).hexdigest() == BLOCKS_BEFORE

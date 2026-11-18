@@ -31,7 +31,7 @@ from __future__ import annotations
 import itertools
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
@@ -342,6 +342,11 @@ RIVAL_SCALE = 1.0
 #: nine public leagues of the winning-bids table, the master on #172, 2026-11-17).
 DROPPED, CONTINUOUS = "dropped", "continuous"
 WAIVER_RULES = (DROPPED, CONTINUOUS)
+#: How a FAAB league's market rivals bid (#172, PR Fd): ``assumed``, the assumed form
+#: (``policy.rival_bid``, the default, PR Fb's), or ``book``, a draw on the price book ``fit-bids``
+#: writes from the public leagues' winning bids (``bids.book_bid``).
+ASSUMED, BOOK = "assumed", "book"
+RIVAL_BIDS = (ASSUMED, BOOK)
 
 
 def _number(x: float) -> str:
@@ -367,8 +372,10 @@ class LeagueRules:
     multiplied by (above 0), both named only with ``faab``; a categories league's head-to-head
     format ``h2h`` (one of :data:`H2H`, ``one_win`` by default; a points league holds the default
     and names none); a waiver league's ``waiver_rule`` (one of :data:`WAIVER_RULES`, ``dropped``
-    by default, named only with waivers, PR Fc). One set for every path of a run, never a grid
-    axis; :data:`PLAIN` is today's league. ValueError, in words, on anything else."""
+    by default, named only with waivers, PR Fc); a FAAB league's ``rival_bids`` (one of
+    :data:`RIVAL_BIDS`, ``assumed`` by default, named only with ``faab``, PR Fd). One set for
+    every path of a run, never a grid axis; :data:`PLAIN` is today's league. ValueError, in
+    words, on anything else."""
 
     scoring: str = "categories"
     points: tuple[tuple[str, float], ...] | None = None
@@ -379,12 +386,28 @@ class LeagueRules:
     rival_scale: float = RIVAL_SCALE
     h2h: str = ONE_WIN
     waiver_rule: str = DROPPED
+    rival_bids: str = ASSUMED
+    #: The book's prices under ``rival_bids`` ``book`` (``bids.prices_of``), read by the command
+    #: and handed to each path's ``Setup``: data, not a rule, so never in the label or the record
+    #: (the record names the book's file and hash).
+    rival_prices: tuple[tuple[float, int], ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         self._check_scoring()
         self._check_waivers()
         self._check_h2h()
         self._check_waiver_rule()
+        self._check_rival_bids()
+
+    def _check_rival_bids(self) -> None:
+        kind = self.rival_bids
+        if kind not in RIVAL_BIDS:
+            raise ValueError(f"rival bids {kind!r} is not one of {', '.join(RIVAL_BIDS)}")
+        if self.waivers != FAAB and kind != ASSUMED:
+            raise ValueError(
+                f"rival bids {kind} with waivers {self.waivers}: a rival's bid is a FAAB "
+                "league's, and a league without a budget has none"
+            )
 
     def _check_waiver_rule(self) -> None:
         rule = self.waiver_rule
@@ -495,9 +518,11 @@ class LeagueRules:
         wait = f" after {days}" if not self.continuous else f", a dropped player after {days}"
         if not self.bidding:
             return f"{scoring}, {held}, {kind} by priority{wait}"
+        # The assumed bids go unsaid as before; a book's say so (PR Fd).
+        book = " on the book" if self.rival_bids == BOOK else ""
         return (
             f"{scoring}, {held}, {kind} by FAAB{wait}, ${self.budget} a team, the "
-            f"rivals' bids x{_number(self.rival_scale)}"
+            f"rivals' bids{book} x{_number(self.rival_scale)}"
         )
 
     @property
@@ -524,9 +549,10 @@ class LeagueRules:
     def payload(self) -> dict[str, Any]:
         """The record's ``league.rules``: the scoring, the table and the held slots, in a
         categories league its head-to-head format (the format PR), in a waiver league its waivers,
-        waiver days and waiver rule (PR Fc), and in a FAAB league its budget and the rivals' bid
-        scale (a league without waivers records the keys it did before PR Fa, and one by priority
-        those it did before PR Fb, the format's and the rule's beside them)."""
+        waiver days and waiver rule (PR Fc), and in a FAAB league its budget, the rivals' bid
+        scale and how the rivals bid (PR Fd; a league without waivers records the keys it did
+        before PR Fa, and one by priority those it did before PR Fb, the format's and the rule's
+        beside them)."""
         out: dict[str, Any] = {
             "scoring": self.scoring,
             "points": self.table,
@@ -541,7 +567,11 @@ class LeagueRules:
                 "waiver_rule": self.waiver_rule,
             }
         if self.bidding:
-            out |= {"budget": self.budget, "rival_scale": float(self.rival_scale)}
+            out |= {
+                "budget": self.budget,
+                "rival_scale": float(self.rival_scale),
+                "rival_bids": self.rival_bids,
+            }
         return out
 
     def slots(self, roster: tuple[str, ...]) -> tuple[str, ...]:
@@ -672,6 +702,23 @@ def parse_waiver_rule(waivers: str, rule: str | None) -> str:
     return kind
 
 
+def parse_rival_bids(waivers: str, kind: str | None) -> str:
+    """How the market rivals bid, as ``replay --rival-bids`` names it (#172, PR Fd): ``assumed``
+    (the default when not named) or ``book``, named only with ``--waivers faab`` (``waivers`` as
+    :func:`parse_waivers` gives it). ValueError, in words, on anything else."""
+    if kind is None:
+        return ASSUMED
+    if waivers != FAAB:
+        raise ValueError(
+            f"--rival-bids {kind}: a rival's bid is a FAAB league's; it is read only with "
+            "--waivers faab"
+        )
+    named = kind.strip().lower()
+    if named not in RIVAL_BIDS:
+        raise ValueError(f"--rival-bids {kind}: one of {', '.join(RIVAL_BIDS)}")
+    return named
+
+
 def parse_budget(waivers: str, budget: str | None, scale: str | None) -> tuple[int, float]:
     """The budget and the rivals' bid scale ``replay --budget`` and ``--rival-scale`` name
     (#172, PR Fb), each read only with ``--waivers faab`` (``waivers`` as :func:`parse_waivers`
@@ -704,6 +751,8 @@ def parse_budget(waivers: str, budget: str | None, scale: str | None) -> tuple[i
 
 
 __all__ = [
+    "ASSUMED",
+    "BOOK",
     "BUDGET",
     "BUDGET_RANGE",
     "CONTINUOUS",
@@ -718,6 +767,7 @@ __all__ = [
     "LEAGUE_KEYS",
     "PLAIN",
     "POINTS_DEFAULT",
+    "RIVAL_BIDS",
     "RIVAL_SCALE",
     "SCORINGS",
     "SLOTS",
@@ -739,6 +789,7 @@ __all__ = [
     "parse_held",
     "parse_league",
     "parse_points",
+    "parse_rival_bids",
     "parse_waiver_rule",
     "parse_waivers",
     "place",

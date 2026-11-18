@@ -753,7 +753,11 @@ def test_the_spec_keys_are_the_ones_the_simulator_reads():
                 "knobs": KNOBS,
                 "opponents": {"kind": "market", "rte": 1},
             },
-            "opponents key 'rte' is not one the simulator reads: one of ('kind', 'rate')",
+            # PR Fd: a market rival's block reads two more keys, so the refusal lists them.
+            (
+                "opponents key 'rte' is not one the simulator reads: one of ('kind', 'rate', "
+                "'view', 'among')"
+            ),
         ),
     ],
 )

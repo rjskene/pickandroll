@@ -61,7 +61,8 @@ the exact or the surrogate tier, and a mirror rival, bids by the live rule (``au
 through the door, :func:`live_bid`) on its move's own gain on the judging horizon and the typical
 gain of the moves it recommended over the fortnight (:class:`Basis`); the ranking tier holds no
 gain in the engine's units and bids $0; a market rival bids by an assumed form
-(:func:`rival_bid`); a static seat never claims.
+(:func:`rival_bid`), or on the price book of the public leagues' winning bids (PR Fd,
+``Setup.rival_bids`` ``book``: ``bids.book_bid``); a static seat never claims.
 ``EXECUTIONS`` names the model in every run's payload.
 
 **Continuous waivers** (PR Fc, ``Setup.waiver_rule`` ``continuous``, by priority or by FAAB):
@@ -94,6 +95,7 @@ from datetime import date, timedelta
 from statistics import median
 from typing import Any, Protocol
 
+from . import bids
 from .engine import (
     DEFAULTS,
     LIVE_KNOBS,
@@ -111,7 +113,7 @@ from .engine import (
     wk,
 )
 from .league import fpts
-from .shapes import CONTINUOUS, DROPPED
+from .shapes import BOOK, CONTINUOUS, DROPPED
 from .state import (
     BENCH,
     FAILED,
@@ -1301,8 +1303,10 @@ def queue(
     Yahoo reports): by the live rule for a decision whose :class:`Basis` says so (:func:`live_bid`
     on the typical gain of the moves the seat recommended over the fortnight, today's
     counted, as the live queue), by the market's rule for a market rival (:func:`rival_bid` on
-    the market rivals' typical gain over the fortnight before today), and $0 for a decision
-    without a basis. A free agent's add carries no bid.
+    the market rivals' typical gain over the fortnight before today, or with ``rival_bids``
+    ``book``, PR Fd, ``bids.book_bid`` on the book at its move's rank among the market rivals'
+    moves of that fortnight), and $0 for a decision without a basis. A free agent's add carries
+    no bid.
 
     Under continuous waivers (``setup.continuous``, PR Fc) every add is a claim: on a player
     nobody dropped lately it clears tomorrow, on a dropped player on his clear date, by the same
@@ -1363,6 +1367,19 @@ def queue(
         gain = scaled[i]
         if basis.rule == LIVE:
             return live_bid(gain, gains, basis.floor, dollars, basis.sizing)
+        if setup.rival_bids == BOOK:
+            return bids.book_bid(
+                gain,
+                state.market_recent,
+                state.day,
+                dollars,
+                setup.rival_scale,
+                setup.budget,
+                basis.noise[i],
+                setup.rival_prices,
+                RIVAL_BIDS.days,
+                RIVAL_BIDS.least,
+            )
         typical = market_typical(state.market_recent, state.day, gain)
         return rival_bid(gain, typical, dollars, setup.rival_scale, basis.noise[i])
 

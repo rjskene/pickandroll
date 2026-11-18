@@ -102,7 +102,7 @@ def test_league_rules_out_of_the_plan_are_refused_by_name_before_any_path(wire: 
 
 
 def test_with_nothing_named_nothing_moves(wire: Path):
-    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 12, its
+    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 13, its
     league block naming today's rules; no line names them."""
     room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
     runs, outs = [], []
@@ -115,7 +115,7 @@ def test_with_nothing_named_nothing_moves(wire: Path):
     assert {k: v for k, v in one.items() if k not in WHEN} == {
         k: v for k, v in two.items() if k not in WHEN
     }
-    assert one["replay_version"] == 12
+    assert one["replay_version"] == 13
     assert one["league"]["rules"] == {
         "scoring": "categories",
         "points": None,
@@ -371,7 +371,7 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
     assert f"league rules, on every path: {rules.label()}" in out
     assert rules.label().endswith(", waivers by priority after 3 days")
     p = written(out)
-    assert p["replay_version"] == 12
+    assert p["replay_version"] == 13
     assert p["league"]["rules"] == {
         "scoring": "points",
         "points": dict(shapes.POINTS_DEFAULT),
@@ -403,7 +403,7 @@ def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):
     rules = shapes.LeagueRules(waivers="faab", budget=50, rival_scale=2.0)
     assert f"league rules, on every path: {rules.label()}" in out
     p = written(out)
-    assert p["replay_version"] == ss.REPLAY_VERSION == 12
+    assert p["replay_version"] == ss.REPLAY_VERSION == 13
     assert p["league"]["rules"] == {
         "scoring": "categories",
         "points": None,
@@ -414,6 +414,7 @@ def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):
         "waiver_rule": "dropped",
         "budget": 50,
         "rival_scale": 2.0,
+        "rival_bids": "assumed",
     }
     assert p["league"]["faab_note"] == ss.FAAB_NOTE and "flags are not modelled" in ss.FAAB_NOTE
     assert p["executions"] == policy.EXECUTIONS_FAAB
@@ -478,7 +479,7 @@ def test_a_continuous_run_records_its_rule_its_model_its_notes_and_its_audit(wir
     rules = shapes.LeagueRules(waivers="faab", waiver_rule="continuous")
     assert f"league rules, on every path: {rules.label()}" in out and "continuous waivers" in out
     p = written(out)
-    assert p["replay_version"] == 12 and p["replay_version_why"].startswith("12: continuous")
+    assert p["replay_version"] == 13 and "12: continuous waivers" in p["replay_version_why"]
     assert p["league"]["rules"] == {**rules.payload(), "waiver_rule": "continuous"}
     assert p["league"]["faab_note"] == ss.FAAB_NOTE_CONTINUOUS
     assert p["league"]["waiver_rule_note"] == ss.WAIVER_RULE_NOTE

@@ -247,6 +247,7 @@ CORE = (
     "forecast",
     "adp",
     "shapes",
+    "bids",
     "screen",
 )
 #: What the core never imports: files, processes, the network, stores on disk.

@@ -29,7 +29,7 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 `pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
-`shapes`, `screen`) for any way to a file, a process or the network: none of them imports
+`shapes`, `bids`, `screen`) for any way to a file, a process or the network: none of them imports
 `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`,
 `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only `run.py` uses `os`, for the
 worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -78,6 +78,64 @@ replay and `validate` refuse to play it. **No data mining**: the fit is made onc
 and frozen; every comparison is one pre-registered A against B with its seed; the simulator never
 proposes a change and writes no knob file. The frozen fit's figures stay under `data/` and are
 described in words anywhere public.
+
+## The rivals' book (`sim/bids.py`, `fit-bids`, PR Fd)
+
+`python -m pickandroll.sim fit-bids [--data DIR] [--dry-run]` makes the **price book** the market
+rivals bid on under `--rival-bids book` ("FAAB", below) from the public leagues' winning-bids
+table, `data/external/bids/winning_bids.csv` (written on the box by the live code, never
+committed). It checks the table's `.sha256` first and refuses by name a table without one or one
+it does not match. Of the table's columns it reads only `league`, `teams`, `faab_budget`, `at`,
+`amount`, `ours` and `our_bid` (`bids.READ`): no player, no team, and nothing from
+`pickandroll.api` (the column names are restated). It reads no game log, so no season is
+involved and the hold-out is not near it. It writes `data/sim/bids/<date>/book.json` and
+`book.sha256` (canonical JSON, the hash the fit's), and `--dry-run` prints what it would write
+and writes nothing. A run on the book reads the newest one, its hash checked, as it reads the
+fit. The book holds:
+
+- the table's hash, the rows read and kept, the leagues, the first and last claim date;
+- `prices`: **the rivals' wins** (the rows whose `ours` is empty) as shares of their league's
+  budget, `amount ÷ faab_budget`, as the distinct shares with their counts: the whole empirical
+  distribution. A `lost` row repeats a rival's win already in the table, beside the user's losing
+  bid, and a `won` row is the user's own rule, so neither is a price;
+- `adds`: the rivals' wins per rival team (`teams − 1`) per league-week, Monday to Sunday by the
+  claim's date, over the whole weeks inside a league's first and last claim dates in the table,
+  a week with no rival win counted 0 (a working default): the median and the quartiles over the
+  league-weeks. It is a lower bound: each read of a league keeps a limited number of
+  transactions, so a busy week's wins can be missed;
+- `ours`: the user's claims won and lost in the table;
+- `notes`: what the book does not model, the list below.
+
+What the book does not model, each plainly (its `notes` say the first six; the last two are of
+a run on the book, not of the table):
+
+1. **It is of winning bids, not of all bids.** Where several claims meet, a rival drawn on it bids
+   as a winner did, so the simulated winning prices sit above the book.
+2. **A few weeks of one season**, the public leagues' own sizes and budgets. Late-season bidding
+   is assumed alike; `--rival-scale` is the sweep.
+3. **A bid does not read the rival's dollars left** beyond the clamp, nor the player.
+4. **The rate and `among` are the arm's**, set by hand against the book's `adds` and `ours`. No
+   measured figure is a default in the code. As a working default the rate is chosen on the weeks
+   the book covers only: the rivals' wins a rival team in each simulated path's first whole
+   weeks, as many as a league of the table holds, against the book's median. A rate so chosen
+   holds for the `among` it was chosen at: `among` changes how often the rivals' claims meet one
+   another, and so their adds, more than it changes how often the seat's claims are lost, which
+   the book's `ours` does not settle.
+5. **One view for every rival**; `among` stands for the managers' different tastes and needs.
+6. **`adds` is a lower bound**, as above.
+7. **The rivals' adds fall through the season, at every rate tried.** A rival that draws a move
+   makes one only when one of its best few is worth more than its weakest, and under `view`
+   `season` such mornings grow rarer as the weeks pass: the wire's best are soon on a roster, and
+   a belief is a running mean (`sim/belief.py`), which moves less with each game played. So a
+   rate that matches the book's `adds` in a season's first weeks gives fewer adds a week later
+   on, and a higher rate lifts the season's figure by much less than its own rise. The book holds
+   only a season's first weeks, so whether real managers slow the same way is not known here; a
+   refit when the table holds later weeks is the check.
+8. **A bid's rank reads the fortnight before, which is not like today while the season is
+   young.** In a season's first weeks the wire's best are being taken, so a move gains less than
+   the fortnight's before it, ranks low, and the rivals' bids sit a little under the book. Over
+   all their wins the simulated winning prices then sit about on the book, and above it only
+   where claims meet (item 1).
 
 ## The league (`sim/league.py`)
 
@@ -335,6 +393,28 @@ run's forecaster's draft-day ranking, or under a table of average draft position
 (PR D4a). **Mirror** runs the surrogate on the shared beliefs. **Seat**
 is a named arm in another seat: the equal room's opponent.
 
+A market rival's block reads two more keys (PR Fd, `opponents.of`), each off by default and each
+working in every kind of league (no waivers, by priority, FAAB, either waiver rule):
+
+- **`view`**: `draft` (the default: the view above, all season) or `season`. Under `season` its
+  view on a day is each player's per-game value on the run's forecaster's beliefs that morning
+  (`wk.per_game_values`, the figure the runner values the day by and lands forced drops on,
+  computed once a morning for every rival): a rival still believes the run's forecaster, whatever
+  the arm believes. It picks no player whose status that morning is one a seat never starts
+  (`O`, `INJ`, `OFS`, `SUSP`, `NA`, as `policy.starters_of` leaves out), its drop is its weakest
+  by the same view, and a table of draft positions plays no part after the draft.
+- **`among`**: a whole number, 1 or more (default 1: the best it may add). With K above 1 it
+  keeps, of the best K it may add by its view, those worth more than its weakest it may drop,
+  and takes one of them, each as likely; none left, no move. The one number it draws is from its
+  day's generator, after the rate's draw and before the bid's noise, and is drawn whenever a
+  candidate is left, even a single one (a working default), so what it draws never depends on
+  how many are left; with 1 none is drawn. With one view and no spread every rival that moves on
+  a day claims the same player: `among` is how often two claims meet.
+
+A value out of those, or either key on a kind other than `market`, is refused by name. The rate
+and `among` are set by hand against the price book ("The rivals' book"); no figure of it is a
+default.
+
 ## The runner (`sim/run.py`)
 
 One **world** a path, a replay of a recorded season: the recorded lines are the truth of every game
@@ -403,8 +483,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   the season's table of average draft positions instead ("The draft market"); `--adp none` is the
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
-  `--waiver-rule`, and under `faab` `--budget` and `--rival-scale`) and `--h2h` set the run's
-  league rules ("The league shapes"). The payload (`replay_version` 12) keys by season what is one season's: the forecasters,
+  `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
+  the run's league rules ("The league shapes"). The payload (`replay_version` 13) keys by season what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
   the league was drafted on, and `league` the league shapes the paths played and the league rules.
@@ -419,7 +499,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   shape; on a grid, of its shapes), and the command says so (20 becomes 24), so every seat is taken
   equally often in every cell. A replay records no market rate, so a `market` rival without a `rate`
   would never move: it is refused by name. A market rival's view is the run's forecaster's draft-day
-  ranking, or under `--adp espn` the season's table (PR D4a, "The draft market"). A pair that is one
+  ranking, or under `--adp espn` the season's table (PR D4a, "The draft market"), or with `view`
+  `season` the day's beliefs (PR Fd, "The other seats"). A pair that is one
   seat by construction is refused by name, the knobs and fields it differs in listed with why none
   is read (**What each knob reads**); the same arm twice stays allowed (a check that the difference
   is zero). `--no-peek` checks the design the run names: with `--arms` it compares both arms'
@@ -480,12 +561,13 @@ An arm's spec file names its tier, every one of the twelve knobs, its opponents 
 executes, may name its four fields (their defaults otherwise) and may name the fit it was written
 for (`fit_sha`; another fit on disk refuses the run). Every run writes
 `data/sim/runs/<stamp>-<kind>-<name>.json` with the code's commit, the fit's hash and file (whose
-`lag` the run reads), the hold-out, the spec files verbatim, the execution model, each arm's fields
-and its surrogate's pool and days, the reads table, the season scale, the period calendar's source,
-and the results. A run first times one task and estimates the whole; the guard then refuses a span
-that would touch 04:45-06:45 in the machine's local time, a draft room open on the API, or a run
-over an hour without `--announced` (such a run is announced on the tracker and starts on the user's
-word).
+`lag` the run reads), on the book the book's hash, file and table's hash (`book_sha`, `book_file`,
+`book_table_sha256`, PR Fd), the hold-out, the spec files verbatim, the execution model, each arm's
+fields and its surrogate's pool and days, the reads table, the season scale, the period calendar's
+source, and the results. A run first times one task and estimates the whole; the guard then refuses
+a span that would touch 04:45-06:45 in the machine's local time, a draft room open on the API, or a
+run over an hour without `--announced` (such a run is announced on the tracker and starts on the
+user's word).
 
 ## The forecasters (`sim/forecast.py`, PR D1)
 
@@ -552,7 +634,8 @@ since FAAB (PR Fb), its figures version 9's with nothing named and by priority; 
 head-to-head format (the format PR), its figures version 10's under `--h2h each_category` and in
 a run whose seats weigh nothing, while with nothing named a seat that weighs now weighs the
 matchup's odds; 12 since continuous waivers (PR Fc), its figures version 11's with the rule not
-named.
+named; 13 since the rivals' adds and bids (PR Fd), its figures version 12's with nothing new named
+(a FAAB run's league block now records `rival_bids`, `assumed` by default).
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -930,8 +1013,11 @@ read in one kind only (a run that asks about `plan_floor_points` is a points run
   today's labels hold. Below, "Continuous waivers".
 - **The budget and the rivals' bids** (PR Fb, named only with `--waivers faab`): `--budget`, the
   whole dollars each team starts with, 1 to 1000, default 100; `--rival-scale`, what a market
-  rival's bid is multiplied by, above 0, default 1. Both are the run's settings, never axes of
-  the grid. Below, "FAAB".
+  rival's bid is multiplied by, above 0, default 1; `--rival-bids assumed|book` (PR Fd, default
+  `assumed`), whether a market rival bids by the assumed form or on the price book ("The rivals'
+  book"), refused by name without `--waivers faab` and when no book is on file. All three are the
+  run's settings, never axes of the grid. The label says `on the book` and leaves the default
+  unsaid; a FAAB run's league block records `rival_bids` either way. Below, "FAAB".
 - **The head-to-head format** (the format PR, `--h2h one_win|each_category`, default `one_win`,
   refused by name with `--scoring points`: a points league's week is one result already). One
   win per matchup, or every category ("The league"). It is the run's, never an axis of the grid:
@@ -1028,12 +1114,14 @@ What the waivers do not model, each plainly:
 2. **The first order is the draft's reverse**, and a league that sets its own (last season's
    standings, a continual list) is not read. A failed claim keeps its team's place.
 3. **A budget and bids** are FAAB's, below.
-4. **Rivals claim on their own rules.** A market rival claims the market's best when he waits.
+4. **Rivals claim on their own rules.** A market rival claims its view's best when he waits (or
+   one of its best few, `among`, PR Fd).
    Its pick is the best player it may add, not one it already claims and not its own drop still
    waiting, and its drop the weakest it may drop, not one an open claim of its takes: the
    executor would refuse either (`ALREADY_CLAIMED`, `READD`, `DROP_CLAIMED`), and the rival would
    idle while its claim waits. Without waivers its pick is the pool's best and its weakest, as
-   before. No rival is fitted to a league's claims.
+   before. No rival is fitted to a league's claims: its rate and `among` are the arm's, set by
+   hand against the book (PR Fd).
 5. **Waivers run at one clear time, the morning.** Game-time waivers (a player locked until his
    game ends) and a clear time read from a league are not modelled.
 6. `validate` plays the fixed league without waivers.
@@ -1078,7 +1166,8 @@ Who bids, and how:
   still share a decision while their states agree.
 - **The ranking tier** holds no gain in the engine's units (it ranks by per-game value) and bids
   $0. Its claims go by priority among the $0 bids.
-- **A market rival** bids by an assumed form, not a fit (no league is on the box):
+- **A market rival** bids by an assumed form (`--rival-bids assumed`, the default) or on the
+  price book (`--rival-bids book`, PR Fd, below). The assumed form is
   `round(rival_scale × gain ÷ typical × noise)` whole dollars, half up, clamped to its dollars
   left, where `gain` is its move's gain on its own view (the add's market value less the drop's),
   `typical` the median of every market rival's moves' gains in the 14 days before today (pooled
@@ -1088,6 +1177,19 @@ Who bids, and how:
   form's parameters sit in one place (`policy.RivalBids`), so a fit replaces them and not the
   world. `--rival-scale` sweeps it: a result whose sign flips across 0.5, 1 and 2 depends on how
   the league bids, which the simulator does not know.
+
+  **On the book** its bid is `round(rival_scale × budget × Q(u))` whole dollars, half up, clamped
+  to its dollars left (`bids.book_bid`), where `Q` is the book's quantile over its prices (the
+  least share at or below which a fraction `u` of the rivals' winning bids falls) and
+  `u = (below + U) ÷ (n + 1)`: `below` counts the market rivals' moves of the 14 days before
+  today whose gain on the view is under this move's (the pool `typical` is read from, today's
+  left out), `n` how many there are, and `U` the rival's draw on [0, 1) for its team and day,
+  the one draw a claim the assumed form takes too (it takes `0.5 + U`). Until there are ten such
+  moves, `u = U`. So a bigger move than the fortnight's usual bids higher on the book, and the
+  book's spread is kept whole while the gains of one fortnight are like the next's ("The rivals'
+  book", item 8, says when they are not). The prices travel with the run's rules and are never
+  recorded but by the book's hash; `--rival-scale` multiplies the price as it multiplies the
+  assumed form, and the seat's bids do not change.
 - **A static seat** never claims.
 
 In a FAAB run `faab_sizing` is read by a seat that bids, and the plan floor of the league's scoring
@@ -1097,8 +1199,9 @@ place of `claim_priority` and the counts count the dollars (below).
 
 What FAAB does not model, each plainly:
 
-1. **The rivals' bids are assumed**, their form and their typical gain alike; a later PR fits
-   them. The counts of what the seat paid above the next bid and fell short by are the world's
+1. **The rivals' bids are assumed**, their form and their typical gain alike, unless
+   `--rival-bids book` names the price book, whose limits are its own ("The rivals' book"). The
+   counts of what the seat paid above the next bid and fell short by are the world's
    knowledge of every bid: no seat reads them.
 2. **Flags are not modelled**: live, a flagged player's bid is raised by its flag's factor; here
    no player is flagged.
@@ -1143,8 +1246,9 @@ Monday and spends the ending week's adds, as a free agent's add made that Sunday
   of his return (#221): a lost claim then costs nothing.
 - **The bids**, in a FAAB run: every add carries one. The seat on the exact or the surrogate tier
   and a mirror rival bid by the live rule (`policy.live_bid`, the mark `W`), the ranking tier $0,
-  a market rival by the assumed form (`policy.rival_bid`), drawing its noise on every pick since
-  every pick is a claim (with the rule not named it draws only on a pick on waivers, as before).
+  a market rival by the assumed form (`policy.rival_bid`) or on the book (`bids.book_bid`),
+  drawing its noise on every pick since every pick is a claim (with the rule not named it draws
+  only on a pick on waivers, as before).
 - **A market rival's pick** is among what it may claim, as in a waiver league. **A static seat**
   never claims.
 - **The record**: `league.rules.waiver_rule`; `executions` names the model,
@@ -1171,7 +1275,10 @@ makes the market rivals' add rate a parameter of the league shape, with a defaul
 number; it is not one yet. As a working default, open with the user, the rate stays what the
 arm's file names (`{"kind": "market", "rate": ...}`), and a market block with no rate never
 adds: the default was to come from a live league's record, the box holds no league, and a
-measured figure does not go in the code.
+measured figure does not go in the code. Since PR Fd the price book's `adds` says how often the
+public leagues' rivals win a claim (a lower bound, "The rivals' book"), and an arm's rate and
+`among` are set by hand against it and its `ours`; the rate is still the arm's, and no figure of
+the book is a default in the code.
 
 ## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
 

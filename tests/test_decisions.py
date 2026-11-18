@@ -392,6 +392,8 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     assert first["horizons"] == {k: v["label"] for k, v in m["horizons"].items()}
     assert first["pool"] == {
         "size": m["search"]["pool"],
+        # Each horizon's adds by single-move gain and those the guard's list added (#424).
+        "pools": m["search"]["pools"],
         "candidates": len(m["candidates"]),
         "min_gain": m["search"]["min_gain"],
         # Whether the budget cut a search (#306) or one stopped on a cycle (#364).
@@ -586,7 +588,10 @@ def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
     # The weight the knob file recommends, natural by default (#152), marked and not executed.
     assert run["recommended"] == s["recommended"] == "natural"
     assert [x["recommended"] for x in run["sets"]] == [False, True]
-    assert run["pool"] == {"size": len(s["pool"]), "players": s["pool"]}
+    # The adds by single-move gain and those the guard's list added (#424), as the run says.
+    counts = s["pool_counts"]
+    assert counts["size"] + counts["admitted"] == len(s["pool"])
+    assert run["pool"] == {**counts, "players": s["pool"]}
     assert [x["key"] for x in run["sets"]] == ["week", "natural"]
     for logged_set, point in zip(run["sets"], s["points"], strict=True):
         assert logged_set["weight"] == point["lambda"]

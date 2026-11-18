@@ -22,7 +22,7 @@ from typing import Any
 
 from .engine import HELD, ONE_WIN, Calendar, Move, Player, Week, monday_of
 from .league import LeagueSpec
-from .shapes import CONTINUOUS, DROPPED
+from .shapes import ASSUMED, BOOK, CONTINUOUS, DROPPED
 
 Rates = Mapping[str, float]
 #: A roster as the simulator holds it: each player with the slot he sits in.
@@ -164,6 +164,11 @@ class Setup:
     #: a dropped player's in his wait, every other add a free agent's; ``continuous``, every add,
     #: a claim on a player nobody dropped lately decided the next morning. Read only with waivers.
     waiver_rule: str = DROPPED
+    #: How a FAAB league's market rivals bid (PR Fd, ``shapes.RIVAL_BIDS``): ``assumed``, the
+    #: assumed form (``policy.rival_bid``); ``book``, a draw on the price book, whose prices
+    #: (share of the budget, count; the shares ascending, ``bids.prices_of``) it carries.
+    rival_bids: str = ASSUMED
+    rival_prices: tuple[tuple[float, int], ...] = ()
 
     def __post_init__(self) -> None:
         # The seat's half of the format and the standings' half are one rule of the run (the
@@ -173,6 +178,11 @@ class Setup:
             raise ValueError(
                 f"head-to-head format {self.h2h!r} with a spec of the format {self.spec.h2h!r}: "
                 "the seats and the standings count one format"
+            )
+        if self.rival_bids == BOOK and (not self.bidding or not self.rival_prices):
+            raise ValueError(
+                "rival bids on the book need a FAAB league and the book's prices: "
+                f"waivers {self.waivers!r}, {len(self.rival_prices)} prices"
             )
 
     @property

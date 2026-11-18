@@ -293,6 +293,8 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         "activation": payload.get("activation"),
         "pool": {
             "size": search.get("pool"),
+            # Each horizon's adds by single-move gain and those the guard's list added (#424).
+            "pools": search.get("pools"),
             "candidates": len(payload.get("candidates") or {}),
             "min_gain": search.get("min_gain"),
             # Whether the budget cut a search (#306) or one stopped on a cycle (#364).
@@ -383,7 +385,13 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
         )
     return {
         **_common(built, at, "strategy"),
-        "pool": {"size": len(payload.get("pool") or []), "players": list(payload["pool"])},
+        # The adds by single-move gain (``size``) and those the guard's list added (#424).
+        "pool": {
+            "size": len(payload.get("pool") or []),
+            "admitted": 0,
+            **(payload.get("pool_counts") or {}),
+            "players": list(payload["pool"]),
+        },
         "settings": payload.get("settings"),
         "recommended": payload.get("recommended"),
         "sets": sets,

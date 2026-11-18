@@ -6,12 +6,17 @@ it needs from ``data/`` and writes what it leaves. The **fit** is the newest fro
 season's game lines (``sim.gamelogs``), each scoring period dated from the season's first
 (:data:`PERIOD_ONE`); the forecasters' figures and each belief label's weights are read from the
 same logs. Every run's payload goes under ``data/sim/runs/`` with the fit's hash and the hold-out
-named (the master's conditions on #172). Nothing here reads a live league (#172, PR D3).
+named (the master's conditions on #172). Nothing here reads a live league (#172, PR D3). The
+**book** (PR Fd) is the newest under ``data/sim/bids/``, its hash checked as the fit's; the
+winning-bids table it is fitted on is read under ``data/external/bids/``, its ``.sha256`` checked
+first, and only the columns ``bids.READ`` names.
 """
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -19,7 +24,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import adp, gamelogs
+from . import adp, bids, gamelogs
 from . import fit as fitmod
 from . import forecast as fc
 from . import run as rn
@@ -36,6 +41,9 @@ SCREEN_FILE = "screen.json"
 #: The confirmation season's ledger (#172, PR D2): one JSON line a written run that names it.
 LEDGER = SIM_DIR / "confirmation-looks.jsonl"
 LOGS_DIR = Path("external") / "espn" / "gamelogs"
+#: The rivals' price book (#172, PR Fd), and the table it is fitted on.
+BIDS_DIR = SIM_DIR / "bids"
+TABLE_DIR = Path("external") / "bids"
 #: The first scoring period's date, by ESPN season id (the year the season ends in): period
 #: ``p`` is this date plus ``p − 1`` days. Verified against ESPN's scoreboard event ids on
 #: 2026-10-24, three games a season; 2023's period 1 is the day before opening night.
@@ -72,6 +80,44 @@ def newest_fit(data_dir: Path) -> tuple[dict[str, Any], str, Path]:
     payload = json.loads(path.read_text())
     sha = fit_hash(payload)
     beside = path.with_name("fit.sha256")
+    if beside.exists() and beside.read_text().strip() != sha:
+        raise SimReadError(f"{path}: the hash beside it does not match the file")
+    return payload, sha, path
+
+
+# --------------------------------------------------------------------------- the book (PR Fd)
+def bids_rows(data_dir: Path) -> tuple[list[dict[str, str]], str, Path]:
+    """The winning-bids table's rows, each restricted to the columns ``bids.READ`` names, its
+    hash and its file; refused when the table or its ``.sha256`` is missing, when the hash
+    beside it does not match the file, or when a column the fit reads is not in it."""
+    path = data_dir / TABLE_DIR / bids.TABLE
+    beside = path.with_name(f"{bids.TABLE}.sha256")
+    if not path.exists():
+        raise SimReadError(f"no winning-bids table at {path}")
+    if not beside.exists():
+        raise SimReadError(f"{path}: no {beside.name} beside it")
+    data = path.read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    told = beside.read_text().split()
+    if not told or told[0] != sha:
+        raise SimReadError(f"{path}: the hash beside it does not match the file")
+    reader = csv.DictReader(io.StringIO(data.decode()))
+    missing = [c for c in bids.READ if c not in (reader.fieldnames or ())]
+    if missing:
+        raise SimReadError(f"{path}: no column {missing[0]!r}")
+    return [{c: row[c] for c in bids.READ} for row in reader], sha, path
+
+
+def newest_book(data_dir: Path) -> tuple[dict[str, Any], str, Path]:
+    """The newest price book, its hash and its file; refused when there is none, or when the hash
+    beside it does not match the file (a book edited after it was written)."""
+    files = sorted((data_dir / BIDS_DIR).glob("*/book.json"))
+    if not files:
+        raise SimReadError(f"no price book under {data_dir / BIDS_DIR} (fit-bids writes one)")
+    path = files[-1]
+    payload = json.loads(path.read_text())
+    sha = fit_hash(payload)
+    beside = path.with_name("book.sha256")
     if beside.exists() and beside.read_text().strip() != sha:
         raise SimReadError(f"{path}: the hash beside it does not match the file")
     return payload, sha, path
