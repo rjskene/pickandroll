@@ -1282,6 +1282,8 @@ def replay_setup(
     rival_scale: float = shapes.RIVAL_SCALE,
     h2h: str = ONE_WIN,
     waiver_rule: str = shapes.DROPPED,
+    rival_bids: str = shapes.ASSUMED,
+    rival_prices: tuple[tuple[float, int], ...] = (),
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1319,7 +1321,9 @@ def replay_setup(
     one win per matchup, as before. A points league names none. A waiver league's
     ``waiver_rule`` (PR Fc, ``shapes.WAIVER_RULES``): ``continuous``, every add a claim, the
     draft's leftovers claimable from the first morning; the default, a claim only on a dropped
-    player in his wait."""
+    player in his wait. A FAAB league's ``rival_bids`` (PR Fd, ``shapes.RIVAL_BIDS``): ``book``,
+    the market rivals bid on the book's ``rival_prices`` (``bids.prices_of``); the default, the
+    assumed form."""
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     if h2h not in shapes.H2H or (points and h2h != ONE_WIN):
@@ -1328,6 +1332,10 @@ def replay_setup(
         waivers == "none" and waiver_rule != shapes.DROPPED
     ):
         raise ValueError(f"waiver rule {waiver_rule!r} with waivers {waivers!r}")
+    if rival_bids not in shapes.RIVAL_BIDS or (
+        rival_bids != shapes.ASSUMED and waivers != shapes.FAAB
+    ):
+        raise ValueError(f"rival bids {rival_bids!r} with waivers {waivers!r}")
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days = league_days(lines, players, scheduled)
@@ -1405,6 +1413,8 @@ def replay_setup(
         rival_scale=rival_scale,
         h2h=h2h,
         waiver_rule=waiver_rule,
+        rival_bids=rival_bids,
+        rival_prices=tuple(rival_prices),
     )
 
 
