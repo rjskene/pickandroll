@@ -478,14 +478,26 @@ BIDS_NOTE = {
 }
 
 
-def counts_note(waivers: str = "none") -> dict[str, str]:
+#: What the stash count is (PR G): only in a run where an arm names a stash threshold.
+STASH_NOTE = {
+    "returning_dropped": "players who left the seat's roster (a move's drop, a churn's held "
+    "drop, a drop a returning held player forced) whom the engine read as returning on the "
+    "seat's problem the day before (moves.returning_net: out, back this season and worth "
+    "something then); null for a seat that builds no problem (a market or a static rival)",
+}
+
+
+def counts_note(waivers: str = "none", stash: bool = False) -> dict[str, str]:
     """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, the claims' too in a
-    waiver run, and in a FAAB run the bids' with the claims' said for bids."""
+    waiver run, and in a FAAB run the bids' with the claims' said for bids; ``stash``: the run
+    names a stash threshold (``run.stash_named``, PR G), and the note says its count."""
     if waivers == "none":
-        return COUNTS_NOTE
-    if waivers == "faab":
-        return {**COUNTS_NOTE, **CLAIMS_NOTE, **FAAB_CLAIMS_NOTE, **BIDS_NOTE}
-    return {**COUNTS_NOTE, **CLAIMS_NOTE}
+        note = COUNTS_NOTE
+    elif waivers == "faab":
+        note = {**COUNTS_NOTE, **CLAIMS_NOTE, **FAAB_CLAIMS_NOTE, **BIDS_NOTE}
+    else:
+        note = {**COUNTS_NOTE, **CLAIMS_NOTE}
+    return {**note, **STASH_NOTE} if stash else note
 
 
 def audited(
@@ -2723,7 +2735,16 @@ def room_blocks(
             },
         },
         "counts": {
-            "note": counts_note(waivers),
+            # A run that names a stash threshold carries its count in every row (PR G).
+            "note": counts_note(
+                waivers,
+                any(
+                    m in (row or {})
+                    for r in results
+                    for row in r["counts"].values()
+                    for m in ct.STASH
+                ),
+            ),
             "rivals": None,
             "by_season": {
                 t: {
@@ -3020,7 +3041,7 @@ def paired_blocks(
             },
         },
         "counts": {
-            "note": counts_note(waivers),
+            "note": counts_note(waivers, rn.stash_named(arms.values())),
             "rivals": "the seats other than the pair's, both arms' seasons, as one row",
             "by_season": {
                 t: {

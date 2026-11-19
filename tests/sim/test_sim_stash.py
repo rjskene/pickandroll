@@ -21,11 +21,14 @@ from datetime import timedelta
 import numpy as np
 import pytest
 
+from pickandroll.sim import cli as ss
+from pickandroll.sim import counts as ct
 from pickandroll.sim import opponents as op
 from pickandroll.sim import policy
+from pickandroll.sim import run as rn
 from pickandroll.sim.engine import mv, wk
 from pickandroll.sim.state import BENCH, initial
-from tests.sim.sim_league import KNOBS, make_setup, rates
+from tests.sim.sim_league import KNOBS, arm, make_setup, rates
 from tests.sim.test_sim_held_morning import KINDS, WAYS, found, full_with_one_held, play
 
 TEAM = 1
@@ -129,11 +132,12 @@ def test_a_returning_player_is_the_search_s_drop_at_none_and_is_kept_at_a_thresh
     *_, star, gone, _ = day
     built, at_none = decided(day, tier, None)
     move = mv.Move(star, gone)
-    assert at_none.moves == (move,)
+    assert at_none.moves == (move,) and gone in at_none.returning
     edge = edge_of(built.problem, move)
     assert decided(day, tier, edge / 2)[1].moves == at_none.moves
     above = decided(day, tier, 2 * edge + 1)[1]
     assert [m.add for m in above.moves] == [star] and above.moves[0].drop != gone
+    assert above.returning == at_none.returning
 
 
 @pytest.mark.parametrize("tier", SEARCH)
@@ -144,7 +148,7 @@ def test_a_churn_s_held_drop_is_the_search_s_at_none_and_is_kept_at_a_threshold(
     built, at_none = decided(day, tier, None)
     move = mv.Move(star, gone)
     assert at_none.moves == (move,) and at_none.held == ((hurt, "IL"),)
-    assert mv.is_churn(built.problem, move)
+    assert mv.is_churn(built.problem, move) and at_none.returning == {gone, hurt}
     edge = edge_of(built.problem, move)
     assert decided(day, tier, edge / 2)[1] == at_none
     above = decided(day, tier, 2 * edge + 1)[1]
@@ -390,3 +394,32 @@ def test_an_add_with_no_drop_still_meets_the_morning_s_order():
     out = policy.land(placed, setup.teams, setup.spots(), None, {low: "O"}, value)
     assert back in out.active(TEAM) and low in out.active(TEAM) and nxt in out.pool
     assert out.forced_by == {} and out.gone_by == {TEAM: 1}
+
+
+# --------------------------------------------------------------------------- the count
+def test_the_count_is_a_named_run_s_only():
+    """Fa's lesson: a run that names no threshold counts as before, key for key; one that names
+    one carries the returning players each seat dropped, last, and None for a seat whose
+    players nothing read."""
+    setup = make_setup()
+    s = initial(setup)
+    (out, _), (stays, _), (other, _) = s.rosters[1][:3]
+    plain = ct.Tally(setup).rows(s)
+    assert set(plain[1]) == set(ct.METRICS) and ct.metrics_in([plain[1]]) == ct.METRICS
+    tally = ct.Tally(setup, stash=True)
+    tally.reading(1, frozenset({out, stays}))
+    tally.reading(2, frozenset())
+    after = replace(s, rosters={**s.rosters, 1: s.rosters[1][1:2] + s.rosters[1][3:]})
+    assert {k for k, _ in s.rosters[1]} - {k for k, _ in after.rosters[1]} == {out, other}
+    tally.left(s, after)
+    tally.left(after, after)
+    rows = tally.rows(after)
+    assert [rows[t]["returning_dropped"] for t in setup.teams] == [1.0, 0.0, None, None]
+    assert (
+        ct.metrics_in([rows[1]]) == (*ct.METRICS, *ct.STASH) == (*ct.METRICS, "returning_dropped")
+    )
+    assert ct.pooled([rows[3], rows[4]])["returning_dropped"] is None
+    assert ss.counts_note() is ss.COUNTS_NOTE and "returning_dropped" not in ss.counts_note("faab")
+    assert set(ss.counts_note("faab", True)) - set(ss.counts_note("faab")) == set(ct.STASH)
+    none, share = arm("A", "surrogate"), arm("B", "surrogate", stash_threshold=0.0)
+    assert not rn.stash_named((none, none)) and rn.stash_named((none, share))

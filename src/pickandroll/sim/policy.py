@@ -31,8 +31,9 @@ counted ``playoff_weight`` times, on the key the arm executes and no other. At `
 Executions are the autopilot's (``season.autopilot``): a decided move lands the next day, at most
 ``daily_cap`` a day and the league's adds a week, never a kept player dropped; in a league without
 waivers every add is a free agent. The executor keeps the roster as Yahoo would: a held player whose
-status has cleared comes back to the bench the next morning and, over the league's spots, the least
-valuable active player leaves (the engine's rule for a cleared player); the held-slot moves a set
+status has cleared comes back to the bench the next morning and, over the league's spots, a player
+leaves: the one the team's seat named for him (PR G, below), else the least valuable active player
+(the engine's rule for a cleared player with no choice made); the held-slot moves a set
 needs are made before its adds land, each only while its slot has room and accepts the player's
 status on the morning it lands (``moves.eligible``: a move is carried out against the day it lands,
 as an add another team took is); an add that needs an active spot (no drop, a churn's held drop,
@@ -82,6 +83,21 @@ own (``stream.floor_of``: ``PLAN_FLOOR_ODDS``), so ``plan_floor_cats`` is read b
 seat that bids scales by that floor until ten moves. A league that counts every category, and a
 points league, are valued as before. The ranking tier, a market rival and a static seat read no
 odds and do not change. :func:`measure_of` names the measure for the record.
+
+**The stash threshold** (PR G, the engine's reader #373). The arm's ``stash_threshold`` is set on
+the seat's problem (:func:`stash_of`: None stays None, no test) and read there by the engine
+alone: its searches on the exact and the surrogate tier refuse a set whose drop is a returning
+player the threshold keeps (``moves.stash_ok`` in ``moves.feasible``). The ranking tier does not
+search with the engine and its one swap is not held to it; a mirror rival keeps None
+(:func:`rival_knobs`). **The morning a held player comes back**, a seat that plans with the engine
+names who leaves and the world checks it: its decision carries, for each held player its plan
+brings back, the drop the plan charges (:func:`sends_of`, ``moves.comebacks`` on the seat's own
+problem, so the keep rule and the threshold are the seat's), the state keeps the names one night
+(``SimState.sends``), and :func:`arrive` takes a named player who is still active when the roster
+is over its spots; with no name, or one who has left, the least valuable active player leaves, as
+before. The world reads neither the knob nor the keep rule. The day's choice of an activation's
+drop (``moves.choose_activation``, #360) is not made here: no problem a seat decides on holds a
+cleared player.
 """
 
 from __future__ import annotations
@@ -363,9 +379,20 @@ class Decision:
     #: (the held player, the drop the engine's plan charges him), by player. Only a seat that
     #: plans with the engine names any (the exact and the surrogate tiers, a mirror rival).
     sends: tuple[tuple[int, int], ...] = ()
+    #: The seat's players the engine read as returning on the day (PR G, :func:`returning_of`),
+    #: for the count of those it then drops; a tier's decision made by :func:`decide` has it.
+    returning: frozenset[int] = frozenset()
 
 
 NONE = Decision()
+
+
+def returning_of(problem: mv.MoveProblem) -> frozenset[int]:
+    """The seat's players, active and held, the engine reads as returning on the problem's day
+    (#172, PR G): ``moves.returning_net`` not None, a player out now who is back this season and
+    worth something then, the players the stash threshold weighs. The same at any threshold."""
+    mine = (*problem.roster, *problem.held)
+    return frozenset(k for k, _ in mine if mv.returning_net(problem, k) is not None)
 
 
 def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tuple[int, int], ...]:
@@ -991,6 +1018,21 @@ def decide(
     executes: str = QUEUE_SET,
     with_plan: bool = True,
     fields: Fields = DEFAULT_FIELDS,
+) -> Decision:
+    """The tier's decision on the day (:func:`_decide`), with the players of the seat the engine
+    reads as returning that day (:func:`returning_of`, PR G: what a run that names a stash
+    threshold counts the seat's drops against)."""
+    out = _decide(built, tier, executes, with_plan, fields)
+    reading = returning_of(built.problem)
+    return replace(out, returning=reading) if reading else out
+
+
+def _decide(
+    built: Built,
+    tier: str,
+    executes: str,
+    with_plan: bool,
+    fields: Fields,
 ) -> Decision:
     """The tier's decision on the day: the surrogate solves on its days only. On its other days
     it still names whom each of its held players sends when he comes back (:func:`sends_of`, PR
