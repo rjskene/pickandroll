@@ -941,6 +941,15 @@ the default.
 Under `market` the seat's roster is an average manager's on the table and not what its forecaster
 likes, so nothing a seat could gain at the draft is in a result. These limits stay:
 
+- **An average roster is not an average finish.** On the draft PR's look (one real season, a
+  pair of surrogate arms, the default league and the public leagues' kind) the seat started
+  from an average roster and still finished near the top of the room on nearly every path,
+  under `market` as under `own`: it plays the season harder than its rivals do, adding far more
+  often. So the paired change in playoff odds had little or no spread under either rule, and in
+  the public leagues' kind under `market` none at all. Rank, matchup wins and category wins did
+  separate the two arms, more clearly under `market`. What the rule changed is where the seat's
+  finish comes from (its season, no longer its draft) and that the season scale has a figure on
+  every path. The ceiling on playoff odds is the rivals' season, not the draft.
 - **The seat never drafts a player its forecaster has no line for**: the season's rookies under
   `prior` and `marcel`, a few rotation players under `espn`. The rivals do. So the season's best
   newcomers always start on rivals' rosters, and the seat meets them only as adds.

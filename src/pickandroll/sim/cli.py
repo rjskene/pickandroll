@@ -1292,7 +1292,10 @@ ADP_LIMIT = {
         "in a result; it never drafts a player its forecaster has no line for (a rookie under a "
         "forecaster built on earlier seasons), where a rival does, so the season's best "
         "newcomers always start on rivals' rosters; a starting belief taken from the market for "
-        "such a player is not built"
+        "such a player is not built; and an average roster is no average finish: a seat that "
+        "plays the season harder than its rivals can still finish near the top of the room on "
+        "every path, the paired change in playoff odds then zero with no spread, so rank and "
+        "wins are what separate two arms there"
     ),
     adp.OWN_DRAFT: (
         "the arm's seat drafts on per-game value alone, with no regard for the games a player "
