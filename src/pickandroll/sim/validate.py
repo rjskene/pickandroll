@@ -64,11 +64,12 @@ def surrogate_gate(
     """Gate 5 for one seat, on its sampled days' records (``checks.surrogate_records``): the seat
     passes when all ``of`` days were compared and, summed over them, the surrogate's gain keeps
     ``needs`` of the exact search's (:func:`gains`, :func:`keeps`). A day left out is not
-    compared, so a seat with one fails. The detail: the days on which the two sets are equal
-    (``matched``, information: it does not decide) of the days compared (``of``), the two gains
-    (``gain``), the share kept (``kept``, the surrogate's gain over the exact search's; None when
-    the exact gain is not above 0, where there is no share to name) and the share needed
-    (``needs``)."""
+    compared, so a seat with one fails. The first ``of`` compared days are the seat's: a list
+    that holds more (the command samples ``of``) is cut there, and what follows is not read. The
+    detail, over those days: the days on which the two sets are equal (``matched``, information:
+    it does not decide) of the days compared (``of``), the two gains (``gain``), the share kept
+    (``kept``, the surrogate's gain over the exact search's; None when the exact gain is not
+    above 0, where there is no share to name) and the share needed (``needs``)."""
     compared = [r for r in records if r["left_out"] is None][:of]
     gain = gains(compared)
     exact, surrogate = gain["exact"], gain["surrogate"]

@@ -108,6 +108,28 @@ def test_a_seat_with_a_day_left_out_fails():
     assert not v.surrogate_gate([]).passed
 
 
+def test_days_beyond_the_five_asked_are_not_read():
+    """The first ``of`` compared days are the seat's, and the detail counts them. The command
+    samples five; a list that holds more is cut, so a sixth day neither fails a seat on the count
+    nor moves its gains."""
+    five = [day(0.4, 0.4)] * 5
+    g = v.surrogate_gate([*five, day(5.0, 0.0)])
+    assert g.passed and g.detail["of"] == 5
+    assert g.detail == v.surrogate_gate(five).detail
+    # The other way: five days that lose too much are not made up by a sixth.
+    short = [*[day(0.4, 0.4)] * 4, day(0.4, 0.2)]
+    g = v.surrogate_gate([*short, day(0.0, 5.0)])
+    assert not g.passed and g.detail["gain"]["surrogate"] == pytest.approx(1.8)
+    # A day left out is not one of the five: the five compared after it are, and a sixth with
+    # equal sets is not counted among the equal days either.
+    g = v.surrogate_gate([LEFT_OUT, *five, day(0.7, 0.7)])
+    assert g.passed and g.detail == v.surrogate_gate(five).detail
+    assert (g.detail["of"], g.detail["matched"]) == (5, 5)
+    # Another count asked, another cut.
+    g = v.surrogate_gate([*[day(0.4, 0.4)] * 3, day(5.0, 0.0)], of=3)
+    assert g.passed and g.detail["of"] == 3
+
+
 def test_a_floats_last_bit_does_not_decide():
     # 0.1 + 0.2 is a last bit above 0.3: the surrogate's worth falls that far under standing
     # still's on a day the exact tier made no move, and the seat passes.
