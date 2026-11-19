@@ -1691,6 +1691,13 @@ export interface MovesView extends Omit<AutopilotView, "mode" | "last" | "today"
 /** The moves' horizons: the rest of this week against the opponent, and the three weeks after
  * it against the field. */
 export type MoveHorizon = "week" | "three";
+
+/** A horizon's search pool (#424): the candidates whose best single move adds most, and how many
+ * more the season guard's list added (the adds whose best move it allows). */
+export interface MovesPool {
+  size: number;
+  admitted: number;
+}
 /** The horizons the scorecard values a move on: the solve's two and the rest of the season (#144). */
 export type JudgedHorizon = MoveHorizon | "season";
 
@@ -2012,6 +2019,11 @@ export interface MovesPayload {
    * when it ran out; absent before. */
   search: {
     pool: number;
+    /** The adds the season guard allows that join each horizon's pool (#424), at most this many. */
+    guard_pool?: number;
+    /** Each horizon's pool (#424): ``size`` candidates by their best single move, ``admitted``
+     * more from the guard's list (absent from an answer made before). */
+    pools?: Partial<Record<MoveHorizon, MovesPool>>;
     min_gain: number;
     seconds?: number;
     budget_s?: number;

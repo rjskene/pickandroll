@@ -1353,6 +1353,30 @@ export function baseLabel(base: number, measure: MoveMeasure | null | undefined,
   return `win odds ${oddsLabel(base / n)}${n > 1 ? " a week" : ""}`;
 }
 
+/** The search behind the recommended sets (#424): "Recommended by a search over the candidates
+ * whose best single move adds most, then the adds whose best move the season guard allows (the
+ * guard's list): 31 for the rest of this week (30 + 1 from the guard's list) and 10 for the next 3
+ * weeks. A strong heuristic, not a proof."; an answer made before #424 gives the pool alone. */
+export function searchPoolText(search: Pick<MovesPayload["search"], "pool" | "pools">): string {
+  const proof = "A strong heuristic, not a proof.";
+  const pools = search.pools;
+  const where: Record<MoveHorizon, string> = { week: HORIZON_LABEL.week, three: HORIZON_LABEL.next3 };
+  const rows = (["week", "three"] as const).flatMap((h) => {
+    const p = pools?.[h];
+    return p ? [{ h, ...p }] : [];
+  });
+  if (!rows.length) return `Recommended by a search over the ${search.pool} candidates whose best single move adds most. ${proof}`;
+  const added = rows.some((r) => r.admitted > 0);
+  const counts = rows.map((r) => {
+    const from = r.admitted > 0 ? ` (${r.size} + ${r.admitted} from the guard's list)` : "";
+    return `${r.size + r.admitted} for the ${where[r.h]}${from}`;
+  });
+  const what = added
+    ? "the candidates whose best single move adds most, then the adds whose best move the season guard allows (the guard's list)"
+    : "the candidates whose best single move adds most";
+  return `Recommended by a search over ${what}: ${counts.join(" and ")}. ${proof}`;
+}
+
 /** "No move adds more than 0.01 expected categories." or "… 1 pt of win odds." (#397). */
 export function minGainText(min: number, measure: MoveMeasure | null | undefined): string {
   if (measure !== "matchup") return `No move adds more than ${min} expected categories.`;

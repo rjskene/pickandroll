@@ -260,6 +260,7 @@ import {
   measureOf,
   measureWords,
   minGainText,
+  searchPoolText,
   moveGain,
   rankedLine,
   valueMove,
@@ -2586,4 +2587,21 @@ test("a one-win league's move gains read as points of win odds, the others as be
   assert.equal(baseLabel(4.1, "categories", 3), "4.10 expected categories");
   assert.equal(minGainText(0.01, "categories"), "No move adds more than 0.01 expected categories.");
   assert.equal(minGainText(0.01, "matchup"), "No move adds more than 1 pt of win odds.");
+});
+
+test("the Moves card counts each horizon's pool and the adds the season guard's list added (#424)", () => {
+  assert.equal(
+    searchPoolText({ pool: 30, pools: { week: { size: 30, admitted: 1 }, three: { size: 10, admitted: 0 } } }),
+    "Recommended by a search over the candidates whose best single move adds most, then the adds whose best move the season guard allows (the guard's list): 31 for the rest of this week (30 + 1 from the guard's list) and 10 for the next 3 weeks. A strong heuristic, not a proof.",
+  );
+  assert.equal(
+    searchPoolText({ pool: 30, pools: { week: { size: 30, admitted: 0 }, three: { size: 3, admitted: 0 } } }),
+    "Recommended by a search over the candidates whose best single move adds most: 30 for the rest of this week and 3 for the next 3 weeks. A strong heuristic, not a proof.",
+    "nothing added: no guard's list named",
+  );
+  assert.equal(
+    searchPoolText({ pool: 30 }),
+    "Recommended by a search over the 30 candidates whose best single move adds most. A strong heuristic, not a proof.",
+    "an answer made before #424",
+  );
 });
