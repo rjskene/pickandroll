@@ -193,11 +193,17 @@ _SEASON_VIEW = _LastView()
 
 @dataclass(frozen=True)
 class Mirror:
-    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's)."""
+    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's), but for
+    the stash threshold, which a rival keeps at None (``policy.rival_knobs``, PR G): the knob
+    is the arm's own seat's. It is dropped when the rival is made, so two arms that differ only
+    in it face one rival and share its decisions."""
 
     knobs: Mapping[str, Any]
     fields: policy.Fields = policy.DEFAULT_FIELDS
     kind: str = "mirror"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "knobs", policy.rival_knobs(self.knobs))
 
     def decide(
         self,

@@ -463,6 +463,23 @@ def members_of(
     return [(k, setup.players[k].player(status.get(k))) for k in keys if k in setup.players]
 
 
+def stash_of(knobs: Mapping[str, Any]) -> float | None:
+    """The stash threshold a seat's problem carries (#172, PR G): the arm's knob as a number,
+    None when it names none. The engine reads it on the problem alone (``moves.stash_ok`` in
+    ``moves.feasible``, ``moves.guarded_pool`` in ``moves.comebacks``); nothing else here does."""
+    value = knob(knobs, "stash_threshold")
+    return None if value is None else float(value)
+
+
+def rival_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
+    """An arm's knobs as its mirror rivals hold them (PR G): the arm's whole, but for the stash
+    threshold, which is the arm's own seat's and stays None for every rival. A knob the arm does
+    not name stays missing, and is refused where the knobs are checked."""
+    if knobs.get("stash_threshold") is None:
+        return dict(knobs)
+    return {**knobs, "stash_threshold": None}
+
+
 def bracket_days(setup: Setup) -> frozenset[date]:
     """The days of the bracket's weeks (``spec.playoff_weeks`` on the calendar); none when the
     bracket is not read."""
@@ -614,6 +631,9 @@ def problem_of(
         floor=float(knob(knobs, "protection_floor")),
         plan_floor=float(knob(knobs, "plan_floor_points" if points else "plan_floor_cats")),
         daily_cap=int(knob(knobs, "daily_cap")),
+        # The stash threshold (PR G), as the live build passes the knob file's
+        # (``api.season_moves.stash_threshold``): None stays None, no test, as before the reader.
+        stash_threshold=stash_of(knobs),
     )
     # My claims in flight are made in the problem before it is solved, as the live build folds
     # the queue's open claims (``api.season_moves.fold``, #360, #364): the solve is on the roster
@@ -914,8 +934,11 @@ def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
 
 def ranking(built: Built) -> Decision:
     """The pool's best by value times games this week for the roster's worst the keep rule does
-    not keep, when it gains; no evaluator."""
+    not keep, when it gains; no evaluator. It does not search with the engine, so the stash
+    threshold (PR G) is not its to read: its one swap is tested as before the reader."""
     p = built.problem
+    if p.stash_threshold is not None:
+        p = replace(p, stash_threshold=None)
     start = p.first_day + timedelta(1)
 
     def worth(m: mv.Member) -> float:
@@ -1121,7 +1144,10 @@ WHEN_READ: Mapping[str, str] = {
     "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
     "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
     "plan_floor_points": "the exact tier drawing and executing the week plan in a points league",
-    "stash_threshold": "the simulator passing it to the engine (PR G)",
+    "stash_threshold": (
+        "the arm's own seat on the exact or the surrogate tier, whose searches refuse a "
+        "returning player's drop the threshold keeps"
+    ),
     "faab_sizing": "a seat that bids in a FAAB league: the exact or the surrogate tier (PR Fb)",
     "daily_cap": "the exact or the surrogate tier, which may queue more than one move a day",
     "three_weight": "the queue's rule (PR E)",
@@ -1136,6 +1162,10 @@ WHEN_READ: Mapping[str, str] = {
     "surrogate_days": "the surrogate tier",
 }
 STATIC = "a static seat makes no move"
+#: Why the ranking tier does not read the stash threshold (PR G).
+RANKING_STASH = (
+    "the ranking tier does not search with the engine: its one swap is not held to the threshold"
+)
 #: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
 NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"
 
@@ -1209,7 +1239,15 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
         out["faab_sizing"] = "the ranking tier holds no gain in the engine's units: it bids $0"
     else:
         out["faab_sizing"] = STATIC
-    out["stash_threshold"] = "the engine reads it since #373; the simulator passes it in PR G"
+    # The arm's own seat's searches read it on the problem (PR G: ``moves.stash_ok`` in every
+    # set's feasibility, ``moves.guarded_pool`` on the drop a comeback forces). A mirror rival
+    # keeps None (:func:`rival_knobs`), so nothing more is read through it.
+    if arm.tier in ("exact", "surrogate"):
+        out["stash_threshold"] = READ
+    elif arm.tier == "ranking":
+        out["stash_threshold"] = RANKING_STASH
+    else:
+        out["stash_threshold"] = STATIC
     if odds:
         out["season_weight"] = READ
     elif arm.tier == "ranking":

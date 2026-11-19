@@ -461,7 +461,13 @@ def test_the_reads_table_as_built():
     # plan reads it.
     for shape, floor in ((cats, set()), (policy.Shape(h2h=EACH_CATEGORY), {"plan_floor_cats"})):
         read = {k for k, v in policy.reads(exact, shape).items() if v == policy.READ}
-        assert read == {"protection_floor", "daily_cap", "season_weight", *floor}
+        assert read == {
+            "protection_floor",
+            "daily_cap",
+            "season_weight",
+            "stash_threshold",
+            *floor,
+        }
         read = {k for k, v in policy.reads(heavy, shape).items() if v == policy.READ}
         assert read == {
             "protection_floor",
@@ -469,6 +475,7 @@ def test_the_reads_table_as_built():
             "horizon_weight",
             "season_weight",
             "playoff_weight",
+            "stash_threshold",
             *floor,
         }
     assert policy.reads(exact, cats)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
@@ -481,11 +488,18 @@ def test_the_reads_table_as_built():
     ranking = policy.reads(rn.Arm("R", "ranking", KNOBS, {}), cats)
     assert {k for k, v in ranking.items() if v == policy.READ} == {"protection_floor"}
     assert ranking["daily_cap"].startswith("the ranking tier queues one move a day")
+    # The stash threshold (PR G): the arm's own seat's searches read it, with or without a held
+    # slot; the ranking tier's one swap is not held to it; a mirror rival keeps None.
+    assert ranking["stash_threshold"] == policy.RANKING_STASH
+    for held in (False, True):
+        surrogate = policy.reads(rn.Arm("U", "surrogate", KNOBS, {}), policy.Shape(held=held))
+        assert surrogate["stash_threshold"] == policy.READ
     static = policy.reads(rn.Arm("S", "static", KNOBS, {}), cats)
     assert set(static.values()) - {policy.STATIC} == {
         static[k]
         for k in ("horizon_weight", "plan_floor_cats", "plan_floor_points", "three_weight")
-    } | {static[k] for k in ("system", "blend", "faab_sizing", "stash_threshold")}
+    } | {static[k] for k in ("system", "blend", "faab_sizing")}
+    assert static["stash_threshold"] == policy.STATIC
     # Rivals that mirror a static seat read what the surrogate reads.
     mirrored = policy.reads(rn.Arm("S", "static", KNOBS, {}), cats, mirrored=True)
     assert {k for k, v in mirrored.items() if v == policy.READ} == {
@@ -493,7 +507,8 @@ def test_the_reads_table_as_built():
         "daily_cap",
         "season_weight",
     }
-    for never in ("three_weight", "system", "blend", "faab_sizing", "stash_threshold"):
+    assert mirrored["stash_threshold"] == policy.STATIC
+    for never in ("three_weight", "system", "blend", "faab_sizing"):
         assert all(policy.reads(c, s)[never] != policy.READ for c in CONFIGS for s in SHAPES)
     f = policy.field_reads(rn.Arm("R", "surrogate", KNOBS, {}))
     assert set(f.values()) == {policy.READ}
@@ -586,7 +601,13 @@ CASES = [
     ("system", "exact", "three", True, True, {}, ("bbm", "yahoo"), 1, "cats"),
     ("blend", "exact", "three", True, True, {}, (None, 0.5), 1, "cats"),
     ("faab_sizing", "exact", "three", True, True, {}, (None, 2.0), 1, "cats"),
-    ("stash_threshold", "exact", "three", True, True, {}, (None, 0.5), 1, "cats"),
+    # The stash threshold (PR G): read by the tiers that search with the engine, on a league
+    # where the seat's search drops a returning player (the weakened points league; a share no
+    # add clears keeps him); not by the ranking tier's one swap, nor by a static seat.
+    ("stash_threshold", "exact", "three", True, True, {}, (None, 1e6), 1, "weak points"),
+    ("stash_threshold", "surrogate", "three", False, False, {}, (None, 1e6), 1, "weak points"),
+    ("stash_threshold", "ranking", "three", True, False, {}, (None, 1e6), 1, "weak points"),
+    ("stash_threshold", "static", "three", True, False, {}, (None, 1e6), 1, "weak points"),
     # Read only somewhere: a case where it is not, and one built where it is.
     ("horizon_weight", "exact", "three", True, False, {}, ("natural", "season"), 1, "cats"),
     ("horizon_weight", "exact", "weighted", False, False, {}, ("natural", "season"), 1, "cats"),
