@@ -10,7 +10,8 @@ PR adds a rule by adding to the list. A waiver league is held to :data:`WAIVER_R
 Fa, :func:`rules_of`): a run without waivers reads only :data:`RULES`. A FAAB league (PR Fb) is
 held to the wait and :data:`BID_RULES` instead: its claims go by bid, not by priority alone. A
 league under continuous waivers (PR Fc) is held to :data:`CLAIMS_ONLY` after them: every add is a
-claim.
+claim. A league whose bracket is read and has a round (PR bracket, :func:`has_round`) is held to
+:data:`BRACKET_PAIRS` after :data:`RULES`: the round's pairs a state holds are the league's.
 
 A breach voids its path: the runner records it (:class:`Breach`), the commands leave the path out
 of every aggregate, list the breaches in the payload and exit non-zero after writing. Nothing is
@@ -25,6 +26,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from . import league as lg
 from .engine import HELD, mv, wk
 from .shapes import CONTINUOUS, DROPPED
 from .state import FAILED, LOST, WON, Roster, Setup, SimState
@@ -340,6 +342,33 @@ def claims_only(setup: Setup, today: Day, before: Day | None) -> Found:
                 yield team, f"player {k} joined without a claim won this morning"
 
 
+def bracket_pairs(setup: Setup, today: Day, before: Day | None) -> Found:
+    """On every day of a round of the bracket (PR bracket), the round's pairs the state holds
+    for the week (``SimState.seeded``) are the pairs the league gives from the state's totals
+    that day (``league.round_pairs``: the season's own bracket, which does not read the round's
+    own week), and no team is in two of them. So a round that was never seeded, pairs another
+    rule than the league's made, and pairs the totals of a finished week no longer give are each
+    found; at the season's end the pairs held are the rounds the bracket played."""
+    spec = setup.spec
+    week = setup.week_of(today.day)
+    if spec is None or week is None or week.number not in lg.round_weeks(spec):
+        return
+    held = today.state.seeded.get(week.number)
+    if held is None:
+        yield (
+            None,
+            f"week {week.number} is a round of the bracket and the state holds no pairs for it",
+        )
+        return
+    due = lg.round_pairs(spec, today.state.totals, week.number)
+    if tuple(held) != due:
+        yield None, f"week {week.number}'s pairs {tuple(held)}, the league gives {due}"
+    seen = Counter(team for pair in held for team in pair)
+    for team, n in sorted(seen.items()):
+        if n > 1:
+            yield team, f"team {team} is in {n} pairs of week {week.number}"
+
+
 #: The rules every day of every run is held to, in the order they are read.
 RULES: tuple[Rule, ...] = (
     Rule(
@@ -381,27 +410,45 @@ CLAIMS_ONLY = Rule(
 )
 
 
-def rules_of(waivers: str = "none", rule: str = DROPPED) -> tuple[Rule, ...]:
+#: The rule of a league whose bracket is read and has a round (PR bracket), after :data:`RULES`.
+BRACKET_PAIRS = Rule(
+    "bracket_pairs",
+    bracket_pairs,
+    "on a day of a bracket round, the round's pairs a state holds are the league's from its totals",
+)
+
+
+def has_round(setup: Setup) -> bool:
+    """Whether ``setup``'s bracket is read and has a round to play (``league.round_weeks``): the
+    league :data:`BRACKET_PAIRS` is read in."""
+    return setup.spec is not None and bool(lg.round_weeks(setup.spec))
+
+
+def rules_of(waivers: str = "none", rule: str = DROPPED, bracket: bool = False) -> tuple[Rule, ...]:
     """The rules a run under ``waivers`` (``shapes.WAIVERS``) and the waiver ``rule``
-    (``shapes.WAIVER_RULES``, PR Fc) is held to: :data:`RULES`, and after them
+    (``shapes.WAIVER_RULES``, PR Fc) is held to: :data:`RULES`; then :data:`BRACKET_PAIRS` when
+    the league's ``bracket`` is read and has a round (PR bracket, :func:`has_round`; False by
+    default, so a caller that names no bracket reads the rules as before); and after them
     :data:`WAIVER_RULES` in a league by priority, or the wait and :data:`BID_RULES` in a FAAB
     league, and :data:`CLAIMS_ONLY` last under continuous waivers."""
+    base = (*RULES, BRACKET_PAIRS) if bracket else RULES
     if waivers == "none":
-        return RULES
+        return base
     more = (CLAIMS_ONLY,) if rule == CONTINUOUS else ()
     if waivers == "faab":
-        return (*RULES, WAIVER_RULES[0], *BID_RULES, *more)
-    return (*RULES, *WAIVER_RULES, *more)
+        return (*base, WAIVER_RULES[0], *BID_RULES, *more)
+    return (*base, *WAIVER_RULES, *more)
 
 
 class Auditor:
     """The rules over one run's days: it keeps each variant's day before (so a rule may compare
     with it) and every breach found, stamped with the path. The rules default to the setup's
-    (:func:`rules_of` its waivers and its waiver rule)."""
+    (:func:`rules_of` its waivers, its waiver rule and whether its bracket has a round)."""
 
     def __init__(self, setup: Setup, rules: Sequence[Rule] | None = None, path: int | None = None):
         self.setup = setup
-        self.rules = tuple(rules_of(setup.waivers, setup.waiver_rule) if rules is None else rules)
+        own = rules_of(setup.waivers, setup.waiver_rule, has_round(setup))
+        self.rules = tuple(own if rules is None else rules)
         self.path = path
         self.breaches: list[Breach] = []
         self._before: dict[int, Day] = {}
@@ -425,6 +472,7 @@ def names(rules: Sequence[Rule] | None = None) -> list[dict[str, str]]:
 
 __all__ = [
     "BID_RULES",
+    "BRACKET_PAIRS",
     "CLAIMS_ONLY",
     "OUT",
     "RULES",
@@ -435,9 +483,11 @@ __all__ = [
     "Rule",
     "bid_order",
     "bid_paid",
+    "bracket_pairs",
     "budget_floor",
     "claim_priority",
     "claims_only",
+    "has_round",
     "held_kind",
     "lands_next_day",
     "lineup",

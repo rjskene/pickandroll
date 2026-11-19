@@ -112,7 +112,7 @@ from .engine import (
     typical_gain,
     wk,
 )
-from .league import fpts
+from .league import fpts, round_pairs, round_weeks
 from .shapes import BOOK, CONTINUOUS, DROPPED
 from .state import (
     BENCH,
@@ -472,6 +472,16 @@ def bracket_days(setup: Setup) -> frozenset[date]:
     return frozenset(d for w in setup.calendar.weeks if w.number in weeks for d in w.days())
 
 
+def opponent_of(setup: Setup, state: SimState, me: int, week: int) -> int | None:
+    """Whom ``me`` plays in ``week`` (#172, PR bracket): the other team of its pair in the
+    setup's pairings, which hold the regular weeks; where they have no entry for the week, of
+    its pair among the round's pairs the state holds for it (``SimState.seeded``, the bracket's
+    round seeded that morning). None for a team in no pair: a week off, a team out of the
+    field, on a bye or knocked out, and a bracket week on a state that holds no pairs."""
+    pairs = setup.pairings[week] if week in setup.pairings else state.seeded.get(week, ())
+    return next((b if a == me else a for a, b in pairs if me in (a, b)), None)
+
+
 def problem_of(
     setup: Setup,
     state: SimState,
@@ -483,7 +493,11 @@ def problem_of(
     weeks_ahead: int = WEEKS_AHEAD,
 ) -> Built | None:
     """The move problem for ``me`` on ``state.day``; None with no week left. Mirrors
-    ``api.season_moves.build`` from in-memory inputs."""
+    ``api.season_moves.build`` from in-memory inputs. This week is played against
+    :func:`opponent_of`: the pairing's opponent, or in a round of the bracket the round's (PR
+    bracket), projected on the same beliefs from its active roster with both sides' totals so
+    far, and against nobody for a team in no pair. Every later week is against the whole field,
+    a bracket week too, as the live route builds them."""
     knobs = check_knobs(knobs)
     day = state.day
     weeks = setup.calendar.ahead(day, weeks_ahead)
@@ -514,9 +528,7 @@ def problem_of(
         totals = dict(state.totals.get(this.number, {}).get(team, {}))
         return {wk.FPTS: fpts(totals, points)} if points else totals
 
-    other = next(
-        (b if a == me else a for a, b in setup.pairings.get(this.number, ()) if me in (a, b)), None
-    )
+    other = opponent_of(setup, state, me, this.number)
     week_span = mv.WeekSpan(
         tuple(days0),
         True,
@@ -1890,6 +1902,20 @@ def clear_waivers(
 def new_week(state: SimState) -> SimState:
     """Monday: the adds used this week start over."""
     return replace(state, adds_used={})
+
+
+def seed_round(setup: Setup, state: SimState, week: int) -> SimState:
+    """The bracket's round of ``week`` seeded on the state (#172, PR bracket): its pairs as the
+    league gives them from the state's own totals (``league.round_pairs``: the season's own
+    bracket on the weeks finished before the round), kept under the week's number in
+    ``SimState.seeded``. The runner calls it each morning before the day's decisions; it seeds a
+    round once, on the first day the state does not hold it, and leaves the state as it is in a
+    week that is no round's and in a league whose bracket is not read. So no pair reads a total
+    of its own week (no peek), and two arms whose seasons differ seed their own."""
+    spec = setup.spec
+    if spec is None or week in state.seeded or week not in round_weeks(spec):
+        return state
+    return replace(state, seeded={**state.seeded, week: round_pairs(spec, state.totals, week)})
 
 
 # --------------------------------------------------------------------------- the day's lineup

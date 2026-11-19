@@ -677,7 +677,9 @@ def simulate(
     (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
     forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
     reads its table on the rosters before the landing for the forced drops, and on the rosters after
-    it for the rest of the day. The world's draws are common to all of them."""
+    it for the rest of the day. The world's draws are common to all of them. On the first morning
+    of a round of the bracket each variant's state takes the round's pairs from its own totals
+    (``policy.seed_round``, PR bracket), and a seat's problem reads its opponent from them."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -742,6 +744,9 @@ def simulate(
             tallies[vi].charge((made or week).number, before[vi], s.executed_by)
         if monday:
             states = [policy.new_week(s) for s in states]
+        # A round of the bracket is seeded on its first morning, each variant's from its own
+        # totals: the weeks finished before it (PR bracket).
+        states = [policy.seed_round(setup, s, week.number) for s in states]
         # From here on, the day's rosters: yesterday's moves are in, today's land tomorrow.
         seats = [
             {t: tables.of(label, s) for t, label in h.items()}

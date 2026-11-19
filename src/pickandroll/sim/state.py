@@ -4,7 +4,8 @@ A :class:`Setup` is a league as read once for a run: its calendar, pairings, tea
 rosters, free-agent pool, the policy's projection on day one, the schedule, the roster slots and
 the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class:`SimState` is
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
-tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
+tomorrow with the held-slot moves they need, every week's totals so far, and each round of the
+bracket as seeded on its first morning (PR bracket); in a waiver league
 (PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
 priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by; under
 continuous waivers (PR Fc) every add a claim among them. The world
@@ -272,6 +273,13 @@ class SimState:
     dollars: Mapping[int, int] = field(default_factory=dict)
     recent: Mapping[int, tuple[tuple[date, float], ...]] = field(default_factory=dict)
     market_recent: tuple[tuple[date, float], ...] = ()
+    #: The bracket's rounds as this arm has seeded them (#172, PR bracket): week number to that
+    #: round's matchups (team ids, the higher seed first; ``league.round_pairs``), set once a
+    #: round on its first simulated morning from this arm's own totals (``policy.seed_round``).
+    #: A problem reads its week's opponent from them where the pairings have no entry
+    #: (``policy.opponent_of``). Empty in a league with no round, and on a state built by hand.
+    #: No part of :meth:`key`.
+    seeded: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
 
     @property
     def executed(self) -> int:
@@ -296,7 +304,11 @@ class SimState:
     def key(self) -> tuple[Any, ...]:
         """What a decision depends on: two arms with the same key share one solve. In a waiver
         league also who is on waivers until when, the claims placed and the churns' held drops
-        due (#172, PR Fa); the priority is read by no decision."""
+        due (#172, PR Fa); the priority is read by no decision. The round's pairs (``seeded``,
+        PR bracket) are left out as the week's totals are: a static, a market and a mirror
+        rival, the strategies two variants hold alike in one seat, do not decide on the week's
+        opponent, and with the pairs in the key two variants that seed different pairs would
+        stop sharing their rivals' decisions."""
         base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),

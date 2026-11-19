@@ -558,7 +558,11 @@ def test_the_same_spec_seed_and_season_give_the_same_payload(replays):
 def test_a_replay_payload_carries_the_counts_and_the_audit(replays):
     p = replays["one"]
     assert p["audit"]["paths_voided"] == 0 and p["audit"]["breaches"] == []
-    assert [r["name"] for r in p["audit"]["rules"]] == [r.name for r in audit.RULES]
+    # The six every run reads, and the bracket's (PR bracket): a replay's league has a round.
+    assert [r["name"] for r in p["audit"]["rules"]] == [
+        *(r.name for r in audit.RULES),
+        "bracket_pairs",
+    ]
     counts = p["counts"]["by_season"]["2024"]["prior"]
     assert set(counts) == {"A", "B"} and p["counts"]["rivals"] is None
     assert set(counts["A"]) == set(ct.METRICS) and counts["A"]["landed"]["n"] == 3

@@ -6,12 +6,18 @@ them day by day. The seasons that play them are ``test_sim_bracket_run.py``'s.""
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 
 import numpy as np
 import pytest
 
+from pickandroll.sim import audit, policy, shapes
+from pickandroll.sim import cli as ss
 from pickandroll.sim import league as lg
-from pickandroll.sim.state import round_robin
+from pickandroll.sim.engine import mv
+from pickandroll.sim.shapes import CONTINUOUS, DROPPED, WAIVERS
+from pickandroll.sim.state import initial, round_robin
+from tests.sim.sim_league import KNOBS, every_category, make_setup
 from tests.sim.test_sim_league import CATS, totals
 
 #: The playoff formats of the ruled grid (``shapes.FULL.playoffs``), each with a league's teams:
@@ -229,3 +235,189 @@ def test_the_pairs_name_no_winner_and_no_team_twice():
             assert all(len(pair) == 2 for pair in pairs)
             teams = [t for pair in pairs for t in pair]
             assert len(teams) == len(set(teams)) and set(teams) <= set(s.teams)
+
+
+# --------------------------------------------------------------------------- the state's pairs
+def final_league(**kw):
+    """Four teams, every one against every other over three weeks, then a final between the top
+    two in week four."""
+    return make_setup(teams=4, weeks=4, playoff_weeks=1, playoff_teams=2, **kw)
+
+
+def test_a_round_is_seeded_once_from_the_states_own_totals_and_stays_out_of_the_key():
+    setup = final_league()
+    spec = setup.spec
+    state = replace(initial(setup), totals=ranked(spec, (3, 1, 2, 4)))
+    assert state.seeded == {}
+    # A regular week seeds nothing.
+    assert policy.seed_round(setup, state, 3) is state
+    seeded = policy.seed_round(setup, state, 4)
+    assert seeded.seeded == {4: ((3, 1),)} == {4: lg.round_pairs(spec, state.totals, 4)}
+    # Once a round: pairs the state holds are not seeded again, whatever its totals become.
+    later = replace(seeded, totals=ranked(spec, (4, 2, 1, 3)))
+    assert policy.seed_round(setup, later, 4) is later
+    # Another arm's own totals seed its own pairs.
+    other = policy.seed_round(setup, replace(state, totals=later.totals), 4)
+    assert other.seeded == {4: ((4, 2),)}
+    # The pairs are no part of what two arms share a solve on.
+    assert seeded.key() == state.key() == other.key()
+    # A league whose bracket is not read has no round to seed.
+    unread = final_league(bracket=False)
+    assert policy.seed_round(unread, initial(unread), 4).seeded == {}
+
+
+def test_a_teams_opponent_is_the_pairings_in_a_regular_week_and_the_rounds_pair_in_the_bracket():
+    setup = final_league()
+    state = initial(setup)
+    for week in setup.spec.regular_weeks:
+        for a, b in setup.pairings[week]:
+            assert policy.opponent_of(setup, state, a, week) == b
+            assert policy.opponent_of(setup, state, b, week) == a
+    # The final before it is seeded (and gate 5's hand-built states): nobody reads an opponent.
+    assert all(policy.opponent_of(setup, state, t, 4) is None for t in setup.teams)
+    seeded = replace(state, seeded={4: ((3, 1),)})
+    assert policy.opponent_of(setup, seeded, 3, 4) == 1
+    assert policy.opponent_of(setup, seeded, 1, 4) == 3
+    # A team in no pair (out of the field, on a bye, knocked out) reads none.
+    assert policy.opponent_of(setup, seeded, 2, 4) is None
+    assert policy.opponent_of(setup, seeded, 4, 4) is None
+    # The pairings come first: the state's pairs are read only where they have no entry.
+    odd = replace(state, seeded={1: ((1, 2),)})
+    a, b = next(pair for pair in setup.pairings[1] if 1 in pair)
+    assert policy.opponent_of(setup, odd, 1, 1) == (b if a == 1 else a) != 2
+
+
+@pytest.mark.parametrize("format_", ["one_win", "each_category"])
+def test_a_problem_in_a_round_weighs_the_week_against_the_rounds_opponent(format_):
+    """The final's Wednesday, in each head-to-head format. Without the pair the week has no
+    opponent and is worth nothing (main's blind week); with it the week's span is the one a
+    regular week against that team would have been, the opponent's week so far included, and it
+    is worth something. The later weeks, the measure and a team out of the final do not change."""
+    setup = final_league() if format_ == "one_win" else every_category(final_league())
+    day = setup.calendar.weeks[-1].start + timedelta(2)
+    so_far = {4: {1: totals(40.0), 3: totals(50.0)}}
+    base = replace(initial(setup), day=day, totals=so_far)
+    seeded = replace(base, seeded={4: ((3, 1),)})
+
+    def problem(state, team=1, league=setup):
+        return policy.problem_of(league, state, team, KNOBS, setup.projection, {}, {}).problem
+
+    blind, mine = problem(base), problem(seeded)
+    (none,) = blind.horizons["week"]
+    assert none.opponents == () and none.so_far_theirs == ()
+    assert mv.Evaluator(blind).base["week"] == 0.0
+    (span,) = mine.horizons["week"]
+    assert len(span.opponents) == 1
+    assert span.so_far == totals(40.0) and span.so_far_theirs == (totals(50.0),)
+    assert mv.Evaluator(mine).base["week"] > 0.0
+    # The very span a regular week paired with team 3 gives: one rule for the week's opponent.
+    paired = replace(setup, pairings={**setup.pairings, 4: ((1, 3), (2, 4))})
+    assert span == problem(base, league=paired).horizons["week"][0]
+    assert mine.horizons["three"] == blind.horizons["three"]
+    assert mine.one_win == blind.one_win == setup.one_win
+    assert mv.measure_of(mine) == policy.measure_of(setup)
+    # The other finalist reads team 1; a team out of the final reads nobody and has its problem.
+    (theirs,) = problem(seeded, 3).horizons["week"]
+    assert theirs.so_far == totals(50.0) and theirs.so_far_theirs == (totals(40.0),)
+    assert problem(seeded, 2).horizons["week"][0].opponents == ()
+    assert problem(seeded, 2) == problem(base, 2)
+
+
+# --------------------------------------------------------------------------- the audit
+def found(setup, state, day) -> list:
+    """What the rule finds on ``state`` read on ``day``."""
+    return list(
+        audit.bracket_pairs(setup, audit.Day(day, 0, replace(state, day=day), {}, {}), None)
+    )
+
+
+def test_the_audit_holds_a_rounds_pairs_to_the_leagues_on_every_day_of_the_round():
+    setup = final_league()
+    final = setup.calendar.weeks[-1]
+    season = ranked(setup.spec, (3, 1, 2, 4))
+    honest = policy.seed_round(setup, replace(initial(setup), totals=season), 4)
+    assert honest.seeded == {4: ((3, 1),)}
+    for day in final.days():
+        assert found(setup, honest, day) == []
+    # Later in the round, with the week's own totals in: the pairs do not read them.
+    played = {**season, 4: {1: totals(10.0), 2: totals(500.0), 3: totals(99.0)}}
+    assert found(setup, replace(honest, totals=played), final.end) == []
+    # A round the state does not hold.
+    assert found(setup, replace(honest, seeded={}), final.start) == [
+        (None, "week 4 is a round of the bracket and the state holds no pairs for it")
+    ]
+    # Pairs that are not the league's: another team, or the same teams the lower seed first.
+    assert found(setup, replace(honest, seeded={4: ((3, 2),)}), final.start) == [
+        (None, "week 4's pairs ((3, 2),), the league gives ((3, 1),)")
+    ]
+    assert found(setup, replace(honest, seeded={4: ((1, 3),)}), final.start) == [
+        (None, "week 4's pairs ((1, 3),), the league gives ((3, 1),)")
+    ]
+    # Totals of a finished week that changed after the round was seeded: the pairs are stale.
+    moved = replace(honest, totals=ranked(setup.spec, (4, 2, 1, 3)))
+    assert found(setup, moved, final.start) == [
+        (None, "week 4's pairs ((3, 1),), the league gives ((4, 2),)")
+    ]
+    # A regular day reads nothing, whatever the state holds; nor does a league not read.
+    assert found(setup, replace(honest, seeded={}), setup.start) == []
+    assert found(final_league(bracket=False), replace(honest, seeded={}), final.start) == []
+
+
+def test_the_audit_catches_a_team_in_two_pairs():
+    setup = make_setup(teams=4, weeks=5, playoff_weeks=2, playoff_teams=4)
+    one, _ = setup.spec.playoff_weeks
+    day = setup.calendar.weeks[one - 1].start
+    season = ranked(setup.spec, (1, 2, 3, 4))
+    honest = policy.seed_round(setup, replace(initial(setup), totals=season), one)
+    assert honest.seeded == {one: ((1, 4), (2, 3))} and found(setup, honest, day) == []
+    twice = replace(honest, seeded={one: ((1, 4), (2, 1))})
+    assert found(setup, twice, day) == [
+        (None, f"week {one}'s pairs ((1, 4), (2, 1)), the league gives ((1, 4), (2, 3))"),
+        (1, f"team 1 is in 2 pairs of week {one}"),
+    ]
+
+
+def test_the_rule_is_read_in_every_league_with_a_round_and_in_no_other():
+    rule = audit.BRACKET_PAIRS
+    assert rule.name == "bracket_pairs" and rule.check is audit.bracket_pairs
+    assert rule not in audit.RULES
+    for waivers in WAIVERS:
+        for way in (DROPPED,) if waivers == "none" else (DROPPED, CONTINUOUS):
+            plain = audit.rules_of(waivers, way)
+            assert rule not in plain and plain == audit.rules_of(waivers, way, False)
+            read = audit.rules_of(waivers, way, bracket=True)
+            # After the six every run reads, before a waiver league's own: the rest as it was.
+            assert read[len(audit.RULES)] is rule
+            assert tuple(r for r in read if r is not rule) == plain
+    setup = final_league()
+    assert audit.has_round(setup)
+    assert audit.Auditor(setup).rules == audit.rules_of(bracket=True) == (*audit.RULES, rule)
+    faab = replace(setup, waivers="faab")
+    assert audit.Auditor(faab).rules == audit.rules_of("faab", bracket=True)
+    # No round: the bracket not read, one playoff team, or no playoff week.
+    for none in (
+        final_league(bracket=False),
+        replace(setup, spec=replace(setup.spec, playoff_teams=1)),
+        replace(setup, spec=replace(setup.spec, playoff_weeks=())),
+    ):
+        assert not audit.has_round(none) and audit.Auditor(none).rules == audit.RULES
+    assert {"name": "bracket_pairs", "holds": rule.holds} in audit.names(audit.Auditor(setup).rules)
+
+
+def test_a_replays_record_names_the_rule_under_every_kind_of_waivers():
+    """The commands' audit block (``cli.audit_rules``): every league shape of the ruled grid has a
+    round, so every replay's record names the rule, after the six and before its waivers'."""
+    six = [r.name for r in audit.RULES]
+    for grid in (shapes.FIXED_GRID, shapes.FULL):
+        assert all(s.playoff_teams > 1 and s.playoff_weeks > 0 for s in grid.shapes)
+        plain = ss.audit_rules(shapes.PLAIN, grid)
+        assert [r.name for r in plain] == [*six, "bracket_pairs"]
+        _, note = ss.audited([{"path": 0}], [{"breaches": []}], plain)
+        assert [r["name"] for r in note["rules"]] == [*six, "bracket_pairs"]
+        for waivers in ("priority", "faab"):
+            for way in (DROPPED, CONTINUOUS):
+                rules = shapes.LeagueRules(waivers=waivers, waiver_rule=way)
+                assert ss.audit_rules(rules, grid) == audit.rules_of(waivers, way, bracket=True)
+    # A grid whose one shape plays no round names none.
+    bare = shapes.one("bare", replace(shapes.FIXED, playoff_teams=1, playoff_weeks=0))
+    assert ss.audit_rules(shapes.PLAIN, bare) == audit.RULES

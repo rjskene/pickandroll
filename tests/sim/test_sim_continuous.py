@@ -325,7 +325,8 @@ def test_the_audit_holds_claims_only_under_the_rule_and_catches_an_add_outside_a
     for waivers in ("none", *KINDS):
         assert "claims_only" not in [r.name for r in audit.rules_of(waivers)]
         assert audit.rules_of(waivers) == audit.rules_of(waivers, DROPPED)
-    assert audit.Auditor(league()).rules == audit.rules_of("priority", CONTINUOUS)
+    # The league's bracket has a round: its own audit reads the bracket's rule too (PR bracket).
+    assert audit.Auditor(league()).rules == audit.rules_of("priority", CONTINUOUS, bracket=True)
     # An honest morning: the player who joined came by a claim won that morning.
     setup, before, after, x, _, _ = two_add_x("priority", CONTINUOUS)
     assert list(audit.claims_only(setup, day_of(after), day_of(before))) == []
