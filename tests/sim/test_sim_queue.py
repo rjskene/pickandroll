@@ -480,7 +480,10 @@ def test_a_plan_s_step_bids_on_its_score_at_the_queue_s_weight():
     """In a FAAB league a step of the plan the queue took bids on its score, the week increment
     plus the arm's ``three_weight`` times its three weeks' increment (``plans.step_score``), as
     the live queue bids it; the set's gains stay the day's recommended moves' (the fortnight's
-    typical gain). By priority no decision carries a basis."""
+    typical gain). By priority no decision carries a basis. Every category counts here: the
+    point is one plan bid at two weights, and in the one-win form of this problem the weight
+    changes which of the plan and the set the queue takes (the parity cases); the bracket
+    week's bid, below, is a one-win league's."""
     setup = faab(every_category(cats()))
     bids = {}
     for weight in (0.0, 0.9):
@@ -655,13 +658,16 @@ def test_every_league_kind_plays_a_season_under_queue_and_the_audit_finds_nothin
         assert counts[1]["held_stints"] >= 1, counts[1]
 
 
-def test_a_later_step_waits_for_its_day_and_is_planned_again_the_next_day():
-    """A season where the queue takes plans over several days (every category, no waivers). On
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_later_step_waits_for_its_day_and_is_planned_again_the_next_day(h2h):
+    """A season where the queue takes plans over several days (no waivers, both formats). On
     a day a plan leads, a step dated after tomorrow is not queued; the state carries no plan
     (only tomorrow's moves), and the next day's queue is made of the next day's own decision:
     a step first planned for a later day is queued on the eve it is due, by the plan drawn
     that evening."""
-    setup = KINDS["every category, no waivers"]()
+    setup = make_setup(**SMALL)
+    if h2h == EACH_CATEGORY:
+        setup = every_category(setup)
     _, days = season(setup, queue_arm())
     waited = 0
     carried = 0
@@ -706,7 +712,10 @@ def test_a_plan_floor_decides_whether_the_queue_ever_takes_a_plan(h2h):
 def test_arms_that_share_a_room_each_take_the_rule_and_count_their_own_plans():
     """A room, where every seat is an arm's (a room has no rival seats, and is one season): an
     arm that executes ``queue`` and one that executes ``three``, in two seats each. The queue
-    arm's seats take plans, counted in its row; the other arm's row has the keys at 0."""
+    arm's seats take plans, counted in its row; the other arm's row has the keys at 0. The
+    league counts every category: with one win a matchup the arm's two seats take no plan on
+    this league and path (``~/sim-notes/vm/scratch/e/probe10.py``), and the test would count
+    nothing."""
     setup = every_category(make_setup(**SMALL))
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *PATH)
     out = rn.room(
@@ -754,7 +763,8 @@ def test_no_rival_takes_the_queue_s_rule(monkeypatch):
 def test_a_split_seat_executes_the_queue_s_rule_on_its_own_table():
     """The lesson of the draft PR's review: a rule the seat plays is played once by a seat whose
     table is split (``blend``: the first stand-in for every rostered player, the mix for the
-    rest; ``test_sim_split.py``'s league and stand-ins, every category counted). The queue's
+    rest; ``test_sim_split.py``'s league and stand-ins, every category counted: in its one-win
+    form the queue takes no plan on that season, ``test_no_peek.py``). The queue's
     rule reads the problem built on the seat's table, as every tier does: the table of each day
     is the split, the queue takes a plan on some day, the audit finds nothing, and the same arm
     on the first stand-in alone (``bbm``) queues something else on some day."""
