@@ -7,10 +7,10 @@ the default member to, through the door). The family, in order (:func:`amount`):
 
 1. **The value**, in typicals (:func:`value`): the move's gain over the seat's typical gain on
    each horizon, weighed ``week``, ``season`` and the rest on the three weeks. A horizon with no
-   typical yet (before the seat's tenth move on the week or the season), or whose typical is at or below
-   0, counts a move that gains as typical (ratio 1, ``bid_of``'s base of 1 on the three weeks)
-   and one that gains nothing or less as nothing (ratio 0): a claim worth nothing never rides
-   the pace. A plan's step keeps today's value, its week increment over the three weeks'
+   typical yet (the week and the season, before the seat's tenth move), or whose typical is at
+   or below 0, counts a move that gains as typical (ratio 1, ``bid_of``'s base of 1 on the three
+   weeks) and one that gains nothing or less as nothing (ratio 0): a claim worth nothing never
+   rides the pace. A plan's step keeps today's value, its week increment over the three weeks'
    typical: no weight applies.
 2. **The pace** (:func:`pace`): ``((left / start) / path) ** k``, the seat's share of the budget
    left over a spending path (:func:`path`), so a seat ahead of the path bids up and one behind
@@ -232,10 +232,12 @@ class Seen:
     typical gain of the fortnight, the plan floor until ten moves (for a plan's ``step``, its
     week increment over the same typical). ``week`` and ``season`` are the move's gain on the
     week and the season term's figure for it (None counts 0), with ``typical_week`` and
-    ``typical_season`` the seat's fortnight's medians on them, None until ten moves. ``dollars``
-    is the seat's own left and ``sizing`` its ``faab_sizing``; ``budget`` what every team
-    started with; ``others`` every other team's dollars left; ``wins`` the other teams' winning
-    bids of the season so far; ``when`` the calendar, read only by a pace."""
+    ``typical_season`` the seat's typicals on them (``policy.fortnight_by``: the fortnight's
+    median once it holds ten moves, else the median of the seat's last ten), None before its
+    tenth move. ``dollars`` is the seat's own left and ``sizing`` its ``faab_sizing``;
+    ``budget`` what every team started with; ``others`` every other team's dollars left;
+    ``wins`` the other teams' winning bids of the season so far; ``when`` the calendar, read
+    only by a pace."""
 
     gain: float
     typical: float

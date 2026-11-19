@@ -1334,7 +1334,7 @@ The family is one pure function, `bid_policy.amount`, of the block and of one fr
      rule takes a base of 1 there whatever the gain; both are routine claims, so the default
      member's amount is the live rule's, and the parity test holds those cells.
    - A horizon at a weight of 0 is not read: the decision carries no gain for it
-     (`policy.Basis.week`, `.season`) and the state keeps no fortnight for it.
+     (`policy.Basis.week`, `.season`) and the state keeps none of the seat's moves on it.
    - A week-plan step keeps the live value: its week increment over the three weeks' typical. The
      horizon weights are not applied to a step.
 2. **The pace**: `p = ((left ÷ start) ÷ path(t)) ** k`, `left` the seat's dollars now and `start`
