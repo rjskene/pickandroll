@@ -32,10 +32,7 @@ TYPICAL = (0.1, "the plan floor until 10 moves")
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    # The queue's numbers here predate the breakout lift (#435): it is off, as at 0 in the knob
-    # file; tests/test_lift.py covers it.
-    monkeypatch.setattr(lf, "DEFAULTS", dict(lf.OFF))
+def client(tmp_path):
     with season_client(tmp_path) as c:
         yield c
 
@@ -69,6 +66,25 @@ def test_the_bid_is_the_gain_over_the_typical_times_the_flag_and_the_sizing():
     bid = qa.bid_of(2.0, TYPICAL, 100, "must-add", None, "FA")
     assert (bid.amount, bid.reason) == (0, "$0: a free agent is added at once")
     assert qa.bid_of(0.5, TYPICAL, None, None, None, "W").amount == 5
+
+
+def test_a_lifted_move_bids_as_a_flagged_claim_with_no_flag_factor():
+    """#435, the master's ruling of 2026-11-19: the lift counts the flag once, in the gain. A
+    lifted move's base is at least one typical, with no x2 or x3; a flagged add whose move is not
+    lifted keeps its factor."""
+    lifted = qa.bid_of(0.25, TYPICAL, 100, "must-add", None, "W", lifted=True)
+    assert (lifted.amount, lifted.base, lifted.factor) == (3, 3, 1)
+    assert lifted.reason == (
+        "$3: gain 3x the typical (the plan floor until 10 moves), on a line lifted by a breakout"
+        " flag"
+    )
+    plain = qa.bid_of(0.25, TYPICAL, 100, "must-add", None, "W")
+    assert (plain.amount, plain.factor) == (9, 3)
+    # Never a routine $0: a lifted move is a flagged claim, even at the watch level.
+    for flag in ("watch", "add", None):
+        assert qa.bid_of(0.01, TYPICAL, 100, flag, None, "W", lifted=True).amount == 1
+    assert qa.bid_of(0.25, TYPICAL, 2, "add", None, "W", lifted=True).amount == 2
+    assert qa.bid_of(0.25, TYPICAL, 100, "add", None, "FA", lifted=True).amount == 0
 
 
 def test_a_routine_stream_bids_nothing_and_a_flagged_claim_bids_as_before():
@@ -837,9 +853,17 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
     on = [e for e in q["entries"] if e["queued"]]
     assert [e["rank"] for e in on] == [1, 2] and row["queued"] == 2
     assert all(e["availability"] == "W" for e in on)
-    # The flagged claim bids its factor, the routine stream $0 (#391).
+    # The flagged claim's move is lifted by its flag (#435): its gain took the flag, so it bids
+    # with no flag factor (the master's ruling, 2026-11-19); the routine stream bids $0 (#391).
+    assert on[0]["lift"]["level"] == "add" and "lift" not in on[1]
     assert [(e["bid"]["amount"], e["bid"]["reason"]) for e in on] == [
-        (2, "$2: gain 1x the typical (the plan floor until 10 moves), x2 for a breakout flag"),
+        (
+            2,
+            (
+                "$2: gain 2x the typical (the plan floor until 10 moves), on a line lifted by a"
+                " breakout flag"
+            ),
+        ),
         (0, "$0: a routine stream"),
     ]
     # Queued at 13:00 Central, after the day's execute time: a full hour from now.
@@ -898,7 +922,10 @@ def test_the_queue_names_every_player_its_entries_mention_from_the_snapshot(clie
     assert strike(client, q["entries"][0]["id"]).json()["names"] == q["names"]
 
 
-def test_the_user_strikes_an_entry_or_its_bid_and_a_rebuild_keeps_it(client):
+def test_the_user_strikes_an_entry_or_its_bid_and_a_rebuild_keeps_it(client, monkeypatch):
+    # The lift off (#435): this league's third move must be over the day's cap, and with the
+    # flagged add lifted the set changes and that move falls below the noise floor instead.
+    monkeypatch.setattr(lf, "DEFAULTS", dict(lf.OFF))
     q = queued(client)
     first, second, third = q["entries"][:3]
     assert (first["queued"], second["queued"], third["reason"]) == (True, True, qa.OVER_CAP)

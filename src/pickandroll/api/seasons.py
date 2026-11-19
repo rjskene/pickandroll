@@ -908,7 +908,10 @@ class SeasonService:
             # The breakout flags lift a flagged add's line (#435).
             try:
                 _, flags, _ = self._flags(league)
-            except Exception:  # noqa: BLE001 - the moves solve without the lift
+            except Exception as exc:  # noqa: BLE001 - the moves solve without the lift
+                LOG.warning(
+                    "moves of league %s solve without the lift: its flags failed: %s", league, exc
+                )
                 flags = {}
             return season_moves.build(
                 season, today, self.data_dir, system, knobs, claims, picks, flags

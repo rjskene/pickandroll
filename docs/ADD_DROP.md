@@ -1353,6 +1353,10 @@ that drops one of my marginal players or nobody:
   knobs, my marginal players and each lifted candidate's lift) only in a league with a lifted
   candidate. The Moves card says "lifted by its flag (x1.38, add)" on such a row. The digest is
   unchanged.
+- **The bid.** A lifted move's queue entry carries its `lift`, and it bids as a flagged claim
+  (its base at least one typical) with no x2 or x3 flag factor: the flag counts once, in the
+  gain (`autopilot.bid_of(..., lifted=True)`, the master's ruling of 2026-11-19). A flagged add
+  whose move is not lifted keeps its factor.
 - **The flags read.** The build takes the league's flags (`SeasonService._flags`); the moves stamp
   carries the flags' inputs, so a new buzz day or past-days export solves again. A flag read that
   fails leaves the solve without the lift.

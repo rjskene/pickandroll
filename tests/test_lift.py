@@ -6,6 +6,7 @@ of my marginal players or nobody. Every league here is made up (``test_moves``'s
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -240,3 +241,28 @@ def test_every_lift_knob_at_zero_gives_todays_moves_byte_for_byte(client, monkey
         x["factor"] == 1.25 and x["level"] == "must-add" for x in on["lift"]["lifted"].values()
     )
     assert len(on["lift"]["marginal"]) <= lf.DEFAULTS[lf.MARGINAL]
+
+
+def test_a_flag_read_that_fails_logs_a_line_and_the_moves_solve_without_the_lift(
+    client,  # noqa: F811
+    monkeypatch,
+    caplog,
+):
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+
+    calls = []
+
+    def broken(*args, **kw):
+        calls.append(1)
+        raise RuntimeError("no buzz")
+
+    monkeypatch.setattr(season_flags, "league_flags", broken)
+    bump(client)
+    with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
+        r = client.get(f"/seasons/{LEAGUE}/moves")
+    assert r.status_code == 200 and "lift" not in r.json() and calls
+    assert any(
+        f"moves of league {LEAGUE} solve without the lift: its flags failed: no buzz" in m
+        for m in caplog.messages
+    )
