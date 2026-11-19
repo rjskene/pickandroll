@@ -206,6 +206,13 @@ def test_a_stake_in_a_league_whose_bracket_is_not_read_is_refused_before_any_day
     )
     assert rn.stake_refused(staked, [policy.Shape()]) is None
     assert rn.stake_refused(armed(guard="off"), [unread]) is None
+    # By the field, on any tier: a ranking arm and a static one read no stake (their reads
+    # rows say so) and are refused there the same, as a stake with no season weight is.
+    for tier in ("ranking", "static"):
+        unreading = armed("U", tier, knobs={"season_weight": 0.4}, stake=0.5)
+        assert policy.season_reads(unreading, unread)["stake"] != policy.READ
+        assert rn.stake_refused(unreading, [unread]).startswith("arm U names stake 0.5: a stake")
+        assert rn.stake_refused(unreading, [policy.Shape()]) is None
     setup = make_setup(bracket=False)
     assert setup.spec is None and policy.shape_of(setup) == unread
     days: list = []
@@ -213,6 +220,10 @@ def test_a_stake_in_a_league_whose_bracket_is_not_read_is_refused_before_any_day
     with pytest.raises(ValueError, match=why) as e:
         rn.paired(setup, replay_of(setup, 2, 0), armed(), staked, 1, on_day=days.append)
     assert "the settings page has not been read" in str(e.value) and not days
+    ranked = armed("B", "ranking", knobs={"season_weight": 0.4}, stake=0.5)
+    with pytest.raises(ValueError, match=why):
+        rn.paired(setup, replay_of(setup, 2, 0), armed(), ranked, 1, on_day=days.append)
+    assert not days
     built = built_of(setup, season_weight=0.4)
     with pytest.raises(ValueError, match="the bracket is not trusted"):
         policy.guarded(built, setup, initial(setup), stake=0.5)
@@ -550,6 +561,8 @@ def test_a_run_counts_what_any_of_its_arms_names_on_its_arms_seats():
     assert ss.counts_note("none") is ss.COUNTS_NOTE and ss.counts_note("none", ()) is ss.COUNTS_NOTE
     both = ss.counts_note("faab", ("guard", "stake"))
     assert list(both)[-3:] == list(SEASON_KEYS)
+    # The record says what the guard's count is not: how often the block would bind.
+    assert "a lower bound on how often the block would have turned" in both["sets_past_guard"]
     assert {k: v for k, v in both.items() if k not in SEASON_KEYS} == ss.counts_note("faab")
     assert list(ss.counts_note("none", ("stake",)))[-2:] == list(ct.SEASON["stake"])
 
@@ -601,15 +614,23 @@ def test_a_made_up_path_with_no_feasible_swap_has_a_scale_row_and_no_ratio():
 
 # --------------------------------------------------------------------------- Rule 1 in a season
 @pytest.mark.parametrize("h2h", FORMATS)
-def test_rule_1_the_defaults_named_play_the_seasons_of_an_arm_that_names_nothing(h2h):
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_rule_1_the_defaults_named_play_the_seasons_of_an_arm_that_names_nothing(tier, h2h):
     """An arm that names ``guard: block`` and ``stake: 0`` plays the season of one that names
     neither: each solves its own days (two names share no solve), and their outcomes and counts
-    are equal; the run counts the fields because an arm names them. A run of two arms that name
-    nothing has no new key and the same season."""
+    are equal; the run counts the fields because an arm names them. On both tiers that read the
+    fields, the exact one executing its week plan at a plan floor that takes every plan the
+    stream draws (``test_sim_knobs.CASES`` says why below zero). A run of two arms that name
+    nothing has no new key and the same season: compared on the surrogate, the cheaper pair
+    (the counting is one code for both tiers)."""
     setup = of_format(make_setup(teams=4, pool=12), h2h)
     weight = {"season_weight": 0.05}
-    plain = armed("A", "surrogate", "market", weight)
-    named = armed("B", "surrogate", "market", weight, guard="block", stake=0)
+    more: dict = {}
+    if tier == "exact":
+        weight["plan_floor_cats"] = -1.0
+        more["execute_plan"] = True
+    plain = armed("A", tier, "market", weight, **more)
+    named = armed("B", tier, "market", weight, guard="block", stake=0, **more)
     got = rn.paired(setup, replay_of(setup, 2, 0), plain, named, 1)
     assert got["a"] == got["b"] and set(got["delta"].values()) == {0.0}
     assert got["counts"]["a"] == got["counts"]["b"]
@@ -617,6 +638,8 @@ def test_rule_1_the_defaults_named_play_the_seasons_of_an_arm_that_names_nothing
     assert got["counts"]["a"]["sets_past_guard"] == 0.0 and got["counts"]["a"]["landed"] > 0
     assert 0 < got["counts"]["a"]["stake_mean"] < 1
     assert not set(SEASON_KEYS) & set(got["counts"]["rivals"])
+    if tier == "exact":
+        return
     before = rn.paired(setup, replay_of(setup, 2, 0), plain, replace(plain, name="B"), 1)
     assert not set(SEASON_KEYS) & set(before["counts"]["a"])
     assert before["a"] == got["a"] and before["scale"] == got["scale"]
@@ -1052,28 +1075,41 @@ KINDS = (
 )
 
 
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
 @pytest.mark.parametrize("name", KINDS)
-def test_every_league_kind_plays_a_season_with_both_fields_named_and_a_clean_audit(name):
+def test_every_league_kind_plays_a_season_with_both_fields_named_and_a_clean_audit(name, tier):
     """The lesson of Fc's review: a season with the guard off and a stake of 1, at a season
     weight of the size of the league's season scale, in each kind of league (seed 1, path 0,
-    among market rivals at 0.4 a day): the audit finds nothing, the seat moves, it decides a
-    set the block would have refused at least once (the lever acts in every kind), a held slot
-    is used where the league has one, and the counts carry the three keys on the arm's seat
-    alone."""
+    among market rivals at 0.4 a day), on each tier that reads the fields: the audit finds
+    nothing, the seat moves, it decides a set the block would have refused at least once (the
+    lever acts in every kind), a held slot is used where the league has one, and the counts
+    carry the three keys on the arm's seat alone. The exact seat executes its week plan, at a
+    plan floor that takes every plan the stream draws (below zero, as ``test_sim_knobs.CASES``
+    says why): under off its three searches and the plan's steps feed the queue with no allowed
+    set, and a plan is drawn in every kind but the one-win league's, where the engine's plan
+    floor is its own."""
     setup = kind_of(name)
     w = replay_of(setup, 1, 0)
-    weight = scale_weight(setup, w)
-    a = armed("A", opponents="market", knobs={"season_weight": weight}, guard="off", stake=1)
-    states: list = []
+    knobs = {"season_weight": scale_weight(setup, w)}
+    more: dict = {}
+    if tier == "exact":
+        knobs["plan_floor_points" if setup.scoring == "points" else "plan_floor_cats"] = -1.0
+        more["execute_plan"] = True
+    a = armed("A", tier, "market", knobs, guard="off", stake=1, **more)
+    days: list = []
     variant = {**{t: op.Market(0.4) for t in setup.teams}, 1: a.seat()}
     (res,) = rn.simulate(
         setup,
         w,
         [variant],
-        on_day=lambda r: states.append(r.state),
+        [a.execute_plan],
+        on_day=days.append,
         counted=[rn._counted([a], {1: a})],
     )
+    states = [r.state for r in days]
     assert res.breaches == ()
+    if tier == "exact" and not setup.one_win:
+        assert any(r.decisions[1].plan for r in days)
     row = res.counts[1]
     assert row["landed"] > 0, row
     assert row["sets_past_guard"] >= 1 and 0 < row["stake_mean"] <= 1
@@ -1166,9 +1202,10 @@ def test_a_replay_s_record_names_the_fields_the_reads_and_the_counts(data: Path,
         assert (row["ratio"] is None) is (row["paths_with_ratio"] == 0)
 
 
-def test_the_command_refuses_before_any_path(data: Path, small):
-    """A guard named on a tier that has none, and two arms that differ only on a stake neither
-    reads: refused by name, no task planned."""
+def test_the_command_refuses_before_any_path(data: Path, small, monkeypatch):
+    """A guard named on a tier that has none, two arms that differ only on a stake neither
+    reads, and a stake in a league whose bracket is not read: refused by name, no task
+    planned."""
     code, out = replay(data, "A", "RG", "--dry-run")
     assert code == 2, out
     assert "guard 'off' named on tier 'ranking': the ranking tier has no season guard" in out
@@ -1177,6 +1214,23 @@ def test_the_command_refuses_before_any_path(data: Path, small):
     assert code == 2, out
     assert "refused: arms a and b are the same seat: they differ only in stake (the ranking" in out
     assert "tasks (" not in out
+    # A league whose bracket is not read. No replay has one today (every league a replay builds
+    # has a spec), so the season's read is handed back with its shape's bracket unread: the
+    # command refuses the arm with a stake by name, on a tier that reads it and on one that
+    # does not.
+    real = ss.read_season
+
+    def unread(*a, **k):
+        read = real(*a, **k)
+        return replace(read, shape=replace(read.shape, bracket=False))
+
+    monkeypatch.setattr(ss, "read_season", unread)
+    for b, stake in (("B", "1"), ("RS", "0.5")):
+        code, out = replay(data, "A", b, "--dry-run")
+        assert code == 2, out
+        assert f"refused: arm {b} names stake {stake}: a stake reads the cut line" in out
+        assert "the league's bracket is not read, so it is not trusted" in out
+        assert "tasks (" not in out
 
 
 # --------------------------------------------------------------------------- the screen's rows
