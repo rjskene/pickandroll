@@ -87,7 +87,10 @@ def inputs_of(payload: Mapping[str, Any], sha: str) -> WorldInputs:
 @dataclass(frozen=True)
 class Arm:
     """One arm of a comparison: a tier with its knobs, what it executes, its opponents and its
-    fields (``policy.Fields``)."""
+    fields (``policy.Fields``). ``executes`` is ``three`` (the three weeks' set, the default),
+    ``weighted`` (the weighted set) or ``queue`` (the live queue's rule, #172, PR E: the exact
+    tier's). ``with_plan`` and ``execute_plan`` are the first two's, the streaming plan beside
+    the set; the queue's rule draws and executes its own plan and reads neither."""
 
     name: str
     tier: str
@@ -128,13 +131,20 @@ SPEC_KEYS = (
 )
 
 
+#: The two plan switches of an arm's spec: the streaming plan beside the set. A spec that
+#: executes ``queue`` names neither (#172, PR E).
+PLAN_KEYS = ("with_plan", "execute_plan")
+
+
 def arm_of(spec: Mapping[str, Any]) -> Arm:
     """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
     four fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
     ``surrogate_days``; ``policy.fields_of``); a key the simulator does not read
     (:data:`SPEC_KEYS`, and ``opponents.SPEC_KEYS`` under ``opponents``), a knob missing,
     unknown or out of the engine's bounds, a field out of its own or a tier unknown is refused
-    by name."""
+    by name. So is ``executes: queue`` on a tier other than the exact one
+    (``policy.queue_refused``), and ``with_plan`` or ``execute_plan`` named beside it, whatever
+    its value: the queue's rule draws and executes its own plan (#172, PR E)."""
     unknown = [k for k in spec if k not in SPEC_KEYS]
     if unknown:
         raise ValueError(
@@ -149,6 +159,16 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
     executes = str(spec.get("executes", policy.QUEUE_SET))
     if executes not in policy.EXECUTES:
         raise ValueError(f"executes {executes!r}: one of {policy.EXECUTES}")
+    why = policy.queue_refused(tier, executes)
+    if why is not None:
+        raise ValueError(why)
+    if executes == policy.QUEUE:
+        for key in PLAN_KEYS:
+            if key in spec:
+                raise ValueError(
+                    f"{key} is named beside executes {executes!r}: the queue's rule draws and "
+                    "executes its own plan, so the spec leaves it out"
+                )
     return Arm(
         str(spec.get("name") or "arm"),
         tier,
@@ -662,6 +682,14 @@ class _Tables:
         return self._mixed[key]
 
 
+def queue_named(variants: Sequence[Mapping[int, op.Strategy]]) -> bool:
+    """Whether a seat of ``variants`` takes the queue's rule (#172, PR E): the run's counts then
+    carry the queue's (``counts.PLANS``), in every seat's row."""
+    return any(
+        getattr(strat, "executes", None) == policy.QUEUE for v in variants for strat in v.values()
+    )
+
+
 def simulate(
     setup: Setup,
     w: World,
@@ -669,6 +697,7 @@ def simulate(
     execute_plan: Sequence[bool] | None = None,
     on_day: Callable[[DayRecord], None] | None = None,
     rules: Sequence[audit.Rule] | None = None,
+    queue_counts: bool | None = None,
 ) -> list[VariantResult]:
     """Every variant (a strategy by seat) through one world in lockstep. Each day, after the lineup
     is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or the setup's,
@@ -677,7 +706,10 @@ def simulate(
     (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
     forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
     reads its table on the rosters before the landing for the forced drops, and on the rosters after
-    it for the rest of the day. The world's draws are common to all of them."""
+    it for the rest of the day. The world's draws are common to all of them. ``queue_counts``:
+    whether the run has an arm that takes the queue's rule, so every seat's counts carry the
+    queue's (PR E); None reads it off ``variants`` (:func:`queue_named`), and a pair whose arms
+    play apart says it for both."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -686,7 +718,8 @@ def simulate(
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
     spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
     auditor = audit.Auditor(setup, rules, w.path)
-    tallies = [ct.Tally(setup) for _ in range(n)]
+    counted = queue_named(variants) if queue_counts is None else queue_counts
+    tallies = [ct.Tally(setup, counted) for _ in range(n)]
     holds = [holds_of(w, v) for v in variants]
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
@@ -778,6 +811,11 @@ def simulate(
                     spots,
                     setup,
                 )
+                if decision.plan_leads:
+                    # The queue took a plan (PR E): the steps of it queued today, as a free
+                    # agent's add for the morning or as a claim placed.
+                    placed = sum(1 for c in state.claims.get(team, ()) if c.placed == day)
+                    tallies[vi].took(team, len(state.pending.get(team, ())) + placed)
             states[vi] = state
             lineup = {
                 t: policy.starters_of(setup, state, t, day, status, values[vi].get(t, value))
@@ -951,9 +989,11 @@ def paired_apart(
     va = {**opponents_of(setup_a, a, me), me: a.seat()}
     vb = {**opponents_of(setup_b, b, me), me: b.seat()}
     scale = {"a": scale_on(setup_a, w_a, a, me), "b": scale_on(setup_b, w_b, b, me)}
-    (ra,) = simulate(setup_a, w_a, [va], [a.execute_plan], on_day=on_day)
+    # One run, two seasons: both arms' rows carry the queue's counts when either takes the rule.
+    counted = queue_named([va, vb])
+    (ra,) = simulate(setup_a, w_a, [va], [a.execute_plan], on_day=on_day, queue_counts=counted)
     second = None if on_day is None else (lambda r: on_day(replace(r, variant=1)))
-    (rb,) = simulate(setup_b, w_b, [vb], [b.execute_plan], on_day=second)
+    (rb,) = simulate(setup_b, w_b, [vb], [b.execute_plan], on_day=second, queue_counts=counted)
     rb = replace(rb, breaches=tuple(replace(x, variant=1) for x in rb.breaches))
     return _pair_result(setup_a, ra, rb, me, scale)
 

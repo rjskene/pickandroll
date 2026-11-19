@@ -19,7 +19,7 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY
 from pickandroll.sim.state import Member, initial
-from tests.sim.sim_league import KNOBS, arm, make_setup, rates, replay_of
+from tests.sim.sim_league import KNOBS, arm, every_category, make_setup, rates, replay_of
 
 
 # --------------------------------------------------------------------------- the twelve knobs
@@ -493,11 +493,59 @@ def test_the_reads_table_as_built():
         "daily_cap",
         "season_weight",
     }
-    for never in ("three_weight", "system", "blend", "faab_sizing", "stash_threshold"):
+    for never in ("system", "blend", "faab_sizing", "stash_threshold"):
         assert all(policy.reads(c, s)[never] != policy.READ for c in CONFIGS for s in SHAPES)
+    # three_weight (PR E): the exact tier executing queue reads it, in every shape; nobody else.
+    for c, s in product(CONFIGS, SHAPES):
+        queue = c.tier == "exact" and c.executes == policy.QUEUE
+        assert (policy.reads(c, s)["three_weight"] == policy.READ) == queue, (c, s)
+    assert policy.reads(exact, cats)["three_weight"] == policy.NOT_QUEUE
+    assert ranking["three_weight"] == static["three_weight"] == policy.ONLY_QUEUE
     f = policy.field_reads(rn.Arm("R", "surrogate", KNOBS, {}))
     assert set(f.values()) == {policy.READ}
     assert policy.field_reads(exact)["surrogate_days"] == "the exact tier decides every day"
+
+
+def test_the_reads_table_of_an_arm_that_executes_queue():
+    """PR E: the queue's rule reads ``three_weight`` and the league's plan floor (the gate a week
+    plan clears), whatever the arm's two plan switches say: the rule draws and executes its own
+    plan. A one-win league's floor is the engine's own under queue too."""
+    cats, each = policy.Shape(), policy.Shape(h2h=EACH_CATEGORY)
+    points = policy.Shape("points")
+    for with_plan, execute_plan in product((True, False), (True, False)):
+        q = rn.Arm("Q", "exact", KNOBS, {}, policy.QUEUE, with_plan, execute_plan)
+        read = {k for k, v in policy.reads(q, each).items() if v == policy.READ}
+        assert read == {
+            "protection_floor",
+            "daily_cap",
+            "plan_floor_cats",
+            "three_weight",
+            "season_weight",
+        }
+        assert policy.reads(q, cats)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
+        assert policy.reads(q, cats)["three_weight"] == policy.READ
+        in_points = policy.reads(q, points)
+        assert in_points["plan_floor_points"] == in_points["three_weight"] == policy.READ
+        assert in_points["plan_floor_cats"] == "a points league"
+        assert policy.reads(q, each)["horizon_weight"] == "the arm does not execute weighted"
+    # The same arm executing the set with its plan drawn and not executed reads neither.
+    three = rn.Arm("T", "exact", KNOBS, {})
+    assert policy.reads(three, each)["plan_floor_cats"] == "the plan is drawn and not executed"
+    assert policy.reads(three, each)["three_weight"] == policy.NOT_QUEUE
+    # The season term's place under queue is said beside the table, for a queue arm only.
+    q = rn.Arm("Q", "exact", KNOBS, {}, policy.QUEUE)
+    assert policy.read_notes(q) == {"season_weight": policy.QUEUE_SEASON}
+    assert "without the term" in policy.QUEUE_SEASON
+    assert policy.read_notes(three) == {}
+    assert policy.read_notes(rn.Arm("S", "surrogate", KNOBS, {}, policy.QUEUE)) == {}
+    assert ss.reads_of({"a": three, "b": q}, [cats], True)["b"][cats.label()]["notes"] == {
+        "season_weight": policy.QUEUE_SEASON
+    }
+    assert set(ss.reads_of({"a": three, "b": q}, [cats], True)["a"][cats.label()]) == {
+        "knobs",
+        "fields",
+    }
+    assert policy.WHEN_READ["three_weight"] == "the exact tier executing queue"
 
 
 def _day_records(setup, w, a: rn.Arm, b: rn.Arm, me: int) -> tuple[list, list]:
@@ -567,6 +615,7 @@ def strong(setup, me: int = 4):
 
 LEAGUES = {
     "cats": lambda: make_setup(seed=3, weeks=3, playoff_weeks=1),
+    "each": lambda: every_category(make_setup(seed=3, weeks=3, playoff_weeks=1)),
     "points": points_setup,
     "weak cats": lambda: weakened(make_setup(seed=3, weeks=3, playoff_weeks=1)),
     "weak points": lambda: weakened(points_setup()),
@@ -581,7 +630,8 @@ LEAGUES = {
 #: draws and one of 50 none. A floor of exactly zero would rest on the plan's gap being 0.0 or
 #: 1e-16, which the engine's evaluator leaves to the order it sums in.
 CASES = [
-    # Never read yet: on the exact tier executing everything it can.
+    # Not read by an arm that does not execute queue: on the exact tier executing everything it
+    # can (the first), or by no tier at all (the rest).
     ("three_weight", "exact", "three", True, True, {}, (0.0, 0.9), 1, "cats"),
     ("system", "exact", "three", True, True, {}, ("bbm", "yahoo"), 1, "cats"),
     ("blend", "exact", "three", True, True, {}, (None, 0.5), 1, "cats"),
@@ -615,6 +665,18 @@ CASES = [
         1,
         "cats",
     ),
+    # The queue's rule (PR E): the weight is read in every league kind, a floor where its
+    # league kind reads it (the knob in every category and in points; one win has the engine's
+    # own), and the season term on the set. Found by ``~/sim-notes/vm/scratch/e/probe5.py``.
+    ("three_weight", "exact", "queue", False, False, {}, (0.0, 0.9), 1, "weak cats"),
+    ("three_weight", "exact", "queue", False, False, {}, (0.0, 0.9), 1, "each"),
+    ("three_weight", "exact", "queue", False, False, {}, (0.0, 0.9), 1, "points"),
+    ("plan_floor_cats", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "each"),
+    ("plan_floor_cats", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "cats"),
+    ("plan_floor_cats", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "points"),
+    ("plan_floor_points", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "points"),
+    ("plan_floor_points", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "each"),
+    ("season_weight", "exact", "queue", False, False, {}, (0.0, 1.0), 1, "cats"),
 ]
 
 
@@ -648,8 +710,12 @@ def test_a_comparison_of_the_same_seat_is_refused_by_name():
     a = arm("A", "exact")
     same = rn.same_seat(a, replace(a, knobs={**a.knobs, "three_weight": 0.9}), shapes)
     assert same is not None and len(same) == 1
-    assert same[0].startswith("three_weight (it weighs the three weeks in the queue's score")
-    assert "read by the queue's rule (PR E)" in same[0]
+    assert same[0] == (
+        "three_weight (the arm does not execute queue; read by the exact tier executing queue)"
+    )
+    # An arm that executes queue reads it: two such arms apart in it are two seats (PR E).
+    q = replace(a, executes=policy.QUEUE)
+    assert rn.same_seat(q, replace(q, knobs={**q.knobs, "three_weight": 0.9}), shapes) is None
     # Two unread, both named; one read among them and they are two seats.
     two = replace(a, knobs={**a.knobs, "three_weight": 0.9, "playoff_weight": 2.0})
     assert [x.split(" ")[0] for x in rn.same_seat(a, two, shapes)] == [

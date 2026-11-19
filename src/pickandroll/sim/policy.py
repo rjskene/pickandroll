@@ -82,6 +82,21 @@ own (``stream.floor_of``: ``PLAN_FLOOR_ODDS``), so ``plan_floor_cats`` is read b
 seat that bids scales by that floor until ten moves. A league that counts every category, and a
 points league, are valued as before. The ranking tier, a market rival and a static seat read no
 odds and do not change. :func:`measure_of` names the measure for the record.
+
+**The queue's rule** (PR E, an exact arm that executes ``queue``). The live queue does not simply
+take the three weeks' set: it also draws the week plans and takes a plan when it beats the set
+by the plan floor on the queue's score, the week's gain plus ``three_weight`` times the three
+weeks' (in a bracket week on the matchup's odds, the weight 0 and the floor the engine's own).
+:func:`draw_queue` hands the engine the day's inputs in the live route's order
+(``api.season_moves.week_plans_payload``, read and written again here): the three weeks' set as
+``three`` finds it, the week's set, the week's single swaps and the streaming plan, the weight
+(:func:`queue_weight`), the guard and the held returns; the plans, the gate, the floor and the
+trim are the engine's (``season.plans`` through the door). :func:`queue_rule` makes the decision:
+the plan's steps, dated, when a plan leads (:attr:`Decision.plan_leads`), else the set, and
+:func:`queue` then places only the steps due today; the seat decides again tomorrow. The season
+term is on the three weeks' set and in the guard; the plans and the gate are the engine's own
+score (the library's functions do not take the term's wrapper: a bracket week's gate reads the
+matchup's odds, which it has not).
 """
 
 from __future__ import annotations
@@ -106,6 +121,7 @@ from .engine import (
     bid_of,
     dl,
     mv,
+    pl,
     refused,
     sg,
     st,
@@ -165,7 +181,10 @@ HORIZONS = ("week", "three")
 #: The set the autopilot queues (``season.autopilot.QUEUE_SET``).
 QUEUE_SET = "three"
 WEIGHTED = "weighted"
-EXECUTES = (QUEUE_SET, WEIGHTED)
+#: The live queue's rule (#172, PR E): the three weeks' set, or the week plan that beats it by the
+#: plan floor on the queue's score (:func:`queue_rule`). The exact tier's.
+QUEUE = "queue"
+EXECUTES = (QUEUE_SET, WEIGHTED, QUEUE)
 TIERS = ("exact", "surrogate", "ranking")
 #: The surrogate's solve days (Monday 0, Thursday 3).
 SURROGATE_DAYS = (0, 3)
@@ -331,7 +350,8 @@ class Basis:
     decision's moves: for the live rule the move's own gain on the judging horizon, the set's
     value less the set without it (the live queue's ``gain``, the logged ``marginal`` on
     ``three``); for the market the move's gain on its view. ``plan`` is each of the plan's steps'
-    gain, in the order of its steps: its week increment, where live bids on its score
+    gain, in the order of its steps: under the queue's rule its score, as live bids
+    (:func:`step_bids`, PR E); for a streaming plan beside the set its week increment
     (:func:`basis_of`).
     ``sizing`` is the seat's ``faab_sizing`` and ``floor`` its plan floor, the typical gain until
     ten moves (live); ``noise`` the market's draw by move, for each of its moves that is a claim
@@ -359,6 +379,12 @@ class Decision:
     #: What its claims bid on in a FAAB league (PR Fb); None elsewhere, and for a tier that
     #: holds no gain in the engine's units (ranking), whose claims bid $0.
     basis: Basis | None = None
+    #: Under the queue's rule (PR E): ``plan`` is the week plan the queue took instead of the
+    #: set, its steps dated, and ``held`` the plan's. The executor then queues the plan's steps
+    #: due today and none of ``moves``, whatever the arm's ``execute_plan``; ``moves`` stays the
+    #: three weeks' set, the day's recommended moves (the record's, and the fortnight's typical
+    #: gain's, as live's). False everywhere else.
+    plan_leads: bool = False
 
 
 NONE = Decision()
@@ -381,8 +407,10 @@ def basis_of(
     ``stream.Plan``, when the decision carries one) in a FAAB league; None elsewhere. A move of
     the set bids on its own gain on the judging horizon (:func:`gains_of`, the live queue's
     ``marginal``); a plan step on its week increment (``stream.step_gains``), where live bids on
-    its score, the week increment plus the queue's weight (``plans.THREE_WEIGHT``) times its
-    three weeks' increment (``plans.step_score``): the simulator has no queue weight until PR E. The gains
+    its score, the week increment plus the queue's weight times its three weeks' increment
+    (``plans.step_score``): a streaming plan beside the set is the simulator's own arm, not the
+    queue's, and keeps the week increment; the queue's rule bids on the score
+    (:func:`step_bids`, PR E). The gains
     are the engine's own, on its plain evaluator: the season term is the simulator's and live
     bids without it. The typical gain until ten moves is the problem's plan floor as the engine
     reads it (``stream.floor_of``): the knob, or in a one-win league the engine's own floor in
@@ -826,7 +854,11 @@ def exact(
     """The live moves route's set on ``QUEUE_SET`` (or the strategy route's weighted set), the
     season guard on every search, the streaming plan beside. With a ``season_weight`` the single
     swaps, the pool's ranking and the recommended set (or the weighted search) all take the
-    season term (:func:`seasoned`); the week's plan does not."""
+    season term (:func:`seasoned`); the week's plan does not. An arm that executes ``queue``
+    takes the queue's rule (:func:`queue_rule`, PR E), which draws its own plans: ``with_plan``
+    is not read there."""
+    if executes == QUEUE:
+        return queue_rule(built, fields)
     p = built.problem
     ev = mv.Evaluator(p)
     allowed = guard_of(built)
@@ -873,6 +905,117 @@ def exact(
         solves += 1
     basis = basis_of(built, ev, moves, taken)
     return Decision(tuple(moves), held, plan, solves, "exact", basis)
+
+
+# --------------------------------------------------------------------------- the queue's rule
+def in_bracket(built: Built) -> bool:
+    """Whether today's week is one of the bracket's (``Built.bracket``; never without a bracket
+    read): the live build's ``playoff``, on which a week plan leads on the matchup's odds."""
+    return built.problem.first_day in built.bracket
+
+
+def queue_weight(built: Built) -> float:
+    """The weight of the three weeks in the queue's score (#172, PR E): the arm's
+    ``three_weight``, and 0 in a bracket week, where the matchup decides who advances (as the
+    live route sets it, ``api.season_moves.week_plans_payload``). The one place the queue's rule
+    and its steps' bids take the weight from."""
+    return 0.0 if in_bracket(built) else float(knob(built.knobs, "three_weight"))
+
+
+def step_bids(plan: pl.WeekPlan, weight: float) -> tuple[float, ...]:
+    """What each step of the plan the queue took bids on in a FAAB league (#172, PR E), in the
+    order of its steps: its score (``plans.step_score``), its week increment plus ``weight``
+    (:func:`queue_weight`) times its three weeks' increment, as the live queue bids a step; so
+    in a bracket week its week increment alone. The increments are the engine's own, on its
+    plain evaluator."""
+    return tuple(pl.step_score(s, weight) for s in plan.steps)
+
+
+@dataclass(frozen=True)
+class Drawn:
+    """What the queue's rule drew on one day (#172, PR E): what :func:`draw_queue` handed the
+    engine's week plans, and the engine's answer."""
+
+    #: The three weeks' set as ``executes: three`` finds it (the season term on it, the guard on
+    #: its search), with its held-slot moves and its basis.
+    three: Decision
+    #: The week's recommended set, the week's single swaps and the week's streaming plan without
+    #: the three-week guard: what the plans' pool is made of.
+    week_set: tuple[mv.Move, ...]
+    swaps: Mapping[int, Sequence[mv.SwapGain]]
+    stream: st.Plan | None
+    #: The weight of the three weeks in the score, and whether today's week is the bracket's.
+    weight: float
+    playoff: bool
+    #: Every plan the engine valued (``plans.every_plan``), and the one the queue takes instead
+    #: of the set (``plans.for_queue``); None when the set stands.
+    plans: tuple[pl.WeekPlan, ...]
+    chosen: pl.WeekPlan | None
+
+
+def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
+    """The day's week plans and the queue's choice among them and the three weeks' set (#172, PR
+    E), by the engine's own functions in the live route's order
+    (``api.season_moves._payload`` and ``week_plans_payload``, read as the reference and written
+    again here; nothing of the plans, the gate, the floor or the trim is the simulator's):
+
+    1. the three weeks' set as ``executes: three`` finds it (:func:`exact`: the season term on
+       it, the guard on its search);
+    2. the week's recommended set, among the arm's ``pool`` best candidates by single-swap gain
+       on the week above ``min_gain``, as the three weeks' set is found on its own key; the
+       week's single swaps on every candidate; the week's streaming plan against that set
+       without the three-week guard (the plans weigh the week first themselves), on the
+       league's scorer's per-game values;
+    3. the weight (:func:`queue_weight`) and whether the week is the bracket's
+       (:func:`in_bracket`);
+    4. ``plans.held_out``, ``plans.every_plan`` and ``plans.for_queue``, each given the guard.
+
+    The guard is the arm's season guard (:func:`guard_of`), taken once here for every call. The
+    plans and the gate are valued on the engine's plain evaluator: the season term reaches the
+    choice through the three weeks' set and the guard only (``plans.matchup`` reads the
+    evaluator's odds and ``plans.held_out`` builds evaluators of its own, so the library does not
+    take :class:`Seasoned`). Two things the live route has that this does not: the pool's adds
+    from the guard's list (#424) and the searches' tie-break on the season, neither of which the
+    simulator's ``three`` has either."""
+    p = built.problem
+    three = exact(built, QUEUE_SET, False, fields)
+    ev = mv.Evaluator(p)
+    allowed = guard_of(built)
+    swaps = mv.single_swaps(ev, "week")
+    week = mv.recommend(
+        ev, "week", _three_pool(swaps, fields), min_gain=fields.min_gain, allowed=allowed
+    )
+    week_set = tuple(pm.move for pm in week.moves)
+    per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
+    stream = st.plan(ev, built.rule, week_set, per_game, guard=False, allowed=allowed)
+    weight, playoff = queue_weight(built), in_bracket(built)
+    held = pl.held_out(ev)
+    every = pl.every_plan(ev, week_set, swaps, stream, allowed, held, three.moves, weight)
+    chosen = pl.for_queue(ev, every, three.moves, weight, playoff, allowed, held)
+    return Drawn(three, week_set, swaps, stream, weight, playoff, tuple(every), chosen)
+
+
+def queue_rule(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
+    """The live queue's rule (#172, PR E), an exact arm that executes ``queue``: the week plan
+    the engine takes instead of the three weeks' set (:func:`draw_queue`) when there is one,
+    else the set. A plan that leads is the decision's ``plan``, each step a move dated its own
+    day, with the plan's held-slot moves and ``plan_leads``; the executor queues the steps due
+    today (:func:`queue`), and the rest are drawn again on their day, as the live queue is
+    rebuilt on every run. ``moves`` is the three weeks' set either way. In a FAAB league a
+    step bids on its score (:func:`step_bids`). Three solves: the three weeks' set, the week's
+    set with its streaming plan, and the plans' search."""
+    drawn = draw_queue(built, fields)
+    three = drawn.three
+    solves = three.solves + 2
+    chosen = drawn.chosen
+    if chosen is None:
+        return replace(three, solves=solves)
+    steps = tuple(mv.Move(s.move.add, s.move.drop, s.day) for s in chosen.steps)
+    held = tuple(mv.held_used(built.problem, chosen.moves))
+    basis = three.basis
+    if basis is not None:
+        basis = replace(basis, plan=step_bids(chosen, drawn.weight))
+    return Decision(three.moves, held, steps, solves, "exact", basis, True)
 
 
 def _games(built: Built, member: mv.Member, from_day: date) -> int:
@@ -934,6 +1077,17 @@ def ranking(built: Built) -> Decision:
     return Decision((move,), (), (), 0, "ranking")
 
 
+def queue_refused(tier: str, executes: str) -> str | None:
+    """Why ``tier`` may not execute ``executes``; None when it may. The queue's rule (#172, PR
+    E) is the exact tier's: no other tier draws the week plans it chooses among."""
+    if executes == QUEUE and tier != "exact":
+        return (
+            f"executes {QUEUE!r} is the exact tier's: the {tier} tier draws no week plan for "
+            "the queue's rule to weigh"
+        )
+    return None
+
+
 def decide(
     built: Built,
     tier: str,
@@ -941,7 +1095,11 @@ def decide(
     with_plan: bool = True,
     fields: Fields = DEFAULT_FIELDS,
 ) -> Decision:
-    """The tier's decision on the day: the surrogate solves on its days only."""
+    """The tier's decision on the day: the surrogate solves on its days only. ``queue`` is the
+    exact tier's (:func:`queue_refused`)."""
+    why = queue_refused(tier, executes)
+    if why is not None:
+        raise ValueError(why)
     if tier == "exact":
         return exact(built, executes, with_plan, fields)
     if tier == "surrogate":
@@ -1119,12 +1277,17 @@ WHEN_READ: Mapping[str, str] = {
     "blend": "a run that names the two sources' stand-ins, on an arm whose system is blend",
     "horizon_weight": "the exact tier executing weighted",
     "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
-    "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
-    "plan_floor_points": "the exact tier drawing and executing the week plan in a points league",
+    "plan_floor_cats": (
+        "the exact tier drawing and executing the week plan, or executing queue, in a categories "
+        "league"
+    ),
+    "plan_floor_points": (
+        "the exact tier drawing and executing the week plan, or executing queue, in a points league"
+    ),
     "stash_threshold": "the simulator passing it to the engine (PR G)",
     "faab_sizing": "a seat that bids in a FAAB league: the exact or the surrogate tier (PR Fb)",
     "daily_cap": "the exact or the surrogate tier, which may queue more than one move a day",
-    "three_weight": "the queue's rule (PR E)",
+    "three_weight": "the exact tier executing queue",
     "season_weight": "the exact or the surrogate tier",
     "playoff_weight": (
         "a season_weight above 0 on the exact or the surrogate tier, in a league whose bracket "
@@ -1136,8 +1299,30 @@ WHEN_READ: Mapping[str, str] = {
     "surrogate_days": "the surrogate tier",
 }
 STATIC = "a static seat makes no move"
+#: Why ``three_weight`` is not read: on the exact tier executing another choice, and on any
+#: other tier (#172, PR E).
+NOT_QUEUE = "the arm does not execute queue"
+ONLY_QUEUE = "only the exact tier executing queue reads it"
+#: What the reads table says beside its rows for an arm that executes ``queue`` (PR E), by knob:
+#: where the season term stands in the queue's rule (:func:`read_notes`).
+QUEUE_SEASON = (
+    "under queue the season term is on the three weeks' set and in the guard; the week plans "
+    "and the gate that weighs them against the set are the engine's own score, without the term"
+)
 #: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
 NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"
+
+
+def _queue(arm: Configured) -> bool:
+    """Whether the arm's seat takes the queue's rule: the exact tier executing ``queue``."""
+    return arm.tier == "exact" and arm.executes == QUEUE
+
+
+def read_notes(arm: Configured) -> dict[str, str]:
+    """What the reads table says beside its rows for ``arm``, by knob (#172, PR E): for an arm
+    that takes the queue's rule, where its season term stands (:data:`QUEUE_SEASON`); nothing
+    for any other arm, whose record is as it was."""
+    return {"season_weight": QUEUE_SEASON} if _queue(arm) else {}
 
 
 def _odds(arm: Configured, mirrored: bool) -> bool:
@@ -1171,16 +1356,19 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     # A seat bids by the live rule in a FAAB league on the exact or the surrogate tier, and so
     # does a mirror rival on the arm's knobs (PR Fb): its bid scales by the typical gain, which is
     # the plan floor until ten moves. The ranking tier holds no gain in the engine's units, so its
-    # claims bid $0 and it reads neither.
+    # claims bid $0 and it reads neither. Under the queue's rule (PR E) the floor is the gate a
+    # week plan must clear to take the queue (``plans.gate_floor``): the rule draws and executes
+    # its own plan, so the arm's two plan switches are not asked.
     bids = shape.waivers == "faab" and odds
+    queue = _queue(arm)
     for name, scoring in (("plan_floor_cats", "categories"), ("plan_floor_points", "points")):
         if bids and shape.scoring == scoring:
             why = READ
         elif arm.tier != "exact":
             why = "only the exact tier draws a week plan"
-        elif not arm.with_plan:
+        elif not queue and not arm.with_plan:
             why = "the arm draws no week plan"
-        elif not arm.execute_plan:
+        elif not queue and not arm.execute_plan:
             why = "the plan is drawn and not executed"
         elif shape.scoring != scoring:
             why = f"a {shape.scoring} league"
@@ -1191,7 +1379,11 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
         if why == READ and name == "plan_floor_cats" and shape.one_win:
             why = ONE_WIN_FLOOR
         out[name] = why
-    out["three_weight"] = "it weighs the three weeks in the queue's score: the queue's rule, PR E"
+    # The weight of the three weeks in the queue's score (PR E): the queue's rule alone reads it.
+    if queue:
+        out["three_weight"] = READ
+    else:
+        out["three_weight"] = NOT_QUEUE if arm.tier == "exact" else ONLY_QUEUE
     # The arm's own seat believes by its system once the run names the stand-ins; a mirror
     # rival holds the run's forecaster, so nothing more is read through it.
     if shape.standins:
@@ -1282,6 +1474,10 @@ def queue(
 ) -> SimState:
     """The moves of ``decision`` that may land tomorrow, within the day's cap and the week's
     adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans.
+    Under the queue's rule (PR E) a plan that leads (``decision.plan_leads``) is queued instead
+    of the set: its steps due tomorrow (:func:`due_by`), in the plan's order, and none of the
+    set's moves, whatever ``execute_plan``; a later step is not queued early, and the seat draws
+    its plan again tomorrow.
     With them the held-slot moves those moves need: the decision's, in order, one for each kept
     add that needs an active spot (no drop, or a churn's held drop) beyond the spots open today
     (``spots`` less the active roster; none when ``spots`` is None), as the engine pairs them.
@@ -1302,7 +1498,8 @@ def queue(
     on the team's dollars left today (open bids are not taken out, as live clamps to the budget
     Yahoo reports): by the live rule for a decision whose :class:`Basis` says so (:func:`live_bid`
     on the typical gain of the moves the seat recommended over the fortnight, today's
-    counted, as the live queue), by the market's rule for a market rival (:func:`rival_bid` on
+    counted, as the live queue: the three weeks' set's, also on a day a plan leads), by the
+    market's rule for a market rival (:func:`rival_bid` on
     the market rivals' typical gain over the fortnight before today, or with ``rival_bids``
     ``book``, PR Fd, ``bids.book_bid`` on the book at its move's rank among the market rivals'
     moves of that fortnight), and $0 for a decision without a basis. A free agent's add carries
@@ -1315,7 +1512,11 @@ def queue(
     moves = list(decision.moves)
     basis = decision.basis if setup is not None and setup.bidding else None
     scaled = list(basis.gains) if basis is not None else [0.0] * len(moves)
-    if execute_plan:
+    if decision.plan_leads:
+        # The queue's rule: the plan's steps are queued, not the set's moves. The set's gains
+        # stay the day's recommended moves' for the fortnight's typical gain (below).
+        moves, scaled = [], []
+    if execute_plan or decision.plan_leads:
         due = [
             (m, j)
             for j, m in enumerate(decision.plan)

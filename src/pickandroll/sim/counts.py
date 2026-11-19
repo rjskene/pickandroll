@@ -12,8 +12,11 @@ lost: a waiver run's only, so a run without waivers counts as before. In a FAAB 
 also the dollars spent and left at the end, the claims won at $0, lost to a higher bid, lost on a
 tie and won with no other claim on the player, and the dollars won claims paid above the next
 bid that could have been taken and lost claims fell short of the winning bid by: a FAAB run's
-only, the world's knowledge of every bid, which no decision reads. The landing and claim
-counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
+only, the world's knowledge of every bid, which no decision reads. In a run where an arm takes
+the queue's rule (PR E) also the days the queue took a week plan instead of the three weeks' set
+and the steps of those plans the executor queued: that run's only, in every seat's row (0 for a
+seat that does not take the rule), so a run that names no ``queue`` counts as before. The landing
+and claim counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
 ``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
 and the day's lines once they are scored. Pure.
 """
@@ -64,10 +67,21 @@ BIDS: dict[str, str | None] = {
 }
 
 
-class Tally:
-    """One variant's counts as its season is played."""
+#: The queue's counts (PR E), only in a run where an arm executes ``queue``, after :data:`BIDS`:
+#: the days the queue took a week plan instead of the three weeks' set, and the steps of those
+#: plans queued (a free agent's add for the next morning, or a claim placed). Whether a queued
+#: step then landed is in ``landed``, ``gone`` and the claim counts, with every other move.
+PLANS = ("plan_days", "plan_steps")
 
-    def __init__(self, setup: Setup) -> None:
+
+class Tally:
+    """One variant's counts as its season is played. ``plans``: the run has an arm that takes
+    the queue's rule, so every seat's row carries :data:`PLANS`."""
+
+    def __init__(self, setup: Setup, plans: bool = False) -> None:
+        self.plans = plans
+        self.plan_days: dict[int, int] = {}
+        self.plan_steps: dict[int, int] = {}
         self.teams = tuple(setup.teams)
         self.limit = setup.max_weekly_adds
         self.waiting = setup.waiting
@@ -94,6 +108,11 @@ class Tally:
             n = int(after.get(t, 0)) - int(before.get(t, 0))
             if n:
                 self.adds[t][week] = self.adds[t].get(week, 0) + n
+
+    def took(self, team: int, steps: int) -> None:
+        """``team``'s queue took a week plan today (PR E), and ``steps`` of it were queued."""
+        self.plan_days[team] = self.plan_days.get(team, 0) + 1
+        self.plan_steps[team] = self.plan_steps.get(team, 0) + steps
 
     def day(self, week: int, state: SimState) -> None:
         """A simulated day of ``week``: each held player's stint goes on or begins."""
@@ -146,13 +165,19 @@ class Tally:
                     m: float(dollars[m] if key is None else bids.get(key, 0))
                     for m, key in BIDS.items()
                 }
+            if self.plans:
+                out[t] |= {
+                    "plan_days": float(self.plan_days.get(t, 0)),
+                    "plan_steps": float(self.plan_steps.get(t, 0)),
+                }
         return out
 
 
 def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
-    when a row has them (a waiver run's), then the bid counts (a FAAB run's)."""
-    extra = (*CLAIMS, *BIDS)
+    when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the queue's
+    (a run with an arm that executes ``queue``)."""
+    extra = (*CLAIMS, *BIDS, *PLANS)
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))
 
 
@@ -171,4 +196,4 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
     return pooled(rows) if rows else None
 
 
-__all__ = ["BIDS", "CLAIMS", "METRICS", "Tally", "metrics_in", "pooled", "row_of"]
+__all__ = ["BIDS", "CLAIMS", "METRICS", "PLANS", "Tally", "metrics_in", "pooled", "row_of"]

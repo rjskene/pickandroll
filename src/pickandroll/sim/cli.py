@@ -54,7 +54,7 @@ import sys
 import time as clock
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -478,14 +478,31 @@ BIDS_NOTE = {
 }
 
 
-def counts_note(waivers: str = "none") -> dict[str, str]:
+#: What each of the queue's counts is (PR E): only in a run where an arm executes ``queue``,
+#: after every other count, in every seat's row (0 for a seat that does not take the rule).
+PLANS_NOTE = {
+    "plan_days": "days the queue took a week plan instead of the three weeks' set (the queue's "
+    "rule; a streaming plan executed beside a set is not counted here)",
+    "plan_steps": "steps of those plans queued: a free agent's add for the next morning, or a "
+    "claim placed; whether each landed is in landed, gone and the claim counts",
+}
+
+
+def queue_run(arms: Iterable[rn.Arm]) -> bool:
+    """Whether one of the run's arms takes the queue's rule (``executes: queue``, PR E)."""
+    return any(arm.executes == policy.QUEUE for arm in arms)
+
+
+def counts_note(waivers: str = "none", queue: bool = False) -> dict[str, str]:
     """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, the claims' too in a
-    waiver run, and in a FAAB run the bids' with the claims' said for bids."""
+    waiver run, and in a FAAB run the bids' with the claims' said for bids; ``queue``: the run
+    has an arm that executes ``queue`` (:func:`queue_run`), and the queue's counts' follow."""
+    plans = PLANS_NOTE if queue else {}
     if waivers == "none":
-        return COUNTS_NOTE
+        return {**COUNTS_NOTE, **plans} if queue else COUNTS_NOTE
     if waivers == "faab":
-        return {**COUNTS_NOTE, **CLAIMS_NOTE, **FAAB_CLAIMS_NOTE, **BIDS_NOTE}
-    return {**COUNTS_NOTE, **CLAIMS_NOTE}
+        return {**COUNTS_NOTE, **CLAIMS_NOTE, **FAAB_CLAIMS_NOTE, **BIDS_NOTE, **plans}
+    return {**COUNTS_NOTE, **CLAIMS_NOTE, **plans}
 
 
 def audited(
@@ -646,14 +663,18 @@ def reads_of(
     arms: Mapping[str, rn.Arm], shapes: Sequence[policy.Shape], rivals: bool
 ) -> dict[str, Any]:
     """The reads table by arm and by each shape of the run: each knob and field ``read`` or the
-    reason it is not (``policy.reads``, ``policy.field_reads``)."""
+    reason it is not (``policy.reads``, ``policy.field_reads``); and for an arm that executes
+    ``queue`` only (PR E), ``notes``: what the table says beside a row (``policy.read_notes``:
+    where the season term stands in the queue's rule)."""
     out: dict[str, Any] = {}
     for key, arm in arms.items():
         mirror = rivals and rn.mirrored(arm)
+        notes = policy.read_notes(arm)
         out[key] = {
             shape.label(): {
                 "knobs": policy.reads(arm, shape, mirror),
                 "fields": policy.field_reads(arm, mirror),
+                **({"notes": notes} if notes else {}),
             }
             for shape in sorted(set(shapes), key=lambda s: s.label())
         }
@@ -2322,6 +2343,7 @@ def replay_payload(
             league_rules.scoring,
             league_rules.waivers,
             league_rules.h2h,
+            queue_run(arms.values()),
         )
         if sources is not None:
             payload["result_is"] = ROOM_RESULT
@@ -2688,10 +2710,12 @@ def room_blocks(
     scoring: str = "categories",
     waivers: str = "none",
     h2h: str = ONE_WIN,
+    queue: bool = False,
 ) -> dict[str, Any]:
     """A room's figures, keyed by season and then by forecaster: each arm's outcomes and counts
     pooled over its seats and the paths that stand (the counts' note the run's ``waivers``',
-    :func:`counts_note`), each arm's season scale by season (its note the run's ``scoring``'s
+    and the queue's counts' when ``queue`` says an arm executes it, :func:`counts_note`), each
+    arm's season scale by season (its note the run's ``scoring``'s
     and format's, :func:`scale_note`), the unprojected count by cell."""
     by_cell: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
     counts_by_cell: dict[str, dict[str, dict[str, list[Any]]]] = {}
@@ -2723,7 +2747,7 @@ def room_blocks(
             },
         },
         "counts": {
-            "note": counts_note(waivers),
+            "note": counts_note(waivers, queue),
             "rivals": None,
             "by_season": {
                 t: {
@@ -3020,7 +3044,7 @@ def paired_blocks(
             },
         },
         "counts": {
-            "note": counts_note(waivers),
+            "note": counts_note(waivers, queue_run(arms.values())),
             "rivals": "the seats other than the pair's, both arms' seasons, as one row",
             "by_season": {
                 t: {
@@ -3282,6 +3306,9 @@ def cmd_screen(args: argparse.Namespace) -> int:
         print("refused: --max-minutes is a span in minutes, above 0")
         return 2
     unknown = [n for n in args.levers or () if n not in sc.NAMES]
+    if unknown and unknown[0] in sc.NOT_LEVERS:
+        print(f"refused: {sc.unlisted(unknown[0])}")
+        return 2
     if unknown:
         print(
             f"refused: lever {unknown[0]!r} is not in the screen's list: one of "

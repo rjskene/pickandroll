@@ -282,8 +282,8 @@ def test_the_reads_table_and_the_refusal_follow_the_run_s_scoring(wire: Path):
     assert code == 2, out
     assert (
         "refused: arms a and b are the same seat: they differ only in plan_floor_points (a "
-        "categories league; read by the exact tier drawing and executing the week plan in a "
-        "points league)" in out
+        "categories league; read by the exact tier drawing and executing the week plan, or "
+        "executing queue, in a points league)" in out
     )
     arms = {k: rn.arm_of(json.loads((wire / f"{n}.json").read_text())) for k, n in (("a", "E"), ("b", "F"))}  # fmt: skip
     points = shapes.LeagueRules("points", shapes.POINTS_DEFAULT)
