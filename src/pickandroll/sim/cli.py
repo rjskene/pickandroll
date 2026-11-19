@@ -652,8 +652,8 @@ def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
     """The season scale of the paths that stand: the mean of each figure over the paths that
     have it, the paths that have a row (``paths``) and, of those, the paths whose row holds a
     ratio (``paths_with_ratio``: what the ratio's mean rests on; a seat with no feasible swap
-    on its first day, or none whose rest of the season is above 0, has a row and no ratio);
-    None when no path has a row (the ranking tier, a static seat)."""
+    on its first day, or none that has a ``ROS_w``, or whose ``ROS_w`` have a median size of 0,
+    has a row and no ratio); None when no path has a row (the ranking tier, a static seat)."""
     have = [r for r in rows if r is not None]
     if not have:
         return None
