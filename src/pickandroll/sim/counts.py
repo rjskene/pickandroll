@@ -15,7 +15,10 @@ bid that could have been taken and lost claims fell short of the winning bid by:
 only, the world's knowledge of every bid, which no decision reads. The landing and claim
 counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
 ``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
-and the day's lines once they are scored. Pure.
+and the day's lines once they are scored. In a run where an arm names its guard or its stake (the
+guard PR) also, on the run's arms' seats, the sets decided that the season guard would have
+refused, and the season's mean week's stake with the weeks it was above a half: such a run's
+only, so a run that names neither counts as before. Pure.
 """
 
 from __future__ import annotations
@@ -26,6 +29,9 @@ from typing import Any
 
 from .engine import HELD
 from .state import Setup, SimState
+
+#: The week's stake above which a week is counted in ``stake_weeks_above_half``.
+HALF = 0.5
 
 #: A seat's counts over one season, in the payload's order.
 METRICS = (
@@ -64,10 +70,24 @@ BIDS: dict[str, str | None] = {
 }
 
 
-class Tally:
-    """One variant's counts as its season is played."""
+#: The guard's and the stake's counts (the guard PR), after :data:`BIDS`, by the season field
+#: (``policy.SEASON_FIELDS``) whose naming brings them: in a run where an arm names ``guard``,
+#: the sets its arms' seats decided that the season guard would have refused (none under the
+#: block, by construction); in one where an arm names ``stake``, the mean of the week's stake
+#: ``L`` over the weeks the seat played and the weeks ``L`` was above :data:`HALF`. On the
+#: run's arms' seats whose tier reads the fields, never a rival's; a run that names neither has
+#: none, so its counts are as before.
+SEASON: dict[str, tuple[str, ...]] = {
+    "guard": ("sets_past_guard",),
+    "stake": ("stake_mean", "stake_weeks_above_half"),
+}
 
-    def __init__(self, setup: Setup) -> None:
+
+class Tally:
+    """One variant's counts as its season is played. ``counted``, by team, names the season
+    fields (:data:`SEASON`'s keys) the run counts on that seat; none by default."""
+
+    def __init__(self, setup: Setup, counted: Mapping[int, Sequence[str]] | None = None) -> None:
         self.teams = tuple(setup.teams)
         self.limit = setup.max_weekly_adds
         self.waiting = setup.waiting
@@ -86,6 +106,10 @@ class Tally:
         self.held_days = dict.fromkeys(self.teams, 0)
         self.games = dict.fromkeys(self.teams, 0)
         self._held: dict[int, set[int]] = {t: set() for t in self.teams}
+        self.counted = {t: tuple(names) for t, names in (counted or {}).items() if names}
+        #: The sets a counted seat decided past the guard, and its stake by week.
+        self.past = dict.fromkeys(self.counted, 0)
+        self.stakes: dict[int, dict[int, float]] = {t: {} for t in self.counted}
 
     def charge(self, week: int, before: Mapping[int, int], after: Mapping[int, int]) -> None:
         """The adds that landed this morning (``executed_by`` before and after the landing),
@@ -95,8 +119,19 @@ class Tally:
             if n:
                 self.adds[t][week] = self.adds[t].get(week, 0) + n
 
+    def decided(self, team: int, decision: Any) -> None:
+        """``team``'s decision of the day (a ``policy.Decision``): a set decided past the guard
+        is counted on a counted seat."""
+        if team in self.past and decision.past_guard:
+            self.past[team] += 1
+
     def day(self, week: int, state: SimState) -> None:
-        """A simulated day of ``week``: each held player's stint goes on or begins."""
+        """A simulated day of ``week``: each held player's stint goes on or begins; on the
+        week's first, a counted seat's stake for the week is kept (``SimState.stakes``)."""
+        if week not in self.weeks:
+            for t, by_week in self.stakes.items():
+                if t in state.stakes:
+                    by_week[week] = float(state.stakes[t])
         self.weeks.add(week)
         for t in self.teams:
             now = {k for k, slot in state.rosters.get(t, ()) if slot in HELD}
@@ -146,13 +181,23 @@ class Tally:
                     m: float(dollars[m] if key is None else bids.get(key, 0))
                     for m, key in BIDS.items()
                 }
+            names = self.counted.get(t, ())
+            if "guard" in names:
+                out[t]["sets_past_guard"] = float(self.past[t])
+            if "stake" in names:
+                levels = list(self.stakes[t].values())
+                out[t]["stake_mean"] = sum(levels) / len(levels) if levels else None
+                out[t]["stake_weeks_above_half"] = (
+                    float(sum(1 for x in levels if x > HALF)) if levels else None
+                )
         return out
 
 
 def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
-    when a row has them (a waiver run's), then the bid counts (a FAAB run's)."""
-    extra = (*CLAIMS, *BIDS)
+    when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the guard's
+    and the stake's (a run that names them)."""
+    extra = (*CLAIMS, *BIDS, *(m for group in SEASON.values() for m in group))
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))
 
 
@@ -171,4 +216,4 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
     return pooled(rows) if rows else None
 
 
-__all__ = ["BIDS", "CLAIMS", "METRICS", "Tally", "metrics_in", "pooled", "row_of"]
+__all__ = ["BIDS", "CLAIMS", "HALF", "METRICS", "SEASON", "Tally", "metrics_in", "pooled", "row_of"]

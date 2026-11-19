@@ -272,6 +272,12 @@ class SimState:
     dollars: Mapping[int, int] = field(default_factory=dict)
     recent: Mapping[int, tuple[tuple[date, float], ...]] = field(default_factory=dict)
     market_recent: tuple[tuple[date, float], ...] = ()
+    #: The week's stake ``L`` (#172, the guard PR, ``sim/stake.py``) of each seat that reads or
+    #: counts one, by team: set by the runner on each week's first simulated day from the weeks
+    #: finished before it, and the same all week. Empty when no arm of the run names a stake.
+    #: A decision of such a seat depends on its own figure, so the runner's cache of shared
+    #: decisions keys on it beside :meth:`key`, which leaves it out: no other seat reads it.
+    stakes: Mapping[int, float] = field(default_factory=dict)
 
     @property
     def executed(self) -> int:
