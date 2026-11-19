@@ -930,8 +930,10 @@ def test_a_stated_limit_a_move_decided_on_a_week_s_last_day_is_scaled_whole(tier
     move decided on a Sunday lands in the next week, so it has no part in the running week and
     its whole figure is scaled by the ending week's stake, not the stake of the week it plays
     in. At a stake of 1 on the Sunday of a week whose stake is 1, every move's term is 0 and
-    the seat decides as one with no season weight; on the Monday after, at the same stake for
-    the new week, a player's games that week are in the term again."""
+    the seat decides as one with no season weight, where with no stake it adds the late player
+    too; on the Monday after, at the same stake for the new week, a player's games that week
+    are in the term again. The surrogate meets the limit only when its days hold a Sunday (its
+    default days do not), so it solves on one here."""
     setup = disagreeing(teams=4, h2h=h2h)
     sunday = setup.calendar.weeks[0].end
     assert sunday.weekday() == 6
@@ -950,10 +952,12 @@ def test_a_stated_limit_a_move_decided_on_a_week_s_last_day_is_scaled_whole(tier
     none = policy.season_figure_of(decisive)
     assert none.move(late) == none.move(soon) == 0.0
     bare, _ = on_day(setup, sunday, {"season_weight": 0.0})
-    assert (
-        policy.decide(decisive, tier, with_plan=False).moves
-        == policy.decide(bare, tier, with_plan=False).moves
+    sundays = replace(policy.DEFAULT_FIELDS, surrogate_days=(sunday.weekday(),))
+    full, got, without = (
+        policy.decide(b, tier, with_plan=False, fields=sundays) for b in (built, decisive, bare)
     )
+    assert adds(full) == {SOON, LATE}
+    assert got.moves == without.moves and adds(got) == {SOON} and drops(got) == {DEAD}
     # The Monday after, the first of the soon player's weeks: his games that week are counted.
     monday, at = on_day(setup, sunday + timedelta(1), stakes={1: 1.0})
     after = policy.season_figure_of(policy.guarded(monday, setup, at, stake=1.0))
