@@ -417,8 +417,16 @@ three weeks do not count. An arm's `executes` names which of three things its ex
 
 `queue` is the exact tier's: on another tier it is refused by name, and so is `with_plan` or
 `execute_plan` named beside it, whatever its value (the rule draws and executes its own plan).
-`three` stays the default of an arm file. A rival that plans with the engine (an arm in another
-seat of a room) takes `queue` the same way.
+`three` stays the default of an arm file.
+
+**No rival takes `queue`.** A queue arm's rivals are what they were: static, the market, or its
+mirror, the surrogate on its knobs, which is handed nothing an arm executes. The reason is the
+runner's shared solve: two variants of a run share a decision when the seat and the state's key
+agree, and the key holds no week totals. A rival is the same seat in both arms' seasons; one
+that read the week, as the queue's rule does (the week's totals so far are in its problem),
+would share a decision between two seasons whose totals differ. An arm's own seat is never
+shared between two arms (its name is in the seat), and in a room every seat is an arm's, in one
+season.
 
 **The rule** (`policy.queue_rule`, `draw_queue`), each day:
 

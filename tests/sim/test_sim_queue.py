@@ -703,9 +703,10 @@ def test_a_plan_floor_decides_whether_the_queue_ever_takes_a_plan(h2h):
     assert any(r.decisions[1].plan_leads for r in low_days)
 
 
-def test_a_rival_that_plans_with_the_engine_takes_the_rule_the_same_way():
-    """A room: the queue arm in every seat (each a rival of the others). Every seat's queue
-    takes plans of its own, counted in its own row."""
+def test_arms_that_share_a_room_each_take_the_rule_and_count_their_own_plans():
+    """A room, where every seat is an arm's (a room has no rival seats, and is one season): an
+    arm that executes ``queue`` and one that executes ``three``, in two seats each. The queue
+    arm's seats take plans, counted in its row; the other arm's row has the keys at 0."""
     setup = every_category(make_setup(**SMALL))
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *PATH)
     out = rn.room(
@@ -714,6 +715,40 @@ def test_a_rival_that_plans_with_the_engine_takes_the_rule_the_same_way():
     assert out["breaches"] == []
     assert out["counts"]["Q"]["plan_days"] >= 1 and out["counts"]["T"]["plan_days"] == 0.0
     assert set(ct.PLANS) <= set(out["counts"]["T"])
+
+
+def test_no_rival_takes_the_queue_s_rule(monkeypatch):
+    """No rival takes ``queue`` (the lead, 2026-11-19; the brief's "a rival may take it" is
+    withdrawn). The runner shares a decision between two variants whose seat and state key agree
+    (``(team, repr(seat), state.key())``), and the key holds no week totals. A rival is the same
+    seat in both arms' seasons, so one that read the week, as the queue's rule does, would share
+    a decision between seasons whose totals differ. So a queue arm's rivals are what they were:
+    static, the market, or its mirror, which decides on the surrogate tier and is handed nothing
+    the arm executes. The arm's own seat is never shared between two arms: its name is in it."""
+    setup = make_setup(**SMALL)
+    for kind in op.KINDS[:3]:
+        q = replace(queue_arm(), opponents={"kind": kind})
+        rivals = rn.opponents_of(setup, q, 1)
+        assert len(rivals) == len(setup.teams) - 1
+        assert not any(isinstance(r, op.Seat) for r in rivals.values())
+        assert not rn.queue_named([rivals])
+    mirror = op.of({"kind": "mirror"}, queue_arm().knobs, 0.3)
+    assert isinstance(mirror, op.Mirror) and not hasattr(mirror, "executes")
+    asked = []
+    real = policy.decide
+
+    def spy(built, tier, *args, **kw):
+        asked.append((tier, args, sorted(kw)))
+        return real(built, tier, *args, **kw)
+
+    monkeypatch.setattr(policy, "decide", spy)
+    mirror.decide(setup, initial(setup), 2, setup.projection, {}, {}, None)
+    assert asked == [("surrogate", (), ["fields"])]
+    assert repr(queue_arm("A").seat()) != repr(queue_arm("B").seat())
+    # The state's key holds no totals: two states apart only in the week's totals share it.
+    first = initial(setup)
+    scored = replace(first, totals={1: {1: {"pts": 9.0}}})
+    assert scored.totals != first.totals and scored.key() == first.key()
 
 
 def test_a_split_seat_executes_the_queue_s_rule_on_its_own_table():
