@@ -11,25 +11,30 @@ holds a cleared player (the README's limits, "What the executor sees since PR G"
 
 Made-up leagues, fixed seeds. The days' seats weigh on one made-up day and compare two decisions
 made in the same run, so they name no format (the engine's threshold test reads season values,
-never the week's measure)."""
+never the week's measure); the seasons run in both."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
 from datetime import timedelta
+from itertools import pairwise
 
 import numpy as np
 import pytest
 
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
+from pickandroll.sim import nopeek, policy
 from pickandroll.sim import opponents as op
-from pickandroll.sim import policy
 from pickandroll.sim import run as rn
-from pickandroll.sim.engine import mv, wk
+from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, wk
+from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import BENCH, initial
-from tests.sim.sim_league import KNOBS, arm, make_setup, rates
+from tests.sim.sim_league import KNOBS, arm, make_setup, of_format, rates, recorded_lines
 from tests.sim.test_sim_held_morning import KINDS, WAYS, found, full_with_one_held, play
+from tests.sim.test_sim_seasons import rounded
 
 TEAM = 1
 WEEK = timedelta(7)
@@ -423,3 +428,243 @@ def test_the_count_is_a_named_run_s_only():
     assert set(ss.counts_note("faab", True)) - set(ss.counts_note("faab")) == set(ct.STASH)
     none, share = arm("A", "surrogate"), arm("B", "surrogate", stash_threshold=0.0)
     assert not rn.stash_named((none, none)) and rn.stash_named((none, share))
+
+
+# --------------------------------------------------------------------------- the seasons
+POINTS_TABLE = {
+    "pts": 1.0,
+    "reb": 1.2,
+    "ast": 1.5,
+    "stl": 3.0,
+    "blk": 3.0,
+    "tov": -1.0,
+    "threes": 1.0,
+}
+#: The seed and the path of the made-up seasons below (``~/sim-notes/vm/scratch/g/probe_season.py``).
+SEASON = (1, 1)
+#: The threshold the seasons name.
+SHARE = 0.25
+
+
+def held_league(scoring: str = "categories", waivers: str = "none", rule: str = DROPPED):
+    """Four seats of five drafted players on six active slots and an IL slot, twelve free agents,
+    six weeks; in points, with waivers after two days, under the waiver rule, as asked."""
+    setup = make_setup(teams=4, pool=12, held_slots=("IL",))
+    if scoring == "points":
+        spec = replace(setup.spec, scoring="points", points=POINTS_TABLE, cats=())
+        setup = replace(setup, scoring="points", points=POINTS_TABLE, cats=("fpts",), spec=spec)
+    if waivers != "none":
+        setup = replace(setup, waivers=waivers, waiver_days=2, waiver_rule=rule)
+    return setup
+
+
+def season(setup, thresholds, tier: str = "surrogate", lines=None, stash: bool = True):
+    """Seat 1 on ``tier`` at each of ``thresholds`` (a variant each, one world) among market
+    rivals at 0.3 a day: the results and each variant's day records."""
+    w = rn.replay_world(setup, lines or recorded_lines(setup, 11), 1, *SEASON)
+    days: dict[int, list] = {i: [] for i in range(len(thresholds))}
+    variants = [
+        {
+            **{t: op.Market(0.3) for t in setup.teams},
+            1: arm("U", tier, opponents="market", stash_threshold=t).seat(),
+        }
+        for t in thresholds
+    ]
+    results = rn.simulate(
+        setup, w, variants, on_day=lambda r: days[r.variant].append(r), stash=stash
+    )
+    return results, days
+
+
+#: The ways an add reaches a roster: a free agent; a claim by priority or by FAAB under either
+#: waiver rule.
+ADDS = (
+    ("none", DROPPED),
+    ("priority", DROPPED),
+    ("priority", CONTINUOUS),
+    ("faab", DROPPED),
+    ("faab", CONTINUOUS),
+)
+#: Every league kind (the plan's section 6), each with the IL slot: categories in both
+#: head-to-head formats and points, each way an add arrives.
+LEAGUE_KINDS = tuple(
+    (scoring, waivers, rule, h2h)
+    for scoring, formats in (("categories", (ONE_WIN, EACH_CATEGORY)), ("points", (ONE_WIN,)))
+    for waivers, rule in ADDS
+    for h2h in formats
+)
+#: The kinds the exact tier plays too (a season of it is some four times the surrogate's).
+EXACT_KINDS = (
+    ("categories", "none", DROPPED, ONE_WIN),
+    ("categories", "faab", CONTINUOUS, EACH_CATEGORY),
+    ("points", "priority", DROPPED, ONE_WIN),
+)
+SEASONS = [("surrogate", k) for k in LEAGUE_KINDS] + [("exact", k) for k in EXACT_KINDS]
+
+
+def mornings_named(days) -> list[tuple[int, int]]:
+    """The mornings that took seat 1's name: (the held player, the drop) it named on a day whose
+    next morning has the held player off his slot and the named player off the roster."""
+    out = []
+    for before, after in pairwise(days):
+        was = {k for k, _ in before.state.held(TEAM)}
+        now = {k for k, _ in after.state.held(TEAM)}
+        roster = {k for k, _ in after.state.rosters[TEAM]}
+        out += [
+            (back, drop)
+            for back, drop in before.state.sends.get(TEAM, ())
+            if back in was and back not in now and drop not in roster
+        ]
+    return out
+
+
+@pytest.mark.parametrize(
+    ("tier", "kind"), SEASONS, ids=lambda x: x if isinstance(x, str) else "-".join(x)
+)
+def test_a_season_with_a_threshold_named_plays_clean_in_every_league_kind(tier, kind):
+    """Fc's lesson: the new morning is played once in every league kind with the IL slot, the
+    audit clean. In each the seat holds a player, names a drop for him, and a morning takes its
+    name; only the seat that builds a problem has the count."""
+    scoring, waivers, rule, h2h = kind
+    setup = of_format(held_league(scoring, waivers, rule), h2h)
+    (result,), days = season(setup, (SHARE,), tier)
+    assert result.breaches == ()
+    row = result.counts[TEAM]
+    assert row["held_stints"] >= 1 and row["forced_drops"] >= 1
+    assert row["returning_dropped"] is not None
+    assert all(result.counts[t]["returning_dropped"] is None for t in setup.teams if t != TEAM)
+    assert mornings_named(days[0])
+    if rule == CONTINUOUS:
+        assert row["landed"] == row["claims_won"] >= 1
+
+
+def test_the_lever_does_something_the_threshold_changes_the_roster_at_the_end():
+    """D4c's lesson. One made-up season with the IL slot, the surrogate at None and at a
+    threshold through one world: the audit is clean in both, both count the returning players
+    dropped, and the seat ends the season on another roster."""
+    setup = held_league()
+    (none, share), days = season(setup, (None, SHARE))
+    assert none.breaches == share.breaches == ()
+    last = [{k for k, _ in days[i][-1].state.rosters[1]} for i in (0, 1)]
+    assert last[0] != last[1]
+    assert none.counts[1]["returning_dropped"] >= 1
+    assert none.counts[1]["returning_dropped"] != share.counts[1]["returning_dropped"]
+    # A run that names none carries no such key (Fa's lesson), and is the same season.
+    (plain,), _ = season(setup, (None,), stash=False)
+    assert set(plain.counts[1]) == set(ct.METRICS)
+    assert plain.counts[1] == {m: none.counts[1][m] for m in ct.METRICS}
+
+
+def test_a_pair_and_a_room_carry_the_count_when_an_arm_names_a_threshold_and_only_then():
+    """The count through the runner's pair and room (``run.paired``, ``run.room``): a row of
+    every arm, and the rivals' (market rivals build no problem, so theirs is None), when one arm
+    names a threshold; no such key when none does. The command's blocks pool it and say what it
+    is in their note (``cli.paired_blocks``, ``cli.room_blocks``), in such a run only."""
+    setup = held_league()
+
+    def world():
+        return rn.replay_world(setup, recorded_lines(setup, 11), 1, *SEASON)
+
+    none, share = arm("A", "surrogate"), arm("B", "surrogate", stash_threshold=SHARE)
+    pair = rn.paired(setup, world(), none, share, me=1)
+    assert pair["breaches"] == [] and set(pair["counts"]) == {"a", "b", "rivals"}
+    assert all("returning_dropped" in row for row in pair["counts"].values())
+    assert pair["counts"]["a"]["returning_dropped"] is not None
+    assert pair["counts"]["rivals"]["returning_dropped"] is None
+    plain = rn.paired(setup, world(), none, replace(none, name="B"), me=1)
+    assert all(set(row) == set(ct.METRICS) for row in plain["counts"].values())
+    assert plain["counts"]["a"] == {m: pair["counts"]["a"][m] for m in ct.METRICS}
+    seats = ["A", "B", "A", "B"]
+    room = rn.room(setup, world(), {"A": none, "B": share}, seats, 0)
+    assert room["breaches"] == []
+    assert all(room["counts"][n]["returning_dropped"] is not None for n in "AB")
+    # The command's blocks, on the runner's results with what a task adds to one.
+    key = {"season": 2024, "forecaster": "prior"}
+    task = {"seat": 1, "unprojected": {"a": {}, "b": {}}}
+    named = ss.paired_blocks([key], [{**pair, **task}], {"a": none, "b": share}, 1)["counts"]
+    assert set(named["note"]) - set(ss.COUNTS_NOTE) == set(ct.STASH)
+    cell = named["by_season"]["2024"]["prior"]
+    assert (
+        cell["a"]["returning_dropped"]["n"] == 1 and cell["rivals"]["returning_dropped"]["n"] == 0
+    )
+    unnamed = ss.paired_blocks([key], [{**plain, **task}], {"a": none, "b": none}, 1)["counts"]
+    assert unnamed["note"] == ss.COUNTS_NOTE
+    assert set(unnamed["by_season"]["2024"]["prior"]["a"]) == set(ct.METRICS)
+    in_room = ss.room_blocks([key], [{**room, "unprojected": {}}], seats)["counts"]
+    assert set(in_room["note"]) - set(ss.COUNTS_NOTE) == set(ct.STASH)
+    assert "returning_dropped" in in_room["by_season"]["2024"]["prior"]["A"]
+
+
+def test_no_peek_with_a_threshold_named():
+    """The seat's names and its count read nothing ahead: a second season that agrees with the
+    first through a Thursday and differs after gives the same day records through that day, the
+    state's names and the decisions' among them."""
+    setup = held_league()
+    lines = recorded_lines(setup, 11)
+    day = setup.start + timedelta(17)
+    assert day.weekday() == 3
+
+    def records(lines):
+        _, days = season(setup, (SHARE,), lines=lines)
+        return {(r.day, r.variant): nopeek.digest(r) for r in days[0]}, days[0]
+
+    base, seen = records(lines)
+    assert any(r.state.sends for r in seen if r.day <= day)
+    got, _ = records(nopeek.perturb(lines, rn.game_days_of(setup), day, 5))
+    first = nopeek.first_difference(base, got)
+    assert first is not None and first[0] > day
+    assert all(base[key] == got[key] for key in base if key[0] <= day)
+
+
+# --------------------------------------------------------------------------- Rule 1
+def outcome_digest(setup, tier: str, opponents: str) -> str:
+    """SHA-256 of a made-up season's outcome (seed 1, path 0): seat 1 on ``tier`` at the tests'
+    knobs, the threshold None, among ``opponents``; every seat's counts and summary, the last
+    day's rosters, and the solves, moves and breaches, each figure rounded to nine places."""
+    a = arm("U", tier, opponents=opponents)
+    assert a.knobs["stash_threshold"] is None
+    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, 1, 0)
+    last: list = []
+    variant = {**rn.opponents_of(setup, a, 1), 1: a.seat()}
+    (res,) = rn.simulate(setup, w, [variant], on_day=lambda d: last.append(d.state))
+    figures = rounded(
+        {
+            "counts": {str(t): row for t, row in res.counts.items()},
+            "summaries": {str(t): x for t, x in res.summaries.items()},
+            "rosters": {str(t): sorted(k for k, _ in ro) for t, ro in last[-1].rosters.items()},
+            "moves": [res.solves, res.executed, res.gone, len(res.breaches)],
+        }
+    )
+    return hashlib.sha256(json.dumps(figures, sort_keys=True, default=str).encode()).hexdigest()
+
+
+#: Rule 1's pins: a made-up season without held slots (:func:`outcome_digest`) at None on each
+#: tier, in each head-to-head format and against each kind of rival that decides, as main
+#: ``88af1de`` gives them (``~/sim-notes/vm/scratch/g/rule1_pins.py``: the same function on
+#: main's code and on this PR, whose tree is cut from ``4b26577``). A mirror rival is a
+#: surrogate, so the two mirror rows hold the rival's side of the rule too.
+RULE_1 = {
+    ("exact", "mirror", ONE_WIN): (
+        "0e1824ee73f1ed0eb18c3236e4439066041fa4d57b97ee03f0d4deeb3dfd94d6"
+    ),
+    ("exact", "market", EACH_CATEGORY): (
+        "8b6fda8857f18f72b6551e732a8d3fa2aa11d52bcf5ccf296f72f7df674693e8"
+    ),
+    ("surrogate", "mirror", EACH_CATEGORY): (
+        "1b1d3bea0dd9f0ef67435da4651fb20cece0095a98bf894774d0d7f4efe3be16"
+    ),
+    ("surrogate", "market", ONE_WIN): (
+        "3f27822b7bc39bb9073e3ae1b7dec2da0f5710b30fed236f3ec2992bbffad53f"
+    ),
+    ("ranking", "market", ONE_WIN): (
+        "9c72dbf300e4808419f6d61538c3294556edeb697355dafbcd6e4af36d106c35"
+    ),
+}
+
+
+@pytest.mark.parametrize("case", RULE_1, ids="-".join)
+def test_rule_1_a_league_without_held_slots_is_main_s_at_none_on_each_tier(case):
+    tier, opponents, h2h = case
+    setup = of_format(make_setup(teams=4, pool=12), h2h)
+    assert not set(setup.roster_slots) & set(mv.HELD)
+    assert outcome_digest(setup, tier, opponents) == RULE_1[case]
