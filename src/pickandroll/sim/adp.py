@@ -33,6 +33,12 @@ import numpy as np
 SOURCES = ("none", "espn")
 #: The figure read, in the log's player rows.
 COLUMN = "ownership.averageDraftPosition"
+#: How an arm's seat drafts under a table (#172, the draft PR; the user's ruling of 2026-11-18):
+#: ``market``, as a rival does, from the market's board with a draw of its own (the default);
+#: ``own``, on its own forecaster's per-game value alone, the rule before the ruling, kept so
+#: the records made under it reproduce.
+MARKET_DRAFT, OWN_DRAFT = "market", "own"
+SEAT_DRAFTS = (MARKET_DRAFT, OWN_DRAFT)
 
 
 class NoTable(ValueError):
@@ -138,8 +144,10 @@ def parse_spread(text: str) -> Spread:
 class Draft:
     """How a replay's league is drafted on a table (#172, PR D4a): the listed players' average
     picks, the rivals' spread, the path's ``(seed, path)`` the rivals' draws are keyed on, and
-    the seats that draft on a board of their own (an arm's), each with its forecaster's
-    projection on draft day; every other seat is a rival."""
+    the seats that draft on a board of their own (an arm's under :data:`OWN_DRAFT`), each with
+    its forecaster's projection on draft day; every other seat drafts as a rival. Under
+    :data:`MARKET_DRAFT` (the draft PR) no seat is named: an arm's seat drafts as the rival in
+    that seat on that path would, on the same draw."""
 
     picks: Mapping[int, float]
     spread: Spread
@@ -195,6 +203,9 @@ def market_view(
 
 __all__ = [
     "COLUMN",
+    "MARKET_DRAFT",
+    "OWN_DRAFT",
+    "SEAT_DRAFTS",
     "SOURCES",
     "Draft",
     "NoTable",

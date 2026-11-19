@@ -1470,7 +1470,9 @@ def draft_boards(
     projects, as the run's ``value`` is over the run's; in a points league on ``points``, PR
     D4c), every other seat on a rival's board
     (``adp.rival_board``) drawn from its own generator on the path's ``(seed, path)`` and the
-    ``draft`` stream, so two leagues on one path meet the same rivals' boards."""
+    ``draft`` stream, so two leagues on one path meet the same rivals' boards. A draft that
+    names no seat (the draft PR: an arm's seat under ``adp.MARKET_DRAFT``) gives every seat a
+    rival's board, the arm's seat's on the draw the rival in that seat would take."""
     out: dict[int, list[int]] = {}
     for t in teams:
         own = draft.seats.get(t)
