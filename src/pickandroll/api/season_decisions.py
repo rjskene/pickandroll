@@ -210,7 +210,25 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
         "scorer": built.scorer,
         # The breakout lift in force (#435): only when a candidate is lifted.
         **({"lift": lift} if (lift := season_moves.lift_payload(built)) is not None else {}),
+        # The add reserve and the re-cut rule in force (#436): only when one applies. The queue
+        # reads it (``autopilot.reserve_reason``).
+        **({"reserve": r} if (r := season_moves.reserve_payload(built)) is not None else {}),
     }
+
+
+def _reserve_set(
+    built: Built,
+    ev: mv.Evaluator,
+    moves: Sequence[mv.Move],
+    held: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A logged set's ``reserve`` (#436): each move's worth on the queue's score as the solve
+    computed it (``adds``, what the queue compares to the price), with the set the rules held
+    back when they held one back; nothing when no rule applies."""
+    if built.reserve is None:
+        return {}
+    back = dict(held) if held and held.get("held_back") else {}
+    return {"reserve": {**back, "adds": season_moves.reserve_adds(built, ev, moves)}}
 
 
 def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[str, Any]:
@@ -232,6 +250,9 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "gain": rec["gain"],
                 "week": _week(ev, _moves_of(moves)),
                 "season_guard": guard_record(rec.get("season_guard")),
+                # The add reserve (#436): what each move adds on the queue's score, and the set
+                # it held back when it held one back.
+                **_reserve_set(built, ev, _moves_of(moves), rec.get("reserve")),
             }
         )
     plan = payload.get("plan")
@@ -286,6 +307,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 },
                 "gain": w["total"],
                 "week": _week(ev, model),
+                **_reserve_set(built, ev, model),
             }
         )
     picks = payload.get("picks")
