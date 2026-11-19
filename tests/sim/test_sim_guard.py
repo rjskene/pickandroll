@@ -402,10 +402,11 @@ def test_a_mirror_rival_stays_on_the_block_and_reads_no_stake(monkeypatch):
 
 
 # --------------------------------------------------------------------------- the stake in force
-def by_hand(built: policy.Built, move: mv.Move, share: float) -> float:
-    """A move's season figure split by hand (``playoff_weight`` 1, nobody away): each player's
-    season value above a dead spot times his team's games from the day the move counts to the
-    running week's last day, plus ``share`` times his games after it; the add's less the drop's."""
+def by_hand(built: policy.Built, move: mv.Move, share: float, playoff: float = 1.0) -> float:
+    """A move's season figure split by hand (nobody away): each player's season value above a
+    dead spot times his team's games from the day the move counts to the running week's last
+    day, plus ``share`` times his games after it, a bracket day's game counted ``playoff``
+    times in both parts; the add's less the drop's."""
     p = built.problem
     day = mv.day_of(p, move)
     players = {**dict(p.candidates), **dict(p.roster)}
@@ -413,8 +414,9 @@ def by_hand(built: policy.Built, move: mv.Move, share: float) -> float:
     def worth(key: int) -> float:
         team = players[key].nba_team
         days = [d for d, teams in p.schedule.items() if team in teams and day <= d <= p.season_end]
-        this = sum(1 for d in days if d <= built.week.end)
-        return (p.season_value[key] - p.dead) * (this + share * (len(days) - this))
+        games = {d: playoff if d in built.bracket else 1.0 for d in days}
+        this = sum(g for d, g in games.items() if d <= built.week.end)
+        return (p.season_value[key] - p.dead) * (this + share * (sum(games.values()) - this))
 
     return worth(move.add) - (0.0 if move.drop is None else worth(move.drop))
 
@@ -457,6 +459,16 @@ def test_a_stake_splits_the_season_figure_at_the_running_week_s_last_day():
         )
     # A set's figure is its moves' summed, as the figure's it splits (here at a share of 0.75).
     assert figure.of(moves[:2]) == figure.move(moves[0]) + figure.move(moves[1]) > 0
+    # A bracket day counts playoff_weight times in both parts, as in the figure it splits: on
+    # the last regular week's Monday at a playoff weight of 2 the late player's games that week
+    # count once each and the final's twice, times the share.
+    last = setup.calendar.weeks[4]
+    heavy, at = on_day(setup, last.start, {"playoff_weight": 2.0}, stakes={1: 0.5})
+    figure = policy.season_figure_of(policy.guarded(heavy, setup, at, stake=1.0))
+    assert (figure.playoff_weight, figure.share) == (2.0, 0.5)
+    for m in (mv.Move(LATE, DEAD), mv.Move(LATE, mine[0])):
+        assert figure.move(m) == pytest.approx(by_hand(heavy, m, 0.5, playoff=2.0), abs=1e-9)
+        assert figure.move(m) != pytest.approx(by_hand(heavy, m, 0.5), abs=1e-9)
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
@@ -496,6 +508,10 @@ def test_a_decisive_week_takes_the_term_off_the_later_season_and_turns_the_choic
     # At a share of 0 the term is still built: the running week's games count.
     last = policy.seasoned(decisive, ev, policy.QUEUE_SET)
     assert isinstance(last, policy.Seasoned) and last.figure.share == 0.0
+    # The season scale is measured without the term and reads no stake: the same in a decisive
+    # week, where the split figure of the swap it is measured on is 0.
+    scale = policy.scale_of(built, tier)
+    assert scale.ratio is not None and policy.scale_of(decisive, tier) == scale
 
 
 def test_the_week_s_stake_is_the_runner_s_figure_or_the_same_function_of_the_finished_weeks():

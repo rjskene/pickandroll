@@ -1509,8 +1509,8 @@ the week set and the week plan's steps are not asked about. In a run where an ar
 `stake` only, on the same seats: `stake_mean`, the mean of the week's stake `L` over the weeks
 the seat played, and `stake_weeks_above_half`, the weeks `L` was above a half. They are counted
 for every arm of the run on those two tiers, whichever names the field (an arm on the ranking
-tier, and a static one, has no such key): `L` is a fact of a seat's season, read by the weight
-only where the arm has a stake. These counts are the world's knowledge of
+tier, and a static one, has no such key): `L` is a fact of a seat's season, read by the season
+term only where the arm has a stake. These counts are the world's knowledge of
 every bid, not the seat's: no decision reads them. A pair (`--arms`) adds the rivals'
 seats as one row, both arms' seasons pooled. The landing counters are per seat on the state
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state
