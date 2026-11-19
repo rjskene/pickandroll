@@ -28,6 +28,7 @@ import pytest
 
 from pickandroll.sim import audit, shapes
 from pickandroll.sim import cli as ss
+from pickandroll.sim import forecast as fc
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
@@ -49,6 +50,11 @@ BASE = {
 }
 #: The baseline against rivals that move: its confirmation is played twice.
 RIVALS = {**BASE, "name": "R", "opponents": {"kind": "market", "rate": 0.2}}
+#: The baseline against its mirror: on the exact tier the mirror reads what the surrogate reads.
+MIRROR = {**BASE, "name": "M", "opponents": {"kind": "mirror"}}
+#: A baseline that executes a week plan it does not draw: ``execute_plan`` is read only once
+#: ``with_plan`` has moved.
+PLANLESS = {**BASE, "name": "P", "with_plan": False, "execute_plan": True}
 LEVERS = ("weeks_ahead", "pool")
 #: Every season a ``screen`` or ``tune`` command asked its reader for, in the order asked.
 READS: list[int] = []
@@ -88,6 +94,9 @@ def data(tmp_path_factory) -> Path:
     (folder / "R.json").write_text(json.dumps(RIVALS))
     (folder / "W.json").write_text(json.dumps({**BASE, "pool": 45}))
     (folder / "bad.json").write_text(json.dumps({**BASE, "pol": 45}))
+    (folder / "M.json").write_text(json.dumps(MIRROR))
+    (folder / "X.json").write_text(json.dumps({**BASE, "name": "X", "tier": "exact"}))
+    (folder / "P.json").write_text(json.dumps(PLANLESS))
     return folder
 
 
@@ -355,6 +364,12 @@ def test_the_confirmation_season_is_read_once_at_the_end_and_its_look_is_counted
     verdict = conf["verdict"]
     assert (verdict["state"], verdict["flags"], verdict["read"]) == (tn.HOLDS, [], ["prior"])
     assert "the final set is recommended" in out and tn.ADVISORY in out
+    # The tier both arms are confirmed on is said: here the baseline's own.
+    assert (
+        "the confirmation, the final set against the baseline, both arms on the surrogate "
+        "tier: confirmation season 2026: look"
+    ) in out
+    assert (conf["skipped"], conf["one_seat"], verdict["missing"]) == ({}, {}, {})
     # One line more, written by this tune.
     after = looks(data)
     assert len(after) == len(before) + 1
@@ -436,52 +451,83 @@ def test_a_second_tune_says_look_2_and_a_tune_taken_up_again_is_counted_once(dat
         assert f"look {n + 1} for this league kind (line {len(counted) + 1} of " in out
 
 
-def test_the_order_is_the_screen_s_strongest_first(data: Path):
-    """A screen in a world where the daily cap's nudge is the surer and the pool's the less
-    sure, and the look ahead does nothing: the tune takes the screen's survivors in that order,
-    whatever the list's, and searches each from the arm the one before left."""
+def screen_worth(arm: rn.Arm, season: int) -> float:
+    """The screen's world: a wider pool and a higher daily cap are each worth more."""
+    return pool(arm) / 15 + float(sc.value_of(arm, "daily_cap")) / 2
 
-    def worth(arm: rn.Arm, season: int) -> float:
-        return pool(arm) / 15 + float(sc.value_of(arm, "daily_cap")) / 2
 
-    def wobble(a: rn.Arm, b: rn.Arm) -> float:
-        return 1.0 if pool(a) != pool(b) else 0.25
+def screen_wobble(a: rn.Arm, b: rn.Arm) -> float:
+    """The pool's difference is the surer (9 SE on two paths), the cap's the less sure (3)."""
+    return 0.25 if pool(a) != pool(b) else 1.0
 
-    before = looks(data)
+
+#: The world the screen ``s1`` and the tunes that read it are played in.
+SCREENED = worth_world(screen_worth, screen_wobble)
+
+
+@pytest.fixture(scope="module")
+def screened(data: Path) -> dict:
+    """The screen ``s1`` of the baseline on 2024: the daily cap, the pool and the look ahead, in
+    a world where the pool's nudge is the surer and the daily cap's the less sure, against the
+    list's own order (the cap is ahead of the pool there), and the look ahead does nothing."""
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(ss, "task_paired", made_up(worth_world(worth, wobble)))
+        mp.setattr(ss, "task_paired", made_up(SCREENED))
         flags = ("--paths", "2", "--seasons", "2024", "--name", "s1")
         code, out = run_of("screen", data, "B", *flags, "--levers", "daily_cap", *LEVERS)
-        assert code == 0, out
+    assert code == 0, out
+    got = reader.read_screen(data, "s1")
+    assert got is not None and got["left"] == []
+    return got
+
+
+def test_the_order_is_the_screen_s_strongest_first(data: Path, screened):
+    """The tune takes the screen's survivors strongest first, whatever the list's order: the
+    pool, the surer, ahead of the daily cap, which the list puts first. Each lever is searched
+    from the arm the one before left."""
+    assert sc.NAMES.index("daily_cap") < sc.NAMES.index("pool")
+    before = looks(data)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(SCREENED))
         code, out = tune(data, levers=None, screen="s1", name="by-screen", confirm="none")
         assert code == 0, out
-        # Levers named beside the screen take its order, survivors or not.
-        code, plan = tune(data, "--dry-run", screen="s1", name="named", confirm="none")
+        # Levers named beside the screen take its order, survivors or not; and what the screen
+        # was played under that this tune is not is said, not refused.
+        named = ("weeks_ahead", "daily_cap", "pool")
+        flags = {"levers": named, "screen": "s1", "name": "named", "seasons": "2023"}
+        code, plan = tune(data, "--dry-run", confirm="none", **flags)
         assert code == 0, plan
         assert (
-            "order, fixed before any pair: pool (pool-45, 3.00 SE), weeks_ahead (weeks_ahead-6, "
-            "0.00 SE)"
+            "order, fixed before any pair: pool (pool-45, 9.00 SE), daily_cap (daily_cap-minus, "
+            "3.00 SE), weeks_ahead (weeks_ahead-6, 0.00 SE)"
         ) in plan
-    screened = reader.read_screen(data, "s1")
-    assert screened is not None
+        assert (
+            "note: the screen s1 was played under another seasons ([2024] there, [2023] here): "
+            "its survivors and their order are taken as they stand"
+        ) in plan
     rec = record(data, "by-screen")
     assert [(o["lever"], o["from"], o["place"]) for o in rec["order"]] == [
-        ("daily_cap", "daily_cap-minus", tn.BY_SCREEN),
         ("pool", "pool-45", tn.BY_SCREEN),
+        ("daily_cap", "daily_cap-minus", tn.BY_SCREEN),
     ]
     assert [o["strength"] for o in rec["order"]] == pytest.approx([9.0, 3.0])
     assert (
-        "order, fixed before any pair: daily_cap (daily_cap-minus, 9.00 SE), pool (pool-45, "
+        "order, fixed before any pair: pool (pool-45, 9.00 SE), daily_cap (daily_cap-minus, "
         "3.00 SE)"
     ) in out
     spec = rec["spec"]
-    assert spec["levers"] == ["daily_cap", "pool"] and spec["tune_version"] == 1
+    assert spec["levers"] == ["pool", "daily_cap"] and spec["tune_version"] == 1
     assert spec["screen"] == {"name": "s1", "spec_sha": ss.spec_hash(screened["spec"])}
     assert (spec["passes"], spec["confirm"], spec["arm"]) == (1, None, BASE)
     assert {k: v for k, v in spec.items() if k in screened["spec"] and k != "levers"} == {
         k: v for k, v in screened["spec"].items() if k != "levers"
     }
-    cap, wider = rec["steps"]
+    # The same code, fit and world as the screen's: nothing to say of it.
+    assert rec["screen"] == {"name": "s1", "differs": {}, "note": ss.SCREEN_DIFFERS_NOTE}
+    assert "note: the screen s1" not in out
+    wider, cap = rec["steps"]
+    assert (wider["lever"], wider["from"], wider["change"]) == ("pool", 30, {"pool": 60})
+    assert pair_of(data, "by-screen", "p1-pool-45")["specs"]["a"] == BASE
+    # The cap is searched from the arm the pool's step left.
     assert (cap["lever"], cap["from"], cap["change"]) == ("daily_cap", 2, {"daily_cap": 3})
     assert {v["key"]: v["status"] for v in cap["values"]} == {
         "daily_cap-minus": sc.PLAYED,
@@ -490,10 +536,7 @@ def test_the_order_is_the_screen_s_strongest_first(data: Path):
         "daily_cap-plus-again": sc.NOT_PLAYED,
     }
     assert cap["choice"]["standings"] == {"daily_cap-minus": tn.WORSE, "daily_cap-plus": tn.TAKEN}
-    # The pool is searched from the arm the cap's step left.
-    assert (wider["lever"], wider["change"]) == ("pool", {"pool": 60})
-    moved = {**BASE, "knobs": {**BASE["knobs"], "daily_cap": 3}}
-    assert pair_of(data, "by-screen", "p1-pool-45")["specs"]["a"] == moved
+    assert pair_of(data, "by-screen", "p1-daily_cap-plus")["specs"]["a"] == {**BASE, "pool": 60}
     assert rec["final"]["set"] == {"daily_cap": 3, "pool": 60}
     # No confirmation: marked, no verdict, no look.
     assert rec["confirmation"] == {"season": None, "status": tn.NO_CONFIRMATION, "look": None}
@@ -502,16 +545,15 @@ def test_the_order_is_the_screen_s_strongest_first(data: Path):
     assert looks(data) == before and "confirm-run.json" not in files(data, "by-screen")
 
 
-def test_a_screen_that_is_not_this_tune_s_is_refused_by_name(data: Path, monkeypatch):
-    """The screen named must be finished, this baseline arm's and this league kind's, and must
-    have a survivor. Depends on the screen ``s1`` of the test above."""
+def test_a_screen_that_is_not_this_tune_s_is_refused_by_name(data: Path, screened, monkeypatch):
+    """The screen named must be finished, this baseline arm's and this league kind's, must have
+    a survivor, and must not have played the season the tune confirms on: the levers and their
+    order would then be chosen on the season called withheld."""
 
     def never(*a, **k):
         raise AssertionError("a path was played")
 
     monkeypatch.setattr(ss, "task_paired", never)
-    screened = reader.read_screen(data, "s1")
-    assert screened is not None, "the screen s1 is the order test's"
     reader.write_screen(data, "s-left", {**screened, "name": "s-left", "left": ["pool-45"]})
     idle = copy.deepcopy(screened)
     for row in idle["rows"]:
@@ -543,6 +585,15 @@ def test_a_screen_that_is_not_this_tune_s_is_refused_by_name(data: Path, monkeyp
             ),
         ),
         ({"screen": "s-idle"}, (), "refused: the screen 's-idle' has no survivor"),
+        (
+            {"screen": "s1", "seasons": "2023", "confirm": "2024"},
+            (),
+            (
+                "refused: --screen s1: it was played on season 2024, the season this tune "
+                "confirms on (--confirm): its survivors and their order were chosen there, so "
+                "the season would not be withheld from what chose the levers"
+            ),
+        ),
     ):
         code, out = tune(data, *flags, **{"levers": None, "name": "refused", **kw})
         assert code == 2 and why in out, out
@@ -680,7 +731,7 @@ def test_a_lever_at_its_nudge_s_target_is_listed_as_the_current_value_and_not_re
         code, out = tune(data, "--dry-run", name="at-target", arm="W", confirm="none")
     assert code == 0 and "refused" not in out, out
     assert "not played: the current value" in out
-    assert "the whole tune: at most 2 pair(s) of the search and the confirmation" in out
+    assert "the whole tune: about 2 pair(s) of the search, as the baseline lists them" in out
 
 
 # --------------------------------------------------------------------------- what the final arm reads
@@ -840,7 +891,10 @@ def same_by_replay(data: Path, name: str, key: str, season: int, flags: tuple[st
 def test_rule_1_a_tune_s_pair_is_the_same_pair_run_by_replay(data: Path):
     """The true task, under waivers by priority: a value's pair in a tune, written out as two
     spec files and run by ``replay --arms`` under the same flags, gives the tune's record key
-    for key. The seat moves, and the lever moves the count it is there to move."""
+    for key. The seat moves, and the lever moves the count it is there to move. One format is
+    named, the default (one win a matchup): what is held is that the two commands run one code
+    on one pair, which no format changes; what a format changes is the measure, and its own test
+    plays both formats and a points league."""
     flags = ("--waivers", "priority")
     code, out = tune(data, *flags, levers=("surrogate_days",), name="rule1", confirm="none")
     assert code == 0, out
@@ -857,7 +911,8 @@ def test_rule_1_a_tune_s_pair_is_the_same_pair_run_by_replay(data: Path):
 def test_rule_1_the_confirmation_s_pair_is_the_same_pair_run_by_replay(data: Path):
     """The search in the made-up world, so that there is a final set, and the confirmation
     season played by the true task: the confirmation's pair is the pair ``replay --arms`` plays
-    on the final arm and the baseline, and a replay of the season after it is the next look."""
+    on the final arm and the baseline, and a replay of the season after it is the next look.
+    One format is named, the default, for the reason the test above gives."""
 
     def world(a: rn.Arm, b: rn.Arm, season: int, path: int):
         return REALLY if season == 2026 else WIDER(a, b, season, path)
@@ -1025,8 +1080,8 @@ def test_a_tune_refuses_by_name_before_any_path(data: Path, monkeypatch):
 
 def test_a_dry_run_prints_the_plan_and_the_estimate_and_writes_nothing(data: Path, monkeypatch):
     """The plan: the order, each lever's values with each pair's estimate, the confirmation and
-    the whole tune's total. Nothing is written, the ledger included, and the confirmation season
-    is not read."""
+    the whole tune's total. Nothing is written, the ledger included, and no pair of the
+    confirmation season is planned: the season is not read."""
     log: list = []
     monkeypatch.setattr(ss, "task_paired", made_up(WIDER, log))
     before, counted, mark = folders(data), looks(data), len(READS)
@@ -1042,7 +1097,12 @@ def test_a_dry_run_prints_the_plan_and_the_estimate_and_writes_nothing(data: Pat
         "the confirmation: the final set against the baseline on 2026, once, against the run's "
         "rivals and against static rivals: up to 2 pair(s) of 2 tasks, about"
     ) in out
-    assert "the whole tune: at most 4 pair(s) of the search and the confirmation, about" in out
+    assert "both arms on the cheapest tier that reads every value that moved" in out
+    assert (
+        "the whole tune: about 4 pair(s) of the search, as the baseline lists them, and the "
+        "confirmation, about"
+    ) in out
+    assert "the search may play pairs this plan does not list" in out
     assert out.rstrip().endswith("dry run, nothing written") and "written:" not in out
     assert folders(data) == before and looks(data) == counted
     assert {t for t, _ in log} == {2024} and len(log) == 2
@@ -1062,8 +1122,9 @@ def test_the_time_guard_reads_the_whole_tune_s_estimate_the_confirmation_include
     code, out = tune(data, levers=levers, name="guarded")
     assert code == 2, out
     assert (
-        "the whole tune: at most 1 pair(s) of the search and the confirmation, about 1.89 h" in out
-    )
+        "the whole tune: about 1 pair(s) of the search, as the baseline lists them, and the "
+        "confirmation, about 1.89 h"
+    ) in out
     assert "refused: a tune of about 1.88889 h is announced on the tracker" in out
     assert "whatever a piece of it takes" in out
     code, out = tune(data, "--max-minutes", "10", levers=levers, name="guarded")
@@ -1091,11 +1152,16 @@ def test_the_time_guard_reads_the_whole_tune_s_estimate_the_confirmation_include
 # --------------------------------------------------------------------------- the rivals
 def test_the_final_set_is_played_against_the_run_s_rivals_and_against_static_ones(data: Path):
     """A baseline whose rivals move: the final pair is played twice on the confirmation season,
-    for one look. In this made-up world the wider pool finishes ahead against rivals that move
-    and level against rivals that stand still: the verdict rests on the run's rivals, both cells
-    are in the record, and the edge against one kind only is flagged."""
+    for one look, counted before the season is played. In this made-up world the wider pool
+    finishes ahead against rivals that move and level against rivals that stand still: the
+    verdict rests on the run's rivals, both cells are in the record, and the edge against one
+    kind only is flagged."""
+
+    counted: list[int] = []
 
     def world(a: rn.Arm, b: rn.Arm, season: int, path: int):
+        if season == 2026:
+            counted.append(len(looks(data)))
         still = str(a.opponents.get("kind")) == "static"
         return 0.0 if season == 2026 and still else WIDER(a, b, season, path)
 
@@ -1105,6 +1171,9 @@ def test_the_final_set_is_played_against_the_run_s_rivals_and_against_static_one
         mp.setattr(ss, "task_paired", made_up(world, log))
         code, out = tune(data, levers=("pool",), name="rivals", arm="R")
     assert code == 0, out
+    # The look is on the ledger before the first path of the season is played: every task of
+    # the season, of both pairs, finds this tune's line already there.
+    assert counted == [len(before) + 1] * 4
     rec = record(data, "rivals")
     conf = rec["confirmation"]
     assert conf["files"] == {"run": "confirm-run.json", "static": "confirm-static.json"}
@@ -1147,6 +1216,436 @@ def test_a_voided_path_of_the_confirmation_is_no_verdict_and_keeps_the_exit_code
     assert code == ss.AUDIT_EXIT and "no verdict: the audit voided 1 path(s)" in out, out
 
 
+# --------------------------------------------------------------------------- a season it can play
+def test_a_confirmation_the_world_cannot_play_is_refused_before_the_first_pair(data, monkeypatch):
+    """Whether the season confirmed on can be played in the tune's world is asked before the
+    first pair, and in the dry run, not after the search. Under a draft table the confirmation
+    season has none (its log carries one figure for everyone, as on the box), and a season
+    ``prior`` cannot serve leaves no forecaster: each is refused by name, with nothing played,
+    written or counted, and no pair of the season planned."""
+
+    def never(*a, **k):
+        raise AssertionError("a path was played")
+
+    monkeypatch.setattr(ss, "task_paired", never)
+    before, counted, mark = folders(data), looks(data), len(READS)
+    table = ("--adp", "espn", "--adp-spread", "1,0")
+    for flags, kw, why in (
+        (
+            (*table, "--dry-run"),
+            {},
+            (
+                "refused: --confirm 2026: --adp espn: season 2026 has no draft table: its log "
+                "carries one and the same draft position for every player; a tune under a "
+                "draft table confirms on a season that has one; nothing of the search is "
+                "played for a confirmation that cannot be: name another season with --confirm, "
+                "or --confirm none"
+            ),
+        ),
+        (table, {}, "refused: --confirm 2026: --adp espn: season 2026 has no draft table"),
+        (
+            ("--dry-run",),
+            {"confirm": "2022"},
+            "refused: --confirm 2022: no forecaster named serves season 2022 (prior: ",
+        ),
+        ((), {"confirm": "2022"}, "refused: --confirm 2022: no forecaster named serves season"),
+    ):
+        code, out = tune(data, *flags, **{"levers": ("pool",), "name": "unplayable", **kw})
+        assert code == 2 and why in out, out
+        assert "its plan" not in out and "written" not in out
+    assert folders(data) == before and looks(data) == counted
+    assert set(READS[mark:]) == {2024}
+
+
+def test_the_early_check_reads_what_the_season_holds_before_it_begins(data: Path):
+    """The check itself (``cli.confirm_unfit``): a forecaster the search reads must serve the
+    season confirmed on, since the verdict is stated for every forecaster the search read; one
+    the search never read may be skipped there too; a stand-in must serve it; under a table the
+    season needs one; and the ledger must read, when the season is the confirmation season."""
+    both = fc.parse("prior,marcel")
+
+    def plan(served, spread=None, sources=None):
+        reads = [SimpleNamespace(served=tuple(served))]
+        return SimpleNamespace(spread=spread, sources=sources, named=both, reads=reads)
+
+    args = SimpleNamespace(data=data, adp="espn")
+    # 2023 has one earlier season on file: marcel cannot serve it, and prior can.
+    why = ss.confirm_unfit(args, 2023, plan(both))
+    assert why is not None and why.startswith(
+        "the search reads marcel, which cannot serve season 2023 ("
+    )
+    assert "the verdict is stated for every forecaster the search read" in why
+    assert ss.confirm_unfit(args, 2023, plan(both[:1])) is None
+    assert ss.confirm_unfit(args, 2024, plan(both)) is None
+    standins = ss.sources_of("prior", "marcel")
+    assert "a stand-in cannot serve season 2023: " in str(
+        ss.confirm_unfit(args, 2023, plan(both[:1], sources=standins))
+    )
+    assert ss.confirm_unfit(args, 2024, plan(both[:1], sources=standins)) is None
+    # Under a table: a season whose log has one passes, the confirmation season's has none.
+    assert ss.confirm_unfit(args, 2024, plan(both[:1], spread=object())) is None
+    assert "--adp espn: season 2026 has no draft table" in str(
+        ss.confirm_unfit(args, 2026, plan(both[:1], spread=object()))
+    )
+    assert ss.confirm_unfit(args, 2026, plan(both[:1])) is None
+    # A ledger that cannot be read is found now, not after the search.
+    ledger = data / reader.LEDGER
+    kept = ledger.read_text() if ledger.exists() else None
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text((kept or "") + "not a line\n")
+    try:
+        assert "the ledger its look is counted on cannot be read: " in str(
+            ss.confirm_unfit(args, 2026, plan(both[:1]))
+        )
+        assert ss.confirm_unfit(args, 2024, plan(both[:1])) is None
+    finally:
+        if kept is None:
+            ledger.unlink()
+        else:
+            ledger.write_text(kept)
+
+
+def test_what_only_the_confirmation_s_plan_finds_is_recorded_with_the_final_set(
+    data: Path, whole, monkeypatch
+):
+    """What the early check does not find (here it is switched off, and the season is one no
+    forecaster serves) is met when the confirmation's pair is planned: the tune ends refused,
+    and its record keeps the final set and says why the confirmation was not played. No path of
+    the season is played and no look is counted."""
+    monkeypatch.setattr(ss, "confirm_unfit", lambda *a, **k: None)
+    monkeypatch.setattr(ss, "task_paired", made_up(WIDER))
+    before, mark = looks(data), len(READS)
+    for _ in range(2):
+        code, out = tune(data, levers=("pool",), name="unplanned", confirm="2022")
+        assert code == 2, out
+        assert "refused: no cell is left: no forecaster named serves any season named" in out
+        assert "refused: the confirmation's pair against the run's rivals cannot be planned" in out
+        rec = record(data, "unplanned")
+        assert rec["final"]["set"] == {"pool": 60} and rec["left"] is None
+        conf = rec["confirmation"]
+        assert (conf["season"], conf["status"], conf["look"]) == (2022, tn.UNPLANNED, None)
+        assert conf["why"] == "no cell is left: no forecaster named serves any season named"
+        assert f"the confirmation: {tn.UNPLANNED} ({conf['why']})" in out
+        assert "the final set (what the search changed in the baseline): pool 60" in out
+        assert "verdict (advisory" not in out and "recommended" not in out
+    assert looks(data) == before and "confirm-run.json" not in files(data, "unplanned")
+    assert all(p["finished_at"] for p in rec["timing"]["pieces"])
+    # The plan that refused asked for the season; nothing of it was played or kept.
+    assert READS[mark:].count(2022) == 2
+
+
+# --------------------------------------------------------------------------- one seat, one kind
+def test_mirror_rivals_the_static_pair_that_is_one_seat_is_not_planned(data: Path, whole):
+    """A baseline whose rivals are its mirror. The search moves the weight of the horizons
+    (found with ``executes weighted`` in both arms, which the current arm does not carry) and
+    the surrogate's days, which the exact tier reads only through the mirror. Against the run's
+    rivals the final arm is another seat; against static ones it is the baseline's, and replay
+    would refuse that pair. So it is not planned: the look is not spent on a refusal, the
+    confirmation is played against the run's rivals, the record says the static pair is one
+    seat, and the edge is flagged as one kind's only."""
+
+    def worth(arm: rn.Arm, season: int) -> float:
+        return float(arm.knobs["horizon_weight"] != BASE["knobs"]["horizon_weight"]) + float(
+            list(sc.value_of(arm, "surrogate_days")) == [0]
+        )
+
+    levers = ("horizon_weight", "surrogate_days")
+    log: list = []
+    before = looks(data)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(worth_world(worth), log))
+        code, out = tune(data, levers=levers, name="mirror", arm="M")
+        assert code == 0, out
+        rec = record(data, "mirror")
+        final, conf = rec["final"], rec["confirmation"]
+        assert final["set"] == {"horizon_weight": "even", "surrogate_days": [0]}
+        assert (final["levers"], final["tier"]) == (list(levers), "exact")
+        assert list(final["unread"]) == ["horizon_weight"]
+        assert conf["status"] == tn.CONFIRMED and conf["files"] == {"run": "confirm-run.json"}
+        assert set(conf["arms"]) == {"run", "static"} and set(conf["cells"]) == {"run"}
+        (static,) = conf["one_seat"].items()
+        assert static[0] == "static" and len(static[1]) == 2
+        assert static[1][0].startswith("horizon_weight (")
+        assert static[1][1].startswith("surrogate_days (")
+        assert "confirm-static.json" not in files(data, "mirror")
+        verdict = conf["verdict"]
+        assert verdict["state"] == tn.HOLDS
+        assert verdict["by_forecaster"] == {"prior": {"run": tn.AHEAD, "static": tn.ONE_SEAT}}
+        assert verdict["flags"] == [
+            (
+                "prior: ahead against the run's rivals only (against static rivals the final "
+                "arm is the baseline's seat)"
+            )
+        ]
+        assert f"  against static rivals: not played, {tn.ONE_SEAT} (the two arms differ" in out
+        assert f"flag: {verdict['flags'][0]}" in out and "refused" not in out
+        # One look, for the one pair played; and the same command again plays nothing.
+        assert len(looks(data)) == len(before) + 1
+        assert [b for t, b in log if t == 2026] == ["M:tuned"] * 2
+        del log[:]
+        code, out = tune(data, levers=levers, name="mirror", arm="M")
+    assert code == 0 and log == [] and len(looks(data)) == len(before) + 1, out
+    assert record(data, "mirror") == rec
+
+
+def test_an_exact_baseline_confirmed_on_the_surrogate_tier_says_so(data: Path, whole):
+    """Both arms of the confirmation are put on the cheapest tier that reads what moved. When
+    that is not the baseline's own tier, the output says which it is and which the baseline's."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(WIDER))
+        code, out = tune(data, levers=("pool",), name="exact-base", arm="X", confirm="2023")
+    assert code == 0, out
+    arms = record(data, "exact-base")["confirmation"]["arms"]["run"]
+    assert (arms["a"]["tier"], arms["b"]["tier"]) == ("surrogate", "surrogate")
+    assert (
+        "the confirmation, the final set against the baseline, both arms on the surrogate tier "
+        "(the cheapest that reads every value that moved; the baseline's own is the exact "
+        "tier): season 2023: "
+    ) in out
+
+
+# --------------------------------------------------------------------------- a search that grows
+def test_a_later_pass_does_not_play_again_a_pair_of_the_same_two_arms(data: Path, whole):
+    """Pass 1 moves the pool and leaves the look ahead. In pass 2 the pool is tried from its new
+    value, and the look ahead's pairs are the very pairs of pass 1 (no step has changed its
+    current arm since): their results are known, so they are taken and nothing is played."""
+
+    def worth(arm: rn.Arm, season: int) -> float:
+        return min(pool(arm), 60.0) / 15
+
+    log: list = []
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(worth_world(worth), log))
+        code, out = tune(data, "--passes", "2", name="twice", confirm="none")
+        assert code == 0, out
+        rec = record(data, "twice")
+        assert [(s["pass"], s["lever"]) for s in rec["steps"]] == [
+            (1, "pool"),
+            (1, "weeks_ahead"),
+            (2, "pool"),
+            (2, "weeks_ahead"),
+        ]
+        first, again = rec["steps"][1], rec["steps"][3]
+        assert [v.get("same_as") for v in first["values"]] == [None, None]
+        assert [v["same_as"] for v in again["values"]] == [
+            "p1-weeks_ahead-6",
+            "p1-weeks_ahead-6-again",
+        ]
+        assert [v["file"] for v in again["values"]] == [v["file"] for v in first["values"]]
+        assert [v["result"] for v in again["values"]] == [v["result"] for v in first["values"]]
+        assert again["choice"] == first["choice"] and again["change"] is None
+        assert (
+            "pass 2, weeks_ahead-6: the same two arms as p1-weeks_ahead-6 on the same paths, "
+            "not played again: "
+        ) in out
+        # Each pair of the look ahead is played once (two paths), and pass 2 has no file of it.
+        # The nudge has one task more: the plan's timed one, from the baseline.
+        names = [b for _, b in log]
+        assert names.count("B:weeks_ahead-6") == 3 and names.count("B:weeks_ahead-6-again") == 2
+        assert not any(f.startswith("p2-weeks_ahead") for f in files(data, "twice"))
+        assert {"p2-pool-45.json", "p2-pool-45-again.json"} <= files(data, "twice")
+        # Taken up again, the folder gives the same record and plays nothing.
+        del log[:]
+        code, out = tune(data, "--passes", "2", name="twice", confirm="none")
+    assert code == 0 and log == [] and record(data, "twice") == rec, out
+
+
+def test_a_lever_first_read_after_another_moved_is_timed_then_and_the_hour_s_rule_read_again(
+    data: Path, whole, monkeypatch
+):
+    """A baseline that executes a week plan it does not draw: ``execute_plan`` has no pair until
+    ``with_plan`` has moved, so the plan lists one pair and times one lever. Its first pair is
+    timed inside the search, and the hour's rule is read again before it: the tune has grown
+    past the hour, so it stops refused, with the record written, until it is announced. The two
+    rows are made up here (each switch flipped, nothing else set), so the case does not rest on
+    which rows the list holds."""
+
+    def switch(name: str) -> sc.Lever:
+        def flip(arm: rn.Arm, ctx: sc.Context):
+            return {}, (sc.Step("flipped", "flipped", {name: not getattr(arm, name)}),)
+
+        return sc.Lever(name, "exact", "flipped", flip)
+
+    monkeypatch.setattr(sc, "LEVERS", (switch("with_plan"), switch("execute_plan")))
+    monkeypatch.setattr(sc, "NAMES", ("with_plan", "execute_plan"))
+    timed: list[float] = []
+
+    def clocked(task, *args):
+        timed.append(4000.0 if timed else 0.0)
+        return timed[-1], task(*args)
+
+    def worth(arm: rn.Arm, season: int) -> float:
+        return float(arm.with_plan) + 0.5 * float(not arm.execute_plan)
+
+    log: list = []
+    monkeypatch.setattr(ss, "timed_task", clocked)
+    monkeypatch.setattr(ss, "task_paired", made_up(worth_world(worth), log))
+    levers = ("with_plan", "execute_plan")
+    code, out = tune(data, levers=levers, name="late", arm="P", confirm="none")
+    assert code == 2, out
+    assert "one task of each of 1 lever(s) timed in" in out
+    assert "the whole tune: about 1 pair(s) of the search, as the baseline lists them" in out
+    assert out.count("not read here: the arm draws no week plan") == 1
+    assert (
+        "pass 1, execute_plan-flipped: lever execute_plan has its first pair here, none from "
+        "the baseline: one task timed, 4000.0s, about 2.22 h a pair"
+    ) in out
+    assert (
+        "refused: with the pair of p1-execute_plan-flipped the tune comes to about 2.22222 h, "
+        "more than its plan listed (about 0 h) and past the hour: a tune of over an hour is "
+        "announced on the tracker and starts on the user's word"
+    ) in out
+    assert "left, from p1-execute_plan-flipped on; the same command with --announced" in out
+    rec = record(data, "late")
+    assert rec["left"]["next"] == "p1-execute_plan-flipped" and rec["final"] is None
+    assert [s["lever"] for s in rec["steps"]] == ["with_plan"]
+    assert rec["timing"]["estimates"] == {
+        "with_plan": {"seconds_one": 0.0, "tasks": 2},
+        "execute_plan": {"seconds_one": 4000.0, "tasks": 2},
+    }
+    (piece,) = rec["timing"]["pieces"]
+    assert piece["played"] == ["p1-with_plan-flipped"] and piece["finished_at"]
+    assert piece["stopped"].startswith("with the pair of p1-execute_plan-flipped")
+    # The same command is refused again, with nothing timed or played; announced, it goes on.
+    del log[:]
+    code, out = tune(data, levers=levers, name="late", arm="P", confirm="none")
+    assert code == 2 and log == [] and timed == [0.0, 4000.0], out
+    assert "refused: with the pair of p1-execute_plan-flipped the tune comes to" in out
+    code, out = tune(data, "--announced", levers=levers, name="late", arm="P", confirm="none")
+    assert code == 0 and timed == [0.0, 4000.0], out
+    assert [b for _, b in log] == ["P:execute_plan-flipped"] * 2
+    rec = record(data, "late")
+    assert [(s["lever"], s["change"]) for s in rec["steps"]] == [
+        ("with_plan", {"with_plan": True}),
+        ("execute_plan", {"execute_plan": False}),
+    ]
+    assert rec["final"]["set"] == {"with_plan": True, "execute_plan": False}
+    assert rec["left"] is None and list(rec["final"]["unread"]) == ["with_plan"]
+
+
+def test_a_piece_stopped_at_the_confirmation_s_pair_has_not_opened_the_season(
+    data: Path, whole, monkeypatch
+):
+    """Whether a piece may play the confirmation's pair (the hour's rule, the window, the cap in
+    minutes) is settled before the season is read. A tune whose confirmation is still to play,
+    taken up by a piece with no room for it, stops there having asked its reader for no season
+    but the search's; the next piece reads it and plays it, on the look the tune already has."""
+    monkeypatch.setattr(ss, "timed_task", lambda task, *args: (300.0, task(*args)))
+    monkeypatch.setattr(ss, "task_paired", made_up(WIDER))
+    code, out = tune(data, levers=("pool",), name="capped")
+    assert code == 0, out
+    rec = record(data, "capped")
+    (reader.tune_dir(data, "capped") / "confirm-run.json").unlink()
+    counted, mark = looks(data), len(READS)
+    code, out = tune(data, "--max-minutes", "5", levers=("pool",), name="capped")
+    assert code == 0, out
+    assert "stopped: --max-minutes 5: the pair of confirm-run, about 10.0 min" in out
+    stopped = record(data, "capped")
+    assert stopped["left"]["next"] == "confirm-run"
+    assert stopped["confirmation"]["status"] == tn.NOT_YET
+    assert stopped["confirmation"]["look"] == rec["confirmation"]["look"]
+    assert set(READS[mark:]) == {2024} and looks(data) == counted
+    # The next piece reads the season, once, and adds no line.
+    mark = len(READS)
+    code, out = tune(data, levers=("pool",), name="capped")
+    assert code == 0 and READS[mark:].count(2026) == 1 and looks(data) == counted, out
+    assert record(data, "capped")["confirmation"] == rec["confirmation"]
+
+
+# --------------------------------------------------------------------------- a folder, a ledger
+def test_a_tune_whose_ledger_line_or_record_is_gone_says_so_and_does_not_fall_over(
+    data: Path, whole
+):
+    """A finished tune run again after the ledger lost its line (the file removed, or the
+    folder copied without it) says which look it was from its confirmation pair's own record,
+    and adds no line. A folder with pairs and no record is refused by name: the record says
+    when the tune was started, which is how its look is found again."""
+    ledger = data / reader.LEDGER
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(WIDER))
+        code, out = tune(data, levers=("pool",), name="gone")
+        assert code == 0, out
+        rec = record(data, "gone")
+        look = rec["confirmation"]["look"]
+        kept = ledger.read_text()
+        ledger.unlink()
+        try:
+            code, out = tune(data, levers=("pool",), name="gone")
+            assert not ledger.exists()
+        finally:
+            ledger.write_text(kept)
+        assert code == 0, out
+        again = record(data, "gone")["confirmation"]
+        assert again["look"] == look and again["look_lost"] == ss.TUNE_LOOK_LOST
+        assert again["verdict"] == rec["confirmation"]["verdict"]
+        assert f"look {look['look']} for this league kind (line {look['line']} of " in out
+        assert ss.TUNE_LOOK_LOST in out and "appended" not in out
+        # With its line back the tune is as it was.
+        code, out = tune(data, levers=("pool",), name="gone")
+        assert code == 0 and record(data, "gone") == rec, out
+        # The record gone, the pairs still there.
+        file = reader.tune_dir(data, "gone") / reader.TUNE_FILE
+        text = file.read_text()
+        file.unlink()
+        try:
+            counted, there = looks(data), files(data, "gone")
+            code, out = tune(data, levers=("pool",), name="gone")
+            assert code == 2, out
+            assert "refused: the tune 'gone' has pairs on file under " in out
+            assert f"and no record ({reader.TUNE_FILE})" in out and "its plan" not in out
+            assert looks(data) == counted and files(data, "gone") == there
+        finally:
+            file.write_text(text)
+
+
+# --------------------------------------------------------------------------- the cash leagues' kind
+def test_a_tune_in_a_faab_league_under_continuous_waivers_with_a_held_slot(data: Path):
+    """The command played once in the kind of league the levers are for: a budget and sealed
+    bids, every add a claim, a held slot, every category a result. The sizing's four values and
+    the pool's two are played and audited, the search reads category wins, the confirmation is
+    played, and the league kind is its own first look."""
+    flags = ("--waivers", "faab", "--waiver-rule", "continuous", "--held", "IL=1")
+    flags += ("--h2h", "each_category")
+
+    def worth(arm: rn.Arm, season: int) -> float:
+        return float(arm.knobs["faab_sizing"] or 1.0) + pool(arm) / 15
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(worth_world(worth)))
+        code, out = tune(data, *flags, levers=("pool", "faab_sizing"), name="cash")
+    assert code == 0, out
+    rec = record(data, "cash")
+    rules = rec["league"]["rules"]
+    assert (rules["waivers"], rules["waiver_rule"], rules["held"], rules["h2h"]) == (
+        "faab",
+        "continuous",
+        ["IL"],
+        "each_category",
+    )
+    assert rec["measure"] == "category_wins" and rec["league"]["kind"]["rules"]["budget"] > 0
+    sizing, wider = rec["steps"]
+    assert {v["key"]: v["status"] for v in sizing["values"]} == dict.fromkeys(
+        ("faab_sizing-0.5", "faab_sizing-0.5-again", "faab_sizing-2", "faab_sizing-2-again"),
+        sc.PLAYED,
+    )
+    assert (sizing["from"], sizing["change"]) == (None, {"faab_sizing": 4.0})
+    assert sizing["choice"]["standings"] == {
+        "faab_sizing-0.5": tn.WORSE,
+        "faab_sizing-0.5-again": tn.WORSE,
+        "faab_sizing-2": tn.BEATEN,
+        "faab_sizing-2-again": tn.TAKEN,
+    }
+    assert wider["change"] == {"pool": 60}
+    assert rec["final"]["set"] == {"faab_sizing": 4.0, "pool": 60} and not rec["final"]["unread"]
+    for key in ("p1-faab_sizing-2-again", "p1-pool-45-again", "confirm-run"):
+        pair = pair_of(data, "cash", key)
+        assert pair["league"]["rules"] == rules and pair["audit"]["paths_voided"] == 0
+    conf = rec["confirmation"]
+    assert conf["status"] == tn.CONFIRMED and conf["verdict"]["state"] == tn.HOLDS
+    assert conf["look"]["look"] == 1 and "look 1 for this league kind" in out
+    assert set(conf["cells"]["run"]["prior"]["counts"]) == {"a", "b", "rivals"}
+
+
 # --------------------------------------------------------------------------- the league kind
 def test_a_league_kind_is_the_league_s_shapes_and_rules_and_not_how_its_rivals_bid():
     """What a tune's looks are counted by: the league shapes and the league's rules. How the
@@ -1159,7 +1658,8 @@ def test_a_league_kind_is_the_league_s_shapes_and_rules_and_not_how_its_rivals_b
         return ss.league_kind(plan)
 
     faab = kind(waivers="faab", waiver_rule="continuous")
-    assert faab["grid"] == shapes.FIXED_GRID.name and faab["axes"]
+    assert set(faab) == {"shapes", "rules"}
+    assert faab["shapes"] == [shapes.FIXED.payload()]
     assert faab["rules"]["waivers"] == "faab" and "budget" in faab["rules"]
     assert not set(ss.TUNE_RIVALS) & set(faab["rules"])
     assert set(ss.TUNE_RIVALS) <= set(shapes.LeagueRules(waivers="faab").payload())
@@ -1174,6 +1674,52 @@ def test_a_league_kind_is_the_league_s_shapes_and_rules_and_not_how_its_rivals_b
     ]
     hashes = {ss.spec_hash(k) for k in (faab, *others)}
     assert len(hashes) == len(others) + 1
+    # The kind is the shapes as played, not the grid's name: one shape named two ways is one.
+    named = shapes.one("league", shapes.parse_league("teams=12"))
+    assert named.name != shapes.FIXED_GRID.name
+    assert ss.league_kind(SimpleNamespace(grid=named, league_rules=shapes.LeagueRules())) == kind()
+
+
+def test_a_screen_is_held_to_the_league_in_force_and_what_else_differs_is_said():
+    """A screen's league kind is read as its flags name it, not as they were typed: one shape
+    typed in another order of keys is the same kind, another shape is another. What else the
+    screen was played under that the tune is not (the code's versions, the fit, the cells, the
+    seed) is listed for the record and refuses nothing."""
+    rules = shapes.LeagueRules()
+    shape = shapes.one("league", shapes.parse_league("adds=2,teams=10"))
+    kind = ss.league_kind(SimpleNamespace(grid=shape, league_rules=rules))
+    world = {"grid": "fixed", "league": "teams=10,adds=2", "seasons": [2023], "seed": 5}
+    spec = {"arm": BASE, "world": world, "screen_version": 1, "replay_version": 13, "fit_sha": "f"}
+    screen = {"name": "s", "left": [], "spec": spec, "league": {"rules": rules.payload()}}
+    assert ss.screen_unfit(screen, BASE, kind, 2026) is None
+    assert ss.screen_unfit(screen, BASE, kind, None) is None
+    other = {**screen, "spec": {**spec, "world": {**world, "league": "teams=12"}}}
+    assert "it was played in another league kind (the league shapes: " in str(
+        ss.screen_unfit(other, BASE, kind, 2026)
+    )
+    unread = {**screen, "spec": {**spec, "world": {**world, "league": "teams=many"}}}
+    assert "another league kind (the league shapes" in str(ss.screen_unfit(unread, BASE, kind, 1))
+    assert "it was played on season 2023, the season this tune confirms on" in str(
+        ss.screen_unfit(screen, BASE, kind, 2023)
+    )
+    assert ss.shapes_in_force(world) == kind["shapes"]
+    assert ss.shapes_in_force({"grid": "fixed", "league": None}) == [SMALL.shapes[0].payload()]
+    assert ss.shapes_in_force({"grid": "nope"}) is None
+    # What differs beside the kind: by name, with both values; the kind's own flags are not here.
+    mine = {
+        **spec,
+        "replay_version": 14,
+        "world": {"grid": "full", "league": None, "seasons": [2024], "seed": 5, "h2h": "one_win"},
+    }
+    assert ss.screen_differs(screen, mine) == {
+        "replay_version": {"screen": 13, "tune": 14},
+        "seasons": {"screen": [2023], "tune": [2024]},
+    }
+    assert ss.screen_differs(screen, spec) == {}
+    assert ss.screen_differs(screen, {**spec, "fit_sha": "g", "book_sha": "b"}) == {
+        "fit_sha": {"screen": "f", "tune": "g"},
+        "book_sha": {"screen": None, "tune": "b"},
+    }
 
 
 # --------------------------------------------------------------------------- the league's measure
@@ -1204,7 +1750,7 @@ def test_the_search_reads_the_measure_the_league_s_standings_count(data, flags, 
     assert rec["measure"] == measure
     assert f"each lever's values from the baseline, on {sc.MEASURE_WORDS[measure]}:" in out
     rules = rec["league"]["rules"]
-    assert rec["league"]["kind"]["rules"] == rules and rec["league"]["kind"]["grid"] == "fixed"
+    assert rec["league"]["kind"] == {"shapes": [SMALL.shapes[0].payload()], "rules": rules}
     assert (rules["scoring"], rules["h2h"] if rules["scoring"] == "categories" else None) == (
         ("points", None) if "points" in flags else ("categories", flags[1] if flags else "one_win")
     )
