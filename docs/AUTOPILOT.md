@@ -1216,7 +1216,10 @@ claim whose base is 1 or less with no breakout flag is a routine stream and bids
 reason "$0: a routine stream"; neither `faab_sizing` nor the budget lifts it. Any other claim
 bids the base (at least 1 for a flagged claim, as before #391), doubled for a breakout flag and
 tripled for a strong one, times `faab_sizing` (1.0 while it is unset), clamped to the budget
-left and nothing else. A struck bid is a $0 claim, and a routine stream's $0 takes the same
+left and nothing else. A move lifted by its add's flag (#435, its logged move carries `lift`)
+bids as a flagged claim, its base at least 1, with no flag factor: the flag counts once, in the
+gain (the master's ruling, 2026-11-19); a flagged add whose move is not lifted keeps the factor.
+A struck bid is a $0 claim, and a routine stream's $0 takes the same
 path: the due entry's `bid_placed` is 0, the extension types 0 into Yahoo's bid field (inside
 the page's "between $0 and $N"), and the landed reader takes a pending line with no "Bid $" as
 $0. The Queue shows it as a "$0 claim" with its reason on hover, and offers no "strike bid" on
@@ -1327,6 +1330,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 | the FAAB sizing | section 5 | the sizing rule only; no ceiling |
 | the daily move cap | section 2 | 1 to 3 |
 | `three_weight`, the three weeks' weight in a week plan's score, default 0.33 | section 2 (#332), logged with each decision | 0 to 1; no Monday rule moves it |
+| the breakout lift's weights, floors and marginal count (#435, `lift_*`), defaults 0.5/0.75/1.0, 0.10/0.15/0.25 and 3 | the moves solve (`docs/ADD_DROP.md`, "The lift"), logged with a decision only when a candidate is lifted | weights 0 to 1, floors 0 to 0.5, the count 0 to 10; read, never stepped; outside `LIVE_KNOBS` |
 
 **The protocol.** One knob changes per week, pooled across the armed leagues; where the leagues
 allow it, half of them take the change and half keep the setting (A/B), since nine to twelve

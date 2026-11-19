@@ -64,6 +64,8 @@ import pandas as pd
 from ..season import Player, Season
 from ..season import autopilot as qa
 from ..season import decisions as dl
+from ..season import flags as fl
+from ..season import lift as lf
 from ..season import moves as mv
 from ..season import picks as pk
 from ..season import plans as pl
@@ -277,6 +279,7 @@ def build(
     knobs: Mapping[str, Any] | None = None,
     open_claims: Iterable[Mapping[str, Any]] = (),
     picks: Sequence[pk.Pick] = (),
+    flags: Mapping[int, fl.Flag] | None = None,
 ) -> Built | None:
     """The move problem for my team, or None when the season lacks my team or its weeks; the
     solve runs on ``system`` with ``knobs``, the league's knobs as ``api.season_knobs`` reads
@@ -286,7 +289,10 @@ def build(
     (#360), the lineup and the views keeping Yahoo's roster as read (``Built.real``). ``picks``
     are the user's picks in force in the league (#434): those the solve can make are made on that
     roster first, each with the drop the user named or the one that costs least on the queue's
-    score (``season.picks.forced``), and the solve fills the adds left around them."""
+    score (``season.picks.forced``), and the solve fills the adds left around them. ``flags``
+    are the league's breakout flags (#435, ``api.season_flags``): a flagged candidate's move that
+    drops one of my marginal players or nobody plays that player on a line lifted by the flag
+    (``season.lift``, the lift's knobs in ``knobs`` else the code's first guesses)."""
     s = season.settings
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
@@ -459,6 +465,11 @@ def build(
             rule = mv.keep_rule(problem)
             problem = replace(problem, kept=rule.kept | problem.pending)
     real = replace(base, kept=mv.keep_rule(base).kept) if pending or made else None
+    # The breakout lift (#435), on the roster the claims and the picks leave.
+    lifts = lf.lifts(flags or {}, problem.rates, (c for c, _ in problem.candidates), knobs)
+    if lifts:
+        marginal = mv.marginal_of(problem, int(lf.knobs_of(knobs)[lf.MARGINAL]))
+        problem = replace(problem, lifted=lifts, marginal=marginal)
     pool = max(1, s.num_teams * problem.spots)
     scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
     # Today's activations, a first choice on the three weeks before any search (#360): the solve
@@ -559,7 +570,28 @@ def keep_inputs(
 
 # --------------------------------------------------------------------------- the payloads
 def _move(m: mv.Move, problem: mv.MoveProblem) -> dict[str, Any]:
-    return {"add": m.add, "drop": m.drop, **_day(m, problem)}
+    return {"add": m.add, "drop": m.drop, **_day(m, problem), **lift_of(problem, m)}
+
+
+def lift_of(problem: mv.MoveProblem, m: mv.Move) -> dict[str, Any]:
+    """A lifted move's ``lift`` (#435): the factor on its add's line, the flag's level and its
+    signals' scores; nothing for a move not lifted (``moves.is_lifted``)."""
+    if not mv.is_lifted(problem, m.add, m.drop):
+        return {}
+    return {"lift": problem.lifted[m.add].to_dict()}
+
+
+def lift_payload(built: Built) -> dict[str, Any] | None:
+    """The lift in force (#435): its knobs, my marginal players and each lifted candidate's
+    lift; None when no candidate is lifted."""
+    p = built.problem
+    if not p.lifted:
+        return None
+    return {
+        "knobs": lf.knobs_of(built.knobs),
+        "marginal": sorted(p.marginal),
+        "lifted": {str(k): x.to_dict() for k, x in sorted(p.lifted.items())},
+    }
 
 
 def _day(m: mv.Move, problem: mv.MoveProblem) -> dict[str, str]:
@@ -1096,6 +1128,7 @@ def _payload(built: Built) -> dict[str, Any]:
                 "next_price": _r(best.gain - nxt.gain) if nxt else None,
                 # This horizon's move to the season's end: the move the row's For shows.
                 "ros": ros_move(built, mv.Move(cand, best.drop)),
+                **lift_of(p, move),
             }
         if all(row[key] is None for key in HORIZONS):
             row["reason"] = no_move(p, cand)
@@ -1193,6 +1226,8 @@ def _payload(built: Built) -> dict[str, Any]:
         },
         # The user's picks (#434): only in a league with one in force.
         **({"picks": picks} if picks is not None else {}),
+        # The breakout lift (#435): only in a league with a lifted candidate.
+        **({"lift": lift} if (lift := lift_payload(built)) is not None else {}),
     }
 
 

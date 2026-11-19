@@ -118,7 +118,7 @@ import math
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
@@ -527,6 +527,16 @@ def log_refresh(data_dir: Path, job: RefreshJob) -> None:
     )
 
 
+def _pairs(stamp: Any) -> Iterator[tuple[str, int]]:
+    """The (file name, time) pairs of a nested stamp (``season_flags.stamp``), the missing left
+    out: the moves stamp's own shape."""
+    if isinstance(stamp, tuple) and len(stamp) == 2 and isinstance(stamp[0], str):
+        yield stamp
+    elif isinstance(stamp, tuple):
+        for x in stamp:
+            yield from _pairs(x)
+
+
 def retry_after(seconds: float | None) -> dict[str, str]:
     """The ``Retry-After`` header of a 503 on Yahoo's rate limit (#180), the cool-off's length
     when Yahoo named none."""
@@ -848,6 +858,8 @@ class SeasonService:
         for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
             files += sorted(self.data_dir.glob(pattern))
         stamp = tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
+        # The breakout flags' inputs (#435): a flag lifts a line in the solve.
+        stamp += tuple(_pairs(season_flags.stamp(self.data_dir, nba_today(self.clock()))))
         # The claims placed and open (#360) by their content, not the queue file's time: a queue
         # write that changes no claim never solves again.
         claims = tuple(
@@ -893,7 +905,17 @@ class SeasonService:
             # A pick leaves the league once its player is on a team there (#434).
             rostered = [sp.player.yahoo_id for spots in season.rosters.values() for sp in spots]
             picks = season_picks.mark_left(self.data_dir, league, rostered, today)
-            return season_moves.build(season, today, self.data_dir, system, knobs, claims, picks)
+            # The breakout flags lift a flagged add's line (#435).
+            try:
+                _, flags, _ = self._flags(league)
+            except Exception as exc:  # noqa: BLE001 - the moves solve without the lift
+                LOG.warning(
+                    "moves of league %s solve without the lift: its flags failed: %s", league, exc
+                )
+                flags = {}
+            return season_moves.build(
+                season, today, self.data_dir, system, knobs, claims, picks, flags
+            )
 
         built = self.moves_cache.get(key, make)
         if built is None:

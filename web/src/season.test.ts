@@ -162,6 +162,7 @@ import {
   queuePoll,
   queueMoveText,
   pickLine,
+  liftText,
   pickMoveText,
   pickSkipText,
   queueNamer,
@@ -2622,4 +2623,10 @@ test("a pick reads as the user's, with the drop named or the cheapest, the bid a
   const title = (league: string) => `L${league}`;
   assert.equal(pickLine(pick, title), `L1, L2 · the cheapest drop · $3 · until ${dayLabel("2026-11-26")} · set by dashboard; on a team in L2`);
   assert.equal(pickLine({ ...pick, leagues: null, left: {}, active: false, bid: null }, title), `every league · the cheapest drop · the bid policy's bid · until ${dayLabel("2026-11-26")} (expired) · set by dashboard`);
+});
+
+test("a lifted move says its flag's factor and level (#435)", () => {
+  assert.equal(liftText({ factor: 1.2, level: "add" }), "lifted by its flag (x1.2, add)");
+  assert.equal(liftText({ factor: 1.15, level: "must-add" }), "lifted by its flag (x1.15, must-add)");
+  assert.equal(liftText({ factor: 1.5, level: "watch" }), "lifted by its flag (x1.5, watch)");
 });

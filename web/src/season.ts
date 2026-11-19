@@ -1465,6 +1465,15 @@ export function addBasis(x: { drop: number | null; held?: HeldMove | null; held_
   return { kind: "open", text: "free: open spot", cell: "free: open spot", title: "an active spot is open: no drop" };
 }
 
+/** A lifted move in words (#435): "lifted by its flag (x1.3, add)". */
+export function liftText(l: { factor: number; level: string }): string {
+  return `lifted by its flag (x${l.factor.toFixed(2).replace(/0$/, "")}, ${l.level})`;
+}
+
+/** What a lift means, for a title (#435). */
+export const LIFT_TITLE =
+  "valued on a line lifted by its breakout flag: the minutes moved toward the recent ones by the level's weight, at least the level's floor on an adds surge; only when the drop is one of the marginal players or nobody";
+
 /** The basis after an add's name: "for Reed", "after Hurt to IL", "(free: open spot)". */
 export function basisPhrase(b: Basis): string {
   return b.kind === "open" ? `(${b.text})` : b.text;

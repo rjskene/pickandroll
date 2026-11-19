@@ -1317,6 +1317,50 @@ opportunity score alone is still no flag. The Flags card sorts by level, then by
 shows the signals that spoke as chips; the legend draws the same tags, a dimmed "under" sample
 and a meter at the add floor.
 
+### The lift (#435)
+
+The user ruled on 2026-11-19 that the moves take chances on players who may outplay their
+projections. A flagged available player is valued on a lifted line (`season/lift.py`), on a move
+that drops one of my marginal players or nobody:
+
+- **The factor.** The minutes move toward the recent minutes by the level's weight:
+  `M' = projected + w[level] × (recent − projected)`, where `recent` is the minutes signal's
+  7-day window when it has at least 2 games, else its 14-day one (the smaller of the two lags
+  exactly the role changes this is for). The factor is
+  `M' / projected`, never below 1: a flag never lowers a line. When the adds surge spoke, the
+  factor is at least `1 + floor[level]`, so the market alone lifts with no minutes gain.
+- **The line.** Every stat times the factor (a per-minute line at `M'`). Makes and attempts scale
+  alike, so the percentages are unchanged.
+- **Marginal.** My `lift_marginal` active players lowest by the keep rule's rest-of-season
+  per-game value, those it keeps left out (`moves.marginal_of`). A move dropping one of them, or
+  nobody (an open spot or a held-slot move), is lifted (`moves.is_lifted`). A churn's held drop,
+  a plan step's earlier add or any other player is not: the add plays on the plain line.
+- **Where.** The evaluator plays a lifted move's add on the lifted line (`moves.rates_with`), so
+  every horizon, search, re-solve, week plan, streaming plan and single swap sees the lift where
+  the rule allows it. The starters' order stays the plain values. The season guard's figure and
+  the log's (`decisions.move_projection`) take the lifted line too (`moves.line_of`). The keep
+  rule, the strategy engine's curves and the lineup views stay plain.
+- **The knobs**, the first guesses ruled live as the code's defaults (`lift.DEFAULTS`):
+  `lift_weight_watch` 0.5, `lift_weight_add` 0.75, `lift_weight_must_add` 1.0 (0 to 1);
+  `lift_floor_watch` 0.10, `lift_floor_add` 0.15, `lift_floor_must_add` 0.25 (0 to 0.5);
+  `lift_marginal` 3 (0 to 10). Stronger than a plain move would take, since the lift applies only
+  against a marginal drop. The knob file may set any of them in force or per league; the
+  Monday step never steps them, and they stay out of `LIVE_KNOBS` so the simulator's arms are
+  unchanged until it tunes them (#172). Every weight and floor at 0, or no marginal player, lifts
+  nothing: the moves as before #435.
+- **The record.** A lifted move carries `lift: {factor, level, signals}` on its candidate row, its
+  recommended row and its logged move. The payload and the decision log entry gain `lift` (the
+  knobs, my marginal players and each lifted candidate's lift) only in a league with a lifted
+  candidate. The Moves card says "lifted by its flag (x1.38, add)" on such a row. The digest is
+  unchanged.
+- **The bid.** A lifted move's queue entry carries its `lift`, and it bids as a flagged claim
+  (its base at least one typical) with no x2 or x3 flag factor: the flag counts once, in the
+  gain (`autopilot.bid_of(..., lifted=True)`, the master's ruling of 2026-11-19). A flagged add
+  whose move is not lifted keeps its factor.
+- **The flags read.** The build takes the league's flags (`SeasonService._flags`); the moves stamp
+  carries the flags' inputs, so a new buzz day or past-days export solves again. A flag read that
+  fails leaves the solve without the lift.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a
