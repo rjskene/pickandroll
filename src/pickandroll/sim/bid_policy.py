@@ -7,7 +7,7 @@ the default member to, through the door). The family, in order (:func:`amount`):
 
 1. **The value**, in typicals (:func:`value`): the move's gain over the seat's typical gain on
    each horizon, weighed ``week``, ``season`` and the rest on the three weeks. A horizon with no
-   typical yet (fewer than ten moves on the week or the season), or whose typical is at or below
+   typical yet (before the seat's tenth move on the week or the season), or whose typical is at or below
    0, counts a move that gains as typical (ratio 1, ``bid_of``'s base of 1 on the three weeks)
    and one that gains nothing or less as nothing (ratio 0): a claim worth nothing never rides
    the pace. A plan's step keeps today's value, its week increment over the three weeks'

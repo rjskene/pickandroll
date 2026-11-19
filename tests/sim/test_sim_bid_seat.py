@@ -65,7 +65,9 @@ def placed(block, setup, state, x, drop, gain=6.0, sizing=None, floor=1.0, week=
 
 
 def nine(day, gain: float):
-    return tuple((day - d * DAY, gain) for d in range(1, 10))
+    """Nine moves, one on each of the nine days before ``day``, the oldest first, as the state
+    keeps them."""
+    return tuple((day - d * DAY, gain) for d in range(9, 0, -1))
 
 
 # --------------------------------------------------------------------------- the queue
@@ -129,7 +131,7 @@ def test_the_shade_reads_the_other_teams_winning_bids_and_never_the_seat_s_own()
     assert placed(top, setup, more, x, drop, 30.0)[0].bid == 10
 
 
-def test_the_week_and_the_season_weigh_the_seat_s_own_fortnight_on_that_horizon():
+def test_the_week_and_the_season_weigh_the_seat_s_own_moves_on_that_horizon():
     setup, s, x, drop = morning()
     day = s.day
     week, season = {"week": 1}, {"season": 1}
@@ -138,8 +140,9 @@ def test_the_week_and_the_season_weigh_the_seat_s_own_fortnight_on_that_horizon(
     kept = replace(s, recent_by=by)
     c, out = placed(week, setup, kept, x, drop, week=(3.0,))
     assert (c.bid, c.value) == (2, 2.0)
-    # The fortnight is kept with today's, the seat's own, on the horizon the policy weighs: the
-    # other team's is as it was, and the season's, which this policy does not weigh, untouched.
+    # The moves are kept with today's, the seat's own, on the horizon the policy weighs: the
+    # other team's are as they were, and the season's, which this policy does not weigh,
+    # untouched.
     assert out.recent_by[bp.WEEK][2] == (*nine(day, 1.5), (day, 3.0))
     assert out.recent_by[bp.WEEK][3] == nine(day, 99.0)
     assert out.recent_by[bp.SEASON] == by[bp.SEASON]
@@ -150,18 +153,54 @@ def test_the_week_and_the_season_weigh_the_seat_s_own_fortnight_on_that_horizon(
     assert (c.bid, c.value) == (4, 4.0) and len(out.recent_by[bp.SEASON][2]) == 10
     # A season figure of none counts 0: no typicals, a routine claim.
     assert placed(season, setup, kept, x, drop, season=(0.0,))[0].bid == 0
-    # Until ten moves the move counts as typical: one typical, a routine claim.
-    early = replace(s, recent_by={bp.WEEK: {2: nine(day, 1.5)[:8]}})
-    c, out = placed(week, setup, early, x, drop, week=(3.0,))
-    assert (c.bid, c.value) == (0, 1.0) and len(out.recent_by[bp.WEEK][2]) == 9
-    # A move fourteen days back is out of the fortnight.
-    old = replace(s, recent_by={bp.WEEK: {2: ((day - 14 * DAY, 1.5), *nine(day, 1.5)[:8])}})
-    c, out = placed(week, setup, old, x, drop, week=(3.0,))
-    assert c.bid == 0 and min(d for d, _ in out.recent_by[bp.WEEK][2]) == day - 8 * DAY
     # The weights mix the horizons, the three weeks taking the rest.
     mixed = {"week": 0.25, "season": 0.25}
     c, _ = placed(mixed, setup, kept, x, drop, week=(3.0,), season=(40.0,))
     assert c.value == pytest.approx(0.5 * 6.0 + 0.25 * 2.0 + 0.25 * 4.0) and c.bid == 5
+
+
+def test_the_week_and_the_season_read_a_size_from_the_seat_s_tenth_move():
+    """The lead's working default (q-6, 2026-11-19): a seat that decides twice a week seldom
+    holds ten moves in a fortnight, so on the week and the season its typical is the median of
+    its last ten moves whatever their age, until its fortnight holds ten; before its tenth move
+    a move that gains counts as typical. The three weeks' own typical is the live rule's."""
+    setup, s, x, drop = morning(ahead=40)
+    day = s.day
+    # Before the tenth move: one typical, a routine claim.
+    for key, block, more in (
+        (bp.WEEK, {"week": 1}, {"week": (3.0,)}),
+        (bp.SEASON, {"season": 1}, {"season": (3.0,)}),
+    ):
+        early = replace(s, recent_by={key: {2: nine(day, 1.5)[:8]}})
+        c, out = placed(block, setup, early, x, drop, **more)
+        assert (c.bid, c.value) == (0, 1.0) and len(out.recent_by[key][2]) == 9
+        # The tenth move reads a size, on moves four days apart: three of the nine are in the
+        # fortnight, and all ten are kept.
+        apart = tuple((day - 4 * d * DAY, 1.5) for d in range(9, 0, -1))
+        seldom = replace(s, recent_by={key: {2: apart}})
+        c, out = placed(block, setup, seldom, x, drop, **more)
+        assert (c.bid, c.value) == (2, 2.0)
+        assert out.recent_by[key][2] == (*apart, (day, 3.0))
+        assert sum(1 for d, _ in apart if d > day - 14 * DAY) == 3
+        # An eleventh drops the oldest: out of the fortnight and not one of the last ten.
+        c, out = placed(block, setup, replace(s, recent_by=out.recent_by), x, drop, **more)
+        assert out.recent_by[key][2] == (*apart[1:], (day, 3.0), (day, 3.0))
+        assert c.value == 2.0
+    # The fortnight wins once it holds ten: eleven moves in it and today's, whose median (3) is
+    # not the last ten's (2), and a move before the fortnight is dropped.
+    gains = (9.0, 9.0, 1.0, 1.0, 1.0, 1.0, 1.0, 3.0, 3.0, 3.0, 3.0)
+    held = tuple((day - (11 - i) * DAY, g) for i, g in enumerate(gains))
+    full = replace(s, recent_by={bp.WEEK: {2: ((day - 30 * DAY, 0.2), *held)}})
+    c, out = placed({"week": 1}, setup, full, x, drop, week=(6.0,))
+    assert (c.bid, c.value) == (2, 2.0)
+    assert out.recent_by[bp.WEEK][2] == (*held, (day, 6.0))
+    # The three weeks keep the live rule: nine moves spread over five weeks are no fortnight
+    # of ten, so the typical is the plan floor (1), whatever the block.
+    thin = replace(s, recent={2: tuple((day - 4 * d * DAY, 0.5) for d in range(9, 0, -1))})
+    for block in (None, {}, {"week": 0.5}):
+        c, out = placed(block, setup, thin, x, drop, week=(3.0,) if block else ())
+        assert out.recent[2] == (*((day - 4 * d * DAY, 0.5) for d in range(3, 0, -1)), (day, 6.0))
+    assert placed(None, setup, thin, x, drop)[0].bid == placed({}, setup, thin, x, drop)[0].bid == 6
 
 
 def test_a_plan_s_step_bids_as_today_whatever_the_weights():

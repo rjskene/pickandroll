@@ -205,10 +205,10 @@ def test_the_bracket_s_line_and_the_last_morning_spends_what_is_left():
     assert bp.amount(rule, seen(4.0, 1.0, 17, sizing=0.5, budget=100, when=on(LAST))) == 17
 
 
-def test_a_claim_worth_nothing_never_rides_a_pace_in_a_bracket_week():
-    """The lead's working default (q-5, 2026-11-19). In a bracket week a simulated seat reads
-    no opponent, so a move its season term picks gains nothing on the three weeks, and a
-    fortnight of such moves has a typical of 0. A paced arm whose ``bid.season`` is 0 bids the
+def test_a_claim_worth_nothing_never_rides_a_pace_in_the_bracket_s_last_week():
+    """The lead's working default (q-5, 2026-11-19). In the bracket's last week a simulated
+    seat reads no opponent, so a move its season term picks gains nothing on the three weeks,
+    and a fortnight of such moves has a typical of 0. A paced arm whose ``bid.season`` is 0 bids the
     routine on such a claim on its path, ahead of it and where the path is 0; one whose
     ``bid.season`` is above 0 values the claim by the season, and its pace bids that up."""
     week = BRACKET + 6 * DAY
@@ -233,7 +233,7 @@ def test_a_claim_worth_nothing_never_rides_a_pace_in_a_bracket_week():
     ahead = seen(0.4, 0.0, 100, budget=100, when=on(week))
     assert bp.value(rule, ahead) == 1.0 and bp.amount(rule, ahead) == bp._half_up(paces[1]) == 9
     # The same claim under a weight on the season is worth its season figure in typicals: the
-    # reserve is spent in the bracket only by such an arm.
+    # reserve is spent in the bracket's last week only by such an arm.
     weighs = bp.of({"pace": PACE, "season": 0.5})
     there = seen(0.0, 0.0, 100, budget=100, when=on(week), season=6.0, typical_season=2.0)
     assert bp.value(weighs, there) == 1.5

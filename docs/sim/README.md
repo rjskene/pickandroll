@@ -1319,10 +1319,14 @@ The family is one pure function, `bid_policy.amount`, of the block and of one fr
      (`policy.gains_of`, on the engine's plain evaluator, as the live basis reads the three
      weeks). `gain[season]` is the season term's figure for the move (`SeasonFigure.move`, at the
      arm's `playoff_weight`); a move with none counts 0.
-   - `typical[h]` is the median of the gains on that horizon of the moves the seat recommended in
-     the last 14 days, today's counted (`autopilot.typical_gain`'s rule and constants). Until ten
-     moves the three weeks' typical is the plan floor, as the live rule's; on the week and the
-     season there is none yet.
+   - `typical[three]` is the live rule's: the median of the three weeks' gains of the moves the
+     seat recommended in the last 14 days, today's counted (`autopilot.typical_gain`'s rule and
+     constants), and the plan floor until that fortnight holds ten moves.
+   - `typical[week]` and `typical[season]` are the fortnight's median on that horizon when the
+     fortnight holds ten moves or more. Else they are the median, by the same rule, of the
+     seat's last ten moves on that horizon whatever their age, once it has made ten (the lead's
+     working default, 2026-11-19: a seat that decides twice a week seldom holds ten moves in a
+     fortnight, and would read no size on either). Before its tenth move there is none yet.
    - A horizon's ratio is the gain over the typical where the typical is above 0. With no typical
      yet, or one at or below 0, a gain above 0 counts as one typical (the live rule's base of 1)
      and a gain of 0 or less as nothing. That is one rule for every member, the default included
@@ -1366,7 +1370,8 @@ ruling of 2026-11-18), and a result is reported with and without them.
 - the calendar: the morning the claim is decided, the season's first day, the bracket's first day
   and the last morning a claim can be decided;
 - the move's gains and the seat's own typicals (`SimState.recent`, and `recent_by` for the week
-  and the season, kept only for an arm whose `bid` weighs them).
+  and the season, kept only for an arm whose `bid` weighs them: the fortnight's moves and,
+  where those are fewer than ten, the seat's last ten).
 
 It never reads a sealed bid (another team's open claim), a losing bid, the price book, the
 rivals' bid form, its scale or its noise, or anything of a later day. `policy.bid_seen` builds the
@@ -1406,23 +1411,26 @@ What the bid policy does not model, each plainly:
    or more earlier.
 8. **Dollars in open bids are not set aside**, as under the live rule: each bid is set on the
    dollars left that day, and a claim its team cannot pay on its morning fails.
-9. **A bracket week holds no gain on the week or on the three weeks.** A simulated seat reads no
-   opponent in a bracket week (a replay's pairings are the regular season's weeks, and the engine
-   values a span with no opponent at nothing). A seat with no season term makes no move there. A
-   seat with one (`season_weight` above 0) does, and its claim's gain on those two horizons is
-   nothing: the claim is worth nothing and bids `routine`, on the path, ahead of it and where
-   the path is 0, unless its arm's `bid.season` is above 0. So a paced arm's reserve is spent in
-   the bracket only by an arm whose `bid.season` is above 0. For every other arm the path's
-   straight line from `reserve` to 0 and the last morning's every dollar left move no bid in a
-   season; they are held on the pure function (`tests/sim/test_sim_bid_policy.py`).
-10. **Until ten moves in a fortnight a weight on the week or the season reads no size.** A seat
-    that has recommended fewer than ten moves in fourteen days has no typical on those two
-    horizons, and a move that gains there counts as one typical whatever it gains (item 1 of the
-    family). The weight then only takes its share of the claim's value off the three weeks, and
-    a block at a weight on the week bids as one at the same weight on the season wherever both
-    figures are above 0. On the tests' made-up seasons a surrogate seat on its two days a week
-    never reached ten moves in a fortnight; one that decides every day did, and from then on the
-    two weights value a claim apart. A look at a real season says how often its seat reaches ten.
+9. **The bracket's last week holds no gain on the week or on the three weeks.** A replay's
+   pairings are the regular season's weeks, so in the bracket's last week a simulated seat reads
+   no opponent on any week ahead, and the engine values a span with no opponent at nothing. A
+   seat with no season term makes no move there. A seat with one (`season_weight` above 0) does,
+   and its claim's gain on those two horizons is nothing: the claim is worth nothing and bids
+   `routine`, on the path, ahead of it and where the path is 0, unless its arm's `bid.season` is
+   above 0. So in the bracket's last week only an arm whose `bid.season` is above 0 values a
+   claim, and only it spends a reserve there. In an earlier bracket week a claim is valued on the
+   three weeks ahead as in any week, and a pace spends its reserve on it. The path's last
+   morning, where every dollar left is bid, is held on the pure function
+   (`tests/sim/test_sim_bid_policy.py`), not in a season.
+10. **Before a seat's tenth move the week's weight and the season's read no size.** A seat that
+    has recommended fewer than ten moves has no typical on those two horizons, and a move that
+    gains there counts as one typical whatever it gains (item 1 of the family). The weight then
+    only takes its share of the claim's value off the three weeks, and a block at a weight on the
+    week bids as one at the same weight on the season wherever both gains are above 0. From its
+    tenth move the seat reads a size on each. On the tests' made-up seasons of six weeks a
+    surrogate seat on its two days a week makes its tenth move late in the season or not at all,
+    and never holds ten in a fortnight. A look at a real season says on which day its seat makes
+    its tenth move.
 
 **Not yet.** The ruling of 2026-11-07
 makes the market rivals' add rate a parameter of the league shape, with a default written as a

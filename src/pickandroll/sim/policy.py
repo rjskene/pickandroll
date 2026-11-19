@@ -493,12 +493,21 @@ def with_bid(built: Built, decision: Decision, bid: bp.BidPolicy | None) -> Deci
 def fortnight_by(
     state: SimState, team: int, basis: Basis
 ) -> tuple[Mapping[str, Mapping[int, tuple[tuple[date, float], ...]]], dict[str, float | None]]:
-    """``team``'s fortnight on the other horizons its bid policy weighs (the week, the season;
-    each only at a weight above 0), today's recommended moves counted, as ``SimState.recent_by``
-    keeps it; and its typical gain on each: the fortnight's median by the engine's rule
-    (``autopilot.typical_gain``), None until ten moves (a move that gains then counts as
-    typical, ``bid_policy._ratio``). With
-    no ``bid`` named, or neither weight above 0, the state's own and no typical."""
+    """``team``'s moves on the other horizons its bid policy weighs (the week, the season; each
+    only at a weight above 0), today's recommended moves counted, as ``SimState.recent_by``
+    keeps them; and its typical gain on each (the lead's working default, 2026-11-19):
+
+    - the fortnight's median by the engine's rule (``autopilot.typical_gain``) when the
+      fortnight holds ``TYPICAL_MIN`` moves or more, as the live rule's;
+    - else the median, by the same rule, of the seat's last ``TYPICAL_MIN`` moves on that
+      horizon whatever their age, once it has made that many: a seat that decides twice a week
+      seldom holds ten moves in a fortnight, and would read no size at all;
+    - else None: before its tenth move a move that gains counts as typical
+      (``bid_policy._ratio``).
+
+    So the state keeps the fortnight's moves and, where they are fewer, the last
+    ``TYPICAL_MIN``. With no ``bid`` named, or neither weight above 0, the state's own and no
+    typical: the three weeks' fortnight (``SimState.recent``) is never changed."""
     rule = basis.bid
     kept = state.recent_by
     typicals: dict[str, float | None] = {}
@@ -512,10 +521,12 @@ def fortnight_by(
     ):
         if not weight > 0:
             continue
-        mine = tuple((d, x) for d, x in kept.get(key, {}).get(team, ()) if d > since)
-        mine += tuple((state.day, x) for x in today)
+        every = (*kept.get(key, {}).get(team, ()), *((state.day, x) for x in today))
+        last = len(every) - TYPICAL_MIN
+        mine = tuple(e for i, e in enumerate(every) if e[0] > since or i >= last)
         out[key] = {**kept.get(key, {}), team: mine}
-        gains = [x for _, x in mine]
+        fortnight = [x for d, x in mine if d > since]
+        gains = fortnight if len(fortnight) >= TYPICAL_MIN else [x for _, x in mine]
         typicals[key] = typical_gain(gains, 0.0)[0] if len(gains) >= TYPICAL_MIN else None
     return out, typicals
 

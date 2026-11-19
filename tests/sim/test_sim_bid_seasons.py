@@ -20,7 +20,7 @@ from pickandroll.sim import counts as ct
 from pickandroll.sim import nopeek, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
-from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, TYPICAL_MIN
+from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, TYPICAL_MIN, typical_gain
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import LOST, WON
 from tests.sim.sim_league import arm, make_setup, of_format, recorded_lines
@@ -226,17 +226,75 @@ def test_a_weight_on_the_week_or_the_season_moves_the_bids_on_its_own_fortnight(
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-def test_a_reserve_is_spent_in_the_bracket_only_by_an_arm_whose_bid_weighs_the_season(h2h):
-    """In the bracket's week a seat reads no opponent, so a move gains nothing there on the
-    three weeks. Three paced arms that decide every day, on one world. The one with no season
-    term makes no move in that week. The two with one do: the arm whose ``bid.season`` is 0 bids
-    the routine on every claim of the week (worth nothing, it never rides the pace: the lead's
-    working default, 2026-11-19) and ends the season with the dollars it reached the bracket
-    with; the arm that weighs the season values those claims, and spends there."""
+def test_a_seat_on_two_days_a_week_reads_a_size_on_each_horizon_from_its_tenth_move(h2h):
+    """The lead's working default (q-6, 2026-11-19). A surrogate seat on its two days a week
+    never holds ten moves in a fortnight here, so its typical on the week and on the season is
+    the median of its last ten moves whatever their age. Two arms on one world, half the weight
+    on the week in one and on the season in the other. Before the seat's tenth move neither
+    reads a size: a move that gains counts as one typical, so the two value a claim alike (but
+    for a gain of nothing or less, which counts nothing). From the tenth move each values the
+    claim on its own horizon's gain over its own typical, and the two part.
+
+    (The screen's command does not show this on its tests' small league of three weeks: on
+    the three seeds tried in both formats its seat placed six claims at most, short of a tenth
+    move, so its ``bid.week`` pair and its ``bid.season`` pair differed by a gain's sign in the
+    value won, or in nothing.)"""
+    (week, dw), (season, ds) = seasons(public(h2h), [seat({"week": 0.5}), seat({"season": 0.5})])
+
+    def claims(days, key):
+        """By day and player: the claim's value, its move's gain on ``key``, the seat's moves
+        through that day, and its typical on ``key`` that day (None before the tenth move)."""
+        out, made = {}, 0
+        for r in days:
+            decision = r.decisions.get(1)
+            made += len(decision.moves) if decision is not None else 0
+            kept = r.state.recent_by.get(key, {}).get(1, ())
+            fortnight = [x for d, x in kept if d > r.day - 14 * DAY]
+            assert len(fortnight) < TYPICAL_MIN and len(kept) == min(made, TYPICAL_MIN)
+            typical = typical_gain([x for _, x in kept], 0.0)[0] if made >= TYPICAL_MIN else None
+            for c in r.claims.get(1, ()):
+                gain = getattr(decision.basis, key)[decision.moves.index(c.move)]
+                out[(r.day, c.move.add)] = (c.value, gain, made, typical, kept)
+        return out
+
+    w, s = claims(dw, bp.WEEK), claims(ds, bp.SEASON)
+    early = [k for k in w if w[k][2] < TYPICAL_MIN]
+    late = [k for k in w if w[k][2] >= TYPICAL_MIN]
+    assert len(early) >= 3 and late and set(early) | {min(late)} <= set(s)
+    # Before the tenth move: one typical for a move that gains, on either horizon.
+    for k in early:
+        (vw, gw, n, tw, _), (vs, gs, m, ts, _) = w[k], s[k]
+        assert n == m and tw is None and ts is None
+        assert vw - vs == pytest.approx(0.5 * ((gw > 0) - (gs > 0)))
+    assert any(w[k][1] > 0 and s[k][1] > 0 and w[k][0] == s[k][0] for k in early)
+    # The claim of the tenth move: a size on each horizon, over the median of the seat's last
+    # ten moves, some of them older than a fortnight. What is left of each value is the three
+    # weeks' half, which the two arms share.
+    k = min(late)
+    (vw, gw, n, tw, kept), (vs, gs, m, ts, _) = w[k], s[k]
+    assert n == m >= TYPICAL_MIN and gw > 0 and gs > 0 and tw > 0 and ts > 0
+    assert min(d for d, _ in kept) <= k[0] - 14 * DAY
+    assert vw - 0.5 * gw / tw == pytest.approx(vs - 0.5 * gs / ts)
+    assert abs(vw - vs) > 0.01 and gw / tw != pytest.approx(gs / ts)
+    assert week.counts[1]["dollars_spent"] != season.counts[1]["dollars_spent"]
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_in_the_bracket_s_last_week_only_an_arm_whose_bid_weighs_the_season_spends(h2h):
+    """A bracket of two weeks, three paced arms that decide every day, on one world. In the
+    bracket's last week a seat reads no opponent, so a move gains nothing there on the three
+    weeks: the arm with no season term makes no move in it; the arm with one whose
+    ``bid.season`` is 0 bids the routine on every claim of the week (worth nothing, it never
+    rides the pace: the lead's working default, 2026-11-19) and ends the season with the
+    dollars it began that week with; the arm that weighs the season values those claims, and
+    spends there. In the bracket's first week a claim is valued on the three weeks as in any
+    week, and the pace spends its reserve on it whatever ``bid.season`` is."""
     pace = {"k": 1, "shape": 1, "reserve": 0.3}
     daily = replace(policy.DEFAULT_FIELDS, surrogate_days=tuple(range(7)))
-    setup = public(h2h)
-    bracket = min(w.start for w in setup.calendar.weeks if w.number in setup.spec.playoff_weeks)
+    setup = public(h2h, playoff_weeks=2)
+    first, last = sorted(
+        w.start for w in setup.calendar.weeks if w.number in setup.spec.playoff_weeks
+    )
     arms = [
         replace(seat(block, daily_cap=3, **knobs), fields=daily)
         for block, knobs in (
@@ -247,17 +305,33 @@ def test_a_reserve_is_spent_in_the_bracket_only_by_an_arm_whose_bid_weighs_the_s
     ]
     (_, dn), (plain, da), (weighs, dw) = seasons(setup, arms)
 
-    def there(days):
-        return [(bid, value) for day, _, bid, value in placed(days) if day >= bracket]
+    def there(days, since, until=None):
+        return [
+            (bid, value)
+            for day, _, bid, value in placed(days)
+            if day >= since and (until is None or day < until)
+        ]
 
-    assert not there(dn) and all(not r.decisions[1].moves for r in dn if r.day >= bracket)
+    def dollars(days, day):
+        (state,) = [r.state for r in days if r.day == day]
+        return state.dollars[1]
+
+    # The last week.
+    assert not there(dn, last) and all(not r.decisions[1].moves for r in dn if r.day >= last)
     for days in (da, dw):
-        gains = [g for r in days if r.day >= bracket for g in r.decisions[1].basis.gains]
+        gains = [g for r in days if r.day >= last for g in r.decisions[1].basis.gains]
         assert gains and all(abs(g) < 1e-9 for g in gains)
-    assert there(da) and all(bid == 0 and value == 0 for bid, value in there(da))
-    assert plain.counts[1]["dollars_left"] == plain.counts[1]["dollars_at_bracket"] > 0
-    assert all(value > 0 for _, value in there(dw)) and any(bid > 0 for bid, _ in there(dw))
-    assert weighs.counts[1]["dollars_left"] < weighs.counts[1]["dollars_at_bracket"]
+    assert there(da, last) and all(bid == 0 and value == 0 for bid, value in there(da, last))
+    assert plain.counts[1]["dollars_left"] == dollars(da, last) > 0
+    assert all(value > 0 for _, value in there(dw, last))
+    assert any(bid > 0 for bid, _ in there(dw, last))
+    assert weighs.counts[1]["dollars_left"] < dollars(dw, last)
+    # The first: gains that are not nothing, and a reserve spent on them at ``bid.season`` 0.
+    for days in (dn, da, dw):
+        gains = [g for r in days if first <= r.day < last for g in r.decisions[1].basis.gains]
+        assert any(abs(g) > 1e-9 for g in gains)
+    assert any(bid > 1 and value > 0 for bid, value in there(da, first, last))
+    assert dollars(da, last) < plain.counts[1]["dollars_at_bracket"]
 
 
 # --------------------------------------------------------------------------- every league kind

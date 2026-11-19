@@ -280,9 +280,11 @@ class SimState:
     #: won this season, in the order decided, each with its morning, its team and its bid, as
     #: the league's transactions page shows them (a seat's policy reads the other teams').
     #: ``value_won``: the summed value in typicals of the claims each team won
-    #: (``Claim.value``), the counts' alone. ``recent_by``: as ``recent``, the fortnight's gains
-    #: on the other horizons a seat's bid policy weighs, by horizon (``bid_policy.WEEK``,
-    #: ``SEASON``) then team; a seat whose arm names no such weight keeps none.
+    #: (``Claim.value``), the counts' alone. ``recent_by``: as ``recent``, the gains of a seat's
+    #: moves on the other horizons its bid policy weighs, by horizon (``bid_policy.WEEK``,
+    #: ``SEASON``) then team: the fortnight's and, where those are fewer than ten, its last ten
+    #: whatever their age (``policy.fortnight_by``); a seat whose arm names no such weight keeps
+    #: none.
     won_bids: tuple[tuple[date, int, int], ...] = ()
     value_won: Mapping[int, float] = field(default_factory=dict)
     recent_by: Mapping[str, Mapping[int, tuple[tuple[date, float], ...]]] = field(
