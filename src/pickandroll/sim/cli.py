@@ -3567,14 +3567,27 @@ def gate_dict(g: vg.Gate) -> dict[str, Any]:
     return {"name": g.name, "passed": g.passed, "season": g.season, "detail": g.detail}
 
 
-#: What each seat's row of gate 5 records beside its count (#172, PR D4a2).
+#: What each seat's row of gate 5 records beside its verdict (#172, PR D4a2; the worths are the
+#: rule's input since PR g5).
 GATE_RECORDS = (
     "per seat and sampled day (detail.records): the exact tier's set and the surrogate's, the add "
-    "and the drop by id; whether they are equal (the gate's input); and each set's worth by the "
-    "exact tier's own objective on that day's problem, the value one evaluator of the exact "
-    "tier's gives it on the key it searches (three weeks, with the season term at a "
-    "season_weight), beside standing still's; a day left out says why. The worths do not enter "
-    "the gate's rule"
+    "and the drop by id; whether they are equal (counted in detail.matched; it does not decide); "
+    "and each set's worth by the exact tier's own objective on that day's problem, the value one "
+    "evaluator of the exact tier's gives it on the key it searches (three weeks, with the season "
+    "term at a season_weight), beside standing still's; a day left out says why. The worths are "
+    "what the gate's rule reads: a tier's gain on a day is its set's worth less standing still's"
+)
+#: Gate 5's rule, as each record says it (#172, PR g5; ``validate.surrogate_gate``).
+GATE_RULE = (
+    f"a seat passes when its surrogate keeps at least {vg.SURROGATE_KEEPS:.0%} of the exact "
+    f"search's gain over its {vg.SURROGATE_OF} league-days, every one of them compared. A day's "
+    "gain is a set's worth by the exact tier's own objective less standing still's "
+    "(detail.records); each tier's is summed over the days (detail.gain), then the two sums are "
+    "compared, surrogate >= share x exact, with no division: an exact tier that stood still asks "
+    "only that the surrogate lose nothing, and a surrogate that found more passes. detail.kept is "
+    "the surrogate's gain over the exact search's (null when the exact gain is not above 0). The "
+    "days on which the two sets are equal are counted (detail.matched) and do not decide. The "
+    "gate passes when every seat does"
 )
 #: The forecaster gate 5's replay is drafted on and believes by, when ``--forecaster`` names none.
 GATE_FORECASTER = "prior"
@@ -3612,13 +3625,14 @@ def gate_surrogate(
     """Gate 5 on a replay (#172, PR D3): the league, the belief's weights and the world built as
     ``replay`` builds them for ``season`` and forecaster ``f`` (:func:`read_season`,
     :func:`replay_setup_of`, ``run.replay_world`` at the label's own weights), path 0; on each of
-    the :data:`GATE_DAYS` after the first simulated day, for each of :func:`gate_seats`, whether
-    the surrogate's set equals the exact set from day one's rosters (``checks.surrogate_matches``),
+    the :data:`GATE_DAYS` after the first simulated day, for each of :func:`gate_seats`, the
+    surrogate's set against the exact set from day one's rosters (``checks.surrogate_records``),
     at the knobs' defaults (``policy.KNOB_DEFAULTS``) and the fields' (``policy.DEFAULT_FIELDS``),
     in the head-to-head format ``h2h`` (the format PR: one win per matchup by default, so the two
-    tiers are compared in the measure the seats play). One gate row a seat, and the block that
-    names what the gate ran on. Refused (``readers.SimReadError``) when ``f`` cannot serve the
-    season."""
+    tiers are compared in the measure the seats play). A seat passes on the gain its surrogate
+    keeps over its days (``validate.surrogate_gate``, PR g5). One gate row a seat, and the block
+    that names what the gate ran on. Refused (``readers.SimReadError``) when ``f`` cannot serve
+    the season."""
     rules = shapes.LeagueRules(h2h=h2h)
     r = read_season(data, season, [f], None, {}, seed, GATE_SHAPE, rules)
     if not r.served:
@@ -3640,8 +3654,7 @@ def gate_surrogate(
     rows = []
     for seat in seats:
         records = checks.surrogate_records(setup, w, seat, days, knobs, fields)
-        matches = [r["equal"] for r in records if r["left_out"] is None]
-        g = vg.surrogate_gate(matches, season=season)
+        g = vg.surrogate_gate(records, season=season)
         g.detail.update({"seat": seat, "days": [d.isoformat() for d in days], "records": records})
         rows.append(gate_dict(g))
     block = {
@@ -3655,11 +3668,7 @@ def gate_surrogate(
         "knobs": knobs,
         "fields": fields.payload(),
         "weights": r.fits[f.label].payload(),
-        "rule": (
-            f"a seat passes when the surrogate's set equals the exact set on "
-            f"{vg.SURROGATE_NEEDED} of its {vg.SURROGATE_OF} league-days; the gate passes when "
-            "every seat does"
-        ),
+        "rule": GATE_RULE,
         "records": GATE_RECORDS,
         "league": f"the fixed league shape ({shapes.FIXED.label()}); gate 5 is not run on a grid",
         "rules": rules.payload(),
@@ -3677,6 +3686,35 @@ def record_line(seat: int, r: Mapping[str, Any]) -> str:
         f"seat {seat}, {r['day']}: {'equal' if r['equal'] else 'differ'}; worth, exact "
         f"{worth['exact']:.4f}, surrogate {worth['surrogate']:.4f}"
     )
+
+
+def share_words(x: float) -> str:
+    """A share as a percentage cut, not rounded, to a tenth: a seat a hair under gate 5's bar
+    never reads as at it."""
+    return f"{math.floor(x * 1000 + 1e-6) / 10:.1f}%"
+
+
+def seat_line(d: Mapping[str, Any]) -> str:
+    """What gate 5 prints for a seat after its verdict, from the row's detail: the share of the
+    exact search's gain its surrogate kept, with the two gains to four decimals and the share
+    needed (the two gains alone when the exact gain is not above 0, where there is no share);
+    then the days on which the two sets are equal, which do not decide; and, for a seat with a
+    day left out, that a seat needs every day. No player is named."""
+    gain = d["gain"]
+    if d["kept"] is None:
+        kept = (
+            f"the exact search made no gain ({gain['exact']:.4f}), so the surrogate need only "
+            f"not fall below it: its gain {gain['surrogate']:.4f}"
+        )
+    else:
+        kept = (
+            f"the surrogate kept {share_words(d['kept'])} of the exact search's gain "
+            f"({gain['surrogate']:.4f} of {gain['exact']:.4f}; needs {d['needs']:.0%})"
+        )
+    line_ = f"{kept}; equal sets on {d['matched']} of {d['of']} league-days"
+    if d["of"] < vg.SURROGATE_OF:
+        line_ += f"; {d['of']} of {vg.SURROGATE_OF} days compared, and a seat needs every one"
+    return line_
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -3720,10 +3758,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for g in gates:
         d = g["detail"]
         state = "passed" if g["passed"] else "FAILED"
-        print(
-            f"{g['name']:16} {g['season']!s:12} {state} seat {d['seat']}: "
-            f"{d['matched']} of {d['of']} league-days"
-        )
+        print(f"{g['name']:16} {g['season']!s:12} {state} seat {d['seat']}: {seat_line(d)}")
         for r in d.get("records", ()):
             print("  " + record_line(d["seat"], r))
     days = len(block["days"]) * len(block["seats"])
@@ -3990,7 +4025,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     _run_args(sn, paths=SCREEN_PATHS)
     sn.set_defaults(func=cmd_screen)
-    va = sub.add_parser("validate", help="gate 5: the surrogate against the exact set on a replay")
+    va = sub.add_parser(
+        "validate", help="gate 5: the gain the surrogate keeps of the exact search's, on a replay"
+    )
     va.add_argument(
         "--season",
         type=int,
