@@ -1675,10 +1675,20 @@ cannot tell the two apart. So one season is kept out of every search and read on
   read it, there is **no verdict**: the rule does not rest on the forecasters left. (The check
   before the first pair refuses such a tune, so this is met only when the files changed under a
   tune in flight.)
-- A cell the rule does not read is another thing: an oracle's, or `espn`'s when that season
-  fails its freeze check, which only the season's own games show. It has its row in the table,
-  marked "not read", as a search's has. The verdict then rests on the forecasters read and
-  names them (`verdict.read`).
+- **A cell that is there and not read is another thing.** It is `espn`'s when that season
+  fails its freeze check, which only the season's own games show. (An oracle's row is a
+  yardstick in the search too, so it is never one the search read.) The two cases side by side,
+  for a forecaster the search read:
+  - **no cell at all** on the season confirmed on: no verdict;
+  - **a cell there and not read**: its row is in the table, marked "not read", and the verdict
+    is stated on the other forecasters. Its line never says "recommended" alone: it says which
+    forecasters the set was confirmed on and names each one that went unconfirmed, with why
+    ("confirmed on prior alone, not confirmed on espn (its stored projection of that season
+    fails the freeze check), which the search read"). The record's verdict block lists the two
+    (`verdict.read`, `verdict.unconfirmed`).
+
+  A set confirmed that way is confirmed under fewer forecasters than it was searched under,
+  and the line is there so that it is read so.
 - **The rivals.** The pair is played against the run's rivals, and again against static ones
   when the baseline's rivals are not static. Both cells are in the record. An edge against one
   kind of rivals only is flagged: against rivals that never move it may be an edge over nobody,
@@ -1714,8 +1724,9 @@ cannot tell the two apart. So one season is kept out of every search and read on
   its looks are counted together.
 - It is the forecasters' the search read, every one of them. A set ahead under one forecaster
   and not under another does not hold, and a forecaster with no cell on the season is no
-  verdict. The one exception is a cell the season's freeze check leaves out: its row says "not
-  read", and the verdict names the forecasters it rests on.
+  verdict. The one exception is a cell the season's freeze check leaves out: the verdict is
+  stated on the others, and its line names that forecaster as not confirmed ("The
+  confirmation", above).
 - A tune with `--confirm none`, or one whose search moved nothing, has no verdict. A search's
   set alone is no recommendation: it was chosen on the seasons it was searched on.
 
@@ -1752,9 +1763,9 @@ chosen to suit it. So every look is counted.
 - `tune.json` is the tune's record: the spec, `tune_version` 1, the order and where each place
   comes from, what the screen named was played under that the tune is not, every step (each
   value's pair with its result, the choice and why), the final set, the confirmation (each
-  cell's differences, finish and mechanism counts, a forecaster with no cell, a kind of rivals
-  that is one seat, the look, the verdict) and what is left. Everything that is a time sits
-  under `timing`.
+  cell's differences, finish, mechanism counts and `replay`'s mark when the rule does not read
+  it, a forecaster with no cell, a kind of rivals that is one seat, the look, the verdict) and
+  what is left. Everything that is a time sits under `timing`.
 - Running the same command again plays only what has no record yet. It first checks the spec
   against the one the folder was started with (a screen's spec, and the tune's own: the levers
   in their order, the passes, the season confirmed on, the screen named, `tune_version`).
