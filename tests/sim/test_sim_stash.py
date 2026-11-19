@@ -913,7 +913,9 @@ def pinned_clock():
 def test_the_command_takes_a_threshold_from_a_seat_s_file_and_counts_it(tmp_path, pinned_clock):
     """End to end, once: a seat's file names the threshold, the arm parser takes it, the room
     plays with an IL slot and the dry run prints the count for the seat that builds a problem
-    and not for the static seat beside it."""
+    and not for the static seat beside it. One format (the command's own, no ``--h2h`` named):
+    what is held is the knob's way from the file to the arm and the count's way to the print,
+    neither of which reads a format."""
     folder = make_data_dir(tmp_path)
     assert ss.main(["--data", str(folder), "--rooms", "0", "fit", "--seasons", "2023-2024"]) == 0
     specs = {

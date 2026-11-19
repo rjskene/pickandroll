@@ -210,7 +210,8 @@ drop: the one the team's seat named for him the day before, when the seat plans 
 and he is still one of its active players (PR G, "The stash threshold and the morning a held
 player comes back", below); else the least valuable active player by the day's value, the
 returning player included. The world reads no keep rule and no knob there: both reach the morning
-only through the seat's own choice. Then a churn's held drop goes first, on his own, the held-slot moves a set needs
+only through the seat's own choice. Then a churn's held drop goes first, on his own, the
+held-slot moves a set needs
 are made, and the adds land: a drop goes to the pool and the add takes his slot, an add that needs
 an active spot takes a bench slot or is gone when none is open, an add another team took first is
 gone and counted. A queued move is carried out against the day it lands: a held-slot move is made
@@ -370,11 +371,12 @@ finite is refused like any knob's (the engine's own check passes a NaN).
   The names live one night on the state (`SimState.sends`). The morning (`policy.arrive`) takes a
   team's named player when its held player's status has cleared, its active roster is over the
   spots and the named player is still one of its active players (the returning player himself,
-  when the plan named him); with no name, or one who has left the roster, and for every seat
-  that names none (a static, a market or a ranking seat), the rule before PR G: the least
-  valuable active player by the day's values. The roster is legal either way and the audit
-  holds it to the same rules. The surrogate names on every day, its solve days or not (it
-  builds its problem every day; no solve is added), since a player comes back on any morning.
+  when the plan named him); with no name, or one who is not on the roster (he has left, or he
+  is the set's own add, who lands after the returns), and for every seat that names none (a
+  static, a market or a ranking seat), the rule before PR G: the least valuable active player
+  by the day's values. The roster is legal either way and the audit holds it to the same
+  rules. The surrogate names on every day, its solve days or not (it builds its problem every
+  day; no solve is added), since a player comes back on any morning.
   The names are made with the whole decided set made and nothing else: not what the day's cap
   or the week's adds then leave of it in the queue, and not the week plan's steps an arm that
   executes its plan queues beside it (limits, item 7, says what follows from each).
@@ -387,9 +389,9 @@ finite is refused like any knob's (the engine's own check passes a NaN).
   this week and there is no later week, so its plan brings him back inside no horizon and charges
   nobody; a held player told back in that week comes back to the rule before, and the keep rule
   and the threshold do not reach that morning (the final's week, where the calendar ends with
-  the bracket). (The week's pass
-  of `sends_of` names there only a held player the engine reads as back inside the week: a `GTD`
-  in an `IL+` slot, a day-one status, since a replay hears every absence as `O`.)
+  the bracket). (The week's pass of `sends_of` names there only a held player the engine reads
+  as back inside the week: a `GTD` in an `IL+` slot, a day-one status, since a replay hears
+  every absence as `O`.)
 - **Read a result at two levels of the told return's spread.** The knob weighs a return date the
   seat was only told: the world draws it around the true one (`world.NEWS_SD_DAYS`, `replay
   --news-sd`). A result on this knob is to be read at two levels of that spread, and one that
