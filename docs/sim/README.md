@@ -205,9 +205,12 @@ alone, on the arm's `surrogate_days` (Mondays and Thursdays by default). **Ranki
 pool's best for the roster's worst the keep rule does not keep, when it gains, with no evaluator.
 The executor lands yesterday's queue team by team in a rotating order. First its return rule: a held
 player whose status no longer fits his slot comes back to the bench that morning and, while the
-active roster is then over the league's spots, the least valuable active player by the day's value
-goes to the pool, the returning player included (counted as a forced drop; the keep rule stays out
-of the executor). Then a churn's held drop goes first, on his own, the held-slot moves a set needs
+active roster is then over the league's spots, a player goes to the pool, counted as a forced
+drop: the one the team's seat named for him the day before, when the seat plans with the engine
+and he is still one of its active players (PR G, "The stash threshold and the morning a held
+player comes back", below); else the least valuable active player by the day's value, the
+returning player included. The world reads no keep rule and no knob there: both reach the morning
+only through the seat's own choice. Then a churn's held drop goes first, on his own, the held-slot moves a set needs
 are made, and the adds land: a drop goes to the pool and the add takes his slot, an add that needs
 an active spot takes a bench slot or is gone when none is open, an add another team took first is
 gone and counted. A queued move is carried out against the day it lands: a held-slot move is made
@@ -338,6 +341,63 @@ matchup's win odds (the note says so in every one-win run, the format PR), as it
 won on the points in a points league, so its `ratio` differs by format: a `season_weight` set in
 one format is not the other's. The term itself (a value times games) is the same in both.
 
+**The stash threshold and the morning a held player comes back** (PR G). `stash_threshold` says
+by how much the player who keeps a spot must beat a returning player's value net of his return
+before the returning player may leave (the engine's reader, #373: a share, `worth > (1 + t) × net`;
+a returning player is one of the seat's own, active or held, who is out now, back this season and
+worth something then, `moves.returning_net`). `problem_of` sets it on the seat's problem from the
+arm's knob (`policy.stash_of`): None stays None, no test, and the problem is the one before PR G;
+a number is the share. Nothing else in the simulator reads the knob.
+
+- **The searches.** On the exact and the surrogate tier every set the engine's searches try is
+  held to it (`moves.stash_ok` in `moves.feasible`): a set that drops a returning player the
+  threshold keeps is refused, on the plain drop of an active player who is out and on a churn's
+  held drop alike. The ranking tier does not search with the engine: its one swap is checked as
+  before the reader (the threshold is taken off its problem), so it does not read the knob.
+- **Rivals keep None.** A mirror rival takes the arm whole but for this knob
+  (`policy.rival_knobs`, dropped when the rival is made): two arms that differ only in it face
+  one rival.
+- **The morning a held player comes back.** A seat that plans with the engine (the exact and the
+  surrogate tiers, a mirror rival) names who leaves, and the world checks it. Its decision
+  carries, for each of its held players the three weeks' plan brings back, the player the plan
+  drops for him then (`policy.sends_of`: `moves.comebacks` on the seat's own problem with the
+  decided set made, so the keep rule, which never sends a kept player while another can go, and
+  the threshold, which leaves a returning player it keeps out of the choice while another can
+  go, `moves.guarded_pool`, are the seat's own; nothing of either is written in the simulator).
+  The names live one night on the state (`SimState.sends`). The morning (`policy.arrive`) takes a
+  team's named player when its held player's status has cleared, its active roster is over the
+  spots and the named player is still one of its active players (the returning player himself,
+  when the plan named him); with no name, or one who has left the roster, and for every seat
+  that names none (a static, a market or a ranking seat), the rule before PR G: the least
+  valuable active player by the day's values. The roster is legal either way and the audit
+  holds it to the same rules. The surrogate names on every day, its solve days or not (it
+  builds its problem every day; no solve is added), since a player comes back on any morning.
+- **Whose date.** The engine dates a return by its own reading (an `O` is back next Monday, or
+  on his return date when later); the world brings him back the morning after his told date. So
+  the seat names every held player its plan charges inside the three weeks, whatever day the plan
+  gives him, and the name is used the morning he does come back. A held player the plan charges
+  nobody for (the set leaves him an active spot, or he is out past the three weeks) is not named.
+- **Read a result at two levels of the told return's spread.** The knob weighs a return date the
+  seat was only told: the world draws it around the true one (`world.NEWS_SD_DAYS`, `replay
+  --news-sd`). A result on this knob is to be read at two levels of that spread, and one that
+  holds at one level only is said as that level's.
+- **The count.** In a run where an arm names a threshold (and in no other), every seat's counts
+  carry `returning_dropped`: the players who left its roster (a move's drop, a churn's held
+  drop, a drop a returning held player forced) whom the engine read as returning on the seat's
+  problem the day before. A seat that builds no problem (a market or a static rival) has none.
+
+Two limits, each plainly. **The day's choice of an activation's drop** (`moves.choose_activation`,
+#360) is still not made: live chooses it for a player whose status has already cleared, by the
+queue's own score, and no problem a simulated seat decides on holds such a player (the morning
+has brought every one back before the seat decides); the season guard's figure for it lives in
+the live route, not in the engine's library. So the simulated seat's plan and its morning agree
+on the engine's fallback (the least valuable of those the keep rule and the threshold leave),
+where live would choose among them. And **a league with held slots may play another season at
+every threshold, None included** (Rule 1's exception in this PR): its mornings now follow the
+seat's plan, so wherever the keep rule moves the drop a held record of before PR G is not this
+one's at None; a comparison across thresholds then changes one thing only. A league without
+held slots at None is the one before, key for key.
+
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters
 what is recorded, such as a plan drawn and not executed, is not read. The shape is the league's
@@ -359,7 +419,7 @@ built:
 | `system` | the arm's own seat, on a replay that names the two sources' stand-ins | a run without stand-ins |
 | `blend` | the same, when the arm's `system` is `blend` | no stand-ins, or another system |
 | `faab_sizing` | in a FAAB run (PR Fb), a seat that bids by the live rule: exact, surrogate, a mirror rival | no budget in the world (no waivers, or waivers by priority); the ranking tier holds no gain in the engine's units and bids $0 |
-| `stash_threshold` | nobody | the engine reads it (#373); the simulator passes it, PR G |
+| `stash_threshold` | the arm's own seat on exact or surrogate, with or without a held slot (PR G) | the ranking tier's one swap is not held to it; a mirror rival keeps None; a static seat makes no move |
 | `pool`, `min_gain`, `weeks_ahead` | exact, surrogate | the ranking tier |
 | `surrogate_days` | surrogate, or a mirror rival | the exact tier decides every day |
 
@@ -1058,18 +1118,32 @@ What a replay with them does not model, each plainly:
 4. **Gate five has never seen such a league.** `validate` plays the fixed shape, nine categories,
    no held slot. What the surrogate tier does in a points league or with held slots rests on a
    gate that did not test it.
-5. `stash_threshold` is unread until PR G. Without waivers a dropped player is on the wire the
-   next morning, held or not; with them he waits ("The waivers").
+5. `stash_threshold` is read since PR G ("The stash threshold and the morning a held player comes
+   back"): a replay hears every absence as `O` with a told return, so an absent player of a seat
+   is a returning player to the engine while he is told back inside the season and is worth
+   something then. Without waivers a dropped player is on the wire the next morning, held or
+   not; with them he waits ("The waivers").
 6. The points table is the run's, and the default a platform's; a league's own table is given
    with `--points`.
-7. **What the executor does not see.** When a cleared held player comes back over the spots, the
-   executor (`policy._activate`) drops the least valuable active player by the day's per-game
-   values, him included, a tie broken by the id as text as the engine breaks it. The engine's
-   plan (`moves.comebacks`) can charge another player, in two ways: the keep rule (it never sends
-   a kept player while another can go), and the day's choice of an activation's drop
-   (`moves.choose_activation`, #360), which the simulator never calls, so the engine falls to its
-   weakest. On such a morning the seat's queue was planned on one roster and lands on another.
-   The held player's return is PR G's to finish, with `stash_threshold`.
+7. **What the executor sees since PR G, and what it still does not.** When a cleared held player
+   comes back over the spots, the player who leaves is the one the seat's plan charged
+   (`policy.sends_of`, `moves.comebacks` on the seat's problem), checked by the world
+   (`policy.arrive`): the keep rule and the stash threshold reach the morning through the seat's
+   choice, and the seat's queue lands on the roster it was planned on. A seat that names none (a
+   static, a market or a ranking seat), and a name that has left the roster, get the rule
+   before: the least valuable active player by the day's per-game values, him included, a tie
+   broken by the id as text as the engine breaks it. Still not seen, each plainly:
+   - **the day's choice of an activation's drop** (`moves.choose_activation`, #360), which the
+     simulator never calls: it chooses only for a player already cleared in the problem, and the
+     morning has brought every such player back before a seat decides; live's objective and its
+     season-guard figure for that choice are not in the engine's library (`season/`). So the
+     plan and the morning both hold the engine's fallback, its weakest of those the keep rule
+     and the threshold leave, where live would choose among them;
+   - **the day he comes back**: the engine dates a return by its own reading (an `O` is back
+     next Monday, or on his return date when later), the world brings him back the morning after
+     his told date. The name is used on the world's morning, whatever day the plan gave it;
+   - **an add with no drop queued for the morning a held player comes back** meets the morning's
+     order: he takes the open spot first and the add is gone.
 
 **The waivers** (`policy.clear_waivers`, `policy.queue`, PR Fa). Under `--waivers priority` a player
 who leaves a roster on the morning of day `d` (a seat's drop, a churn's held drop, a drop the world
@@ -1362,7 +1436,10 @@ fell short of the winning bid by. A claim is "behind" there when another claim o
 decided before it (the winner's, or one that failed). Under continuous waivers (PR Fc) the claim
 counts cover every add, so `landed` equals `claims_won` and `gone` equals `claims_failed`; no key
 is added. These counts are the world's knowledge of
-every bid, not the seat's: no decision reads them. A pair (`--arms`) adds the rivals'
+every bid, not the seat's: no decision reads them. In a run where an arm names a stash threshold
+only (PR G; a run that names none has no such key, so its counts are as before), last:
+`returning_dropped`, the players who left the seat's roster whom the engine read as returning
+on the seat's problem the day before (null for a seat that builds no problem). A pair (`--arms`) adds the rivals'
 seats as one row, both arms' seasons pooled. The landing counters are per seat on the state
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state
 counters); the rest is tallied by `sim/counts.py`.
@@ -1438,6 +1515,7 @@ added by the PR that builds it, and no flag invents a nudge.
 | `daily_cap` | minus 1 and plus 1 | surrogate | |
 | `plan_floor_cats`, `plan_floor_points` | one step each way | exact | the week plan drawn and executed |
 | `horizon_weight` | to each neighbour on the frontier | exact | `executes: weighted` |
+| `stash_threshold` | from none to 0 and to 0.25 (PR G) | surrogate | |
 | `faab_sizing` | to 0.5 and to 2 | surrogate | |
 | `season_weight` | plus a quarter of the run's season scale, and plus a half | surrogate | |
 | `playoff_weight` | to 1.5 | surrogate | a season weight: the baseline's, or with none a quarter of the season scale |
@@ -1453,9 +1531,9 @@ added by the PR that builds it, and no flag invents a nudge.
 The tier each lever is played on, in both arms, whatever tier the baseline names (the cheapest
 that reads the lever):
 
-- **the surrogate tier**, eleven levers: `protection_floor`, `daily_cap`, `faab_sizing`,
-  `season_weight`, `playoff_weight`, `pool`, `min_gain`, `weeks_ahead`, `surrogate_days`,
-  `system`, `blend`;
+- **the surrogate tier**, twelve levers: `protection_floor`, `daily_cap`, `stash_threshold`,
+  `faab_sizing`, `season_weight`, `playoff_weight`, `pool`, `min_gain`, `weeks_ahead`,
+  `surrogate_days`, `system`, `blend`;
 - **the exact tier**, six levers: `plan_floor_cats`, `plan_floor_points`, `horizon_weight`,
   `executes`, `with_plan`, `execute_plan`.
 
