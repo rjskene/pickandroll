@@ -15,11 +15,14 @@ never the week's measure); the seasons run in both."""
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from itertools import pairwise
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -32,7 +35,15 @@ from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, wk
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import BENCH, initial
-from tests.sim.sim_league import KNOBS, arm, make_setup, of_format, rates, recorded_lines
+from tests.sim.sim_league import (
+    KNOBS,
+    arm,
+    make_data_dir,
+    make_setup,
+    of_format,
+    rates,
+    recorded_lines,
+)
 from tests.sim.test_sim_held_morning import KINDS, WAYS, found, full_with_one_held, play
 from tests.sim.test_sim_seasons import rounded
 
@@ -633,6 +644,44 @@ def test_no_peek_with_a_threshold_named():
     first = nopeek.first_difference(base, got)
     assert first is not None and first[0] > day
     assert all(base[key] == got[key] for key in base if key[0] <= day)
+
+
+# --------------------------------------------------------------------------- the command
+BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
+
+
+@pytest.fixture(scope="module")
+def pinned_clock():
+    """The guard's clock, for the one test here that runs the command."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "now_local", lambda: BUSINESS_HOURS)
+        yield
+
+
+def test_the_command_takes_a_threshold_from_a_seat_s_file_and_counts_it(tmp_path, pinned_clock):
+    """End to end, once: a seat's file names the threshold, the arm parser takes it, the room
+    plays with an IL slot and the dry run prints the count for the seat that builds a problem
+    and not for the static seat beside it."""
+    folder = make_data_dir(tmp_path)
+    assert ss.main(["--data", str(folder), "--rooms", "0", "fit", "--seasons", "2023-2024"]) == 0
+    specs = {
+        "T": {"tier": "surrogate", "knobs": {**KNOBS, "stash_threshold": SHARE}},
+        "S": {"tier": "static", "knobs": KNOBS},
+    }
+    for name, spec in specs.items():
+        seat = {"name": name, "opponents": {"kind": "static"}, **spec}
+        (folder / f"{name}.json").write_text(json.dumps(seat))
+    seats = [str(folder / f"{n}.json") for n in specs]
+    argv = ["--data", str(folder), "--rooms", "0", "replay", "--seasons", "2024", "--workers", "1"]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        room = ("--seats", *seats, "--paths", "1", "--held", "IL=1")
+        code = ss.main([*argv, "--seed", "5", *room, "--dry-run"])
+    out = buf.getvalue()
+    assert code == 0, out
+    counts = {x.split(",")[1].strip(): x for x in out.splitlines() if x.startswith("counts, ")}
+    assert set(counts) == {"T", "S"}
+    assert "returning_dropped" in counts["T"] and "returning_dropped" not in counts["S"]
 
 
 # --------------------------------------------------------------------------- Rule 1
