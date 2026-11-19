@@ -24,10 +24,13 @@ from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, pl, st, wk
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED
-from pickandroll.sim.state import initial
+from pickandroll.sim.state import BENCH, WON, Waiting, initial
 from tests.sim import test_sim_split as split
-from tests.sim.sim_league import KNOBS, arm, every_category, make_setup, recorded_lines
+from tests.sim import test_sim_stash as stash
+from tests.sim.sim_league import KNOBS, arm, every_category, make_setup, rates, recorded_lines
 from tests.sim.test_no_peek import recorded
+from tests.sim.test_sim_continuous import morning, spots_of
+from tests.sim.test_sim_held_morning import found
 from tests.sim.test_sim_knobs import flip_setup, points_setup, weakened
 
 DAY = timedelta(1)
@@ -649,13 +652,14 @@ def queue_arm(name: str = "Q", **knobs) -> rn.Arm:
     )
 
 
-def season(setup, seat: rn.Arm):
-    """A made-up season with ``seat`` in seat 1 among market rivals at 0.3 a day: the variant's
-    result and its day records."""
-    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *PATH)
+def season(setup, seat: rn.Arm, path: tuple[int, int] = PATH):
+    """A made-up season with ``seat`` in seat 1 among market rivals at 0.3 a day, on ``path``:
+    the variant's result and its day records. A seat that names a stash threshold has the
+    run's count of it (``run.stash_named``)."""
+    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *path)
     days: list[rn.DayRecord] = []
     variant = {**{t: op.Market(0.3) for t in setup.teams}, 1: seat.seat()}
-    (result,) = rn.simulate(setup, w, [variant], on_day=days.append)
+    (result,) = rn.simulate(setup, w, [variant], on_day=days.append, stash=rn.stash_named([seat]))
     return result, days
 
 
@@ -663,6 +667,16 @@ def placed(r: rn.DayRecord, team: int = 1) -> list[tuple[int, int | None]]:
     """What ``team`` queued on the day: its free agents for the morning, then its claims."""
     return [(m.add, m.drop) for m in r.queued.get(team, ())] + [
         (c.move.add, c.move.drop) for c in r.claims.get(team, ())
+    ]
+
+
+def names_on_a_queued_drop(days, team: int = 1) -> list:
+    """The days ``team`` named, for a held player's return, the drop of a move it queued that
+    same day (the refit of PR G's names: none, since the names are made with the queue made)."""
+    return [
+        (r.day, r.state.sends[team], placed(r, team))
+        for r in days
+        if {x for _, x in r.state.sends.get(team, ())} & {drop for _, drop in placed(r, team)}
     ]
 
 
@@ -697,6 +711,11 @@ def test_every_league_kind_plays_a_season_under_queue_and_the_audit_finds_nothin
     assert ct.metrics_in(list(counts.values()))[-2:] == ct.PLANS
     if "IL" in kind:
         assert counts[1]["held_stints"] >= 1, counts[1]
+        # The seat names whom its held player sends, and never the drop of a move it queued
+        # that day (the refit of PR G's names; in the points kind the name made on the set
+        # alone was a queued step's drop on one day).
+        assert any(r.state.sends.get(1) for r in days)
+    assert names_on_a_queued_drop(days) == []
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
@@ -834,6 +853,328 @@ def test_a_split_seat_executes_the_queue_s_rule_on_its_own_table():
                 split.assert_split(w, r, label)
         queued[name] = [(r.day, placed(r)) for r in records]
     assert queued["Y"] != queued["B"]
+
+
+# --------------------------------------------------------------------------- the names
+#: The ways an add reaches a roster (``test_sim_held_morning.WAYS``): a free agent's add, with
+#: no waivers and with them; a claim under continuous waivers; and a claim on a dropped player
+#: who clears the next morning, the rule not named. By priority and by FAAB.
+ARRIVALS = (
+    ("none", "free_agent"),
+    *((w, way) for w in ("priority", "faab") for way in ("free_agent", "claim", "dropped_claim")),
+)
+#: And a claim on a dropped player who clears the morning after next: the step is dated then.
+LATE = (("priority", "late_claim"), ("faab", "late_claim"))
+
+
+def arriving(setup, waivers: str, way: str):
+    """``setup`` with the waivers and the waiver rule ``way`` asks for."""
+    if waivers == "none":
+        return setup
+    return waiving(setup, waivers, CONTINUOUS if way == "claim" else DROPPED)
+
+
+def held_back(setup, day: int = 1):
+    """Seat 1 ``day`` days into ``setup``'s season, a league with an IL slot: its best drafted
+    player ``back`` in the slot, out and told back today, so his status clears tomorrow
+    morning; its six active spots full with its other four and the wire's two weakest. The
+    state, the statuses, the return dates, ``back``, and the per-game values a morning weighs."""
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    state = initial(setup)
+    back, *rest = sorted((k for k, _ in state.rosters[1]), key=lambda k: -value[k])
+    two = sorted(state.pool, key=lambda k: value[k])[:2]
+    roster = (*((k, BENCH) for k in (*rest, *two)), (back, "IL"))
+    today = setup.start + day * DAY
+    state = replace(
+        state, day=today, rosters={**state.rosters, 1: roster}, pool=state.pool - set(two)
+    )
+    return state, {back: "O"}, {back: today}, back, value
+
+
+def next_morning(setup, state, decision, cap: int, execute_plan: bool, status, value):
+    """``decision`` queued tonight and tomorrow morning played as the runner plays it (the
+    returns and the trims, then the claims due, then the rest of the queue): the state the
+    night leaves and the one the morning does."""
+    spots, _ = spots_of(setup)
+    night = policy.queue(state, 1, decision, cap, setup.max_weekly_adds, execute_plan, spots, setup)
+    tomorrow = state.day + DAY
+    return night, replace(morning(setup, night, tomorrow, status, value), day=tomorrow)
+
+
+def placed_on(night) -> list[tuple[int, int | None]]:
+    """What seat 1 has queued on the state ``night``: free agents, then claims."""
+    return [(m.add, m.drop) for m in night.pending.get(1, ())] + [
+        (c.move.add, c.move.drop) for c in night.claims.get(1, ())
+    ]
+
+
+#: The path of the season of an arm that names a stash threshold and executes ``queue``: on
+#: the file's own (:data:`PATH`) that league's season counts the same with the threshold as without.
+THRESHOLD_PATH = (1, 1)
+
+
+def test_the_queue_is_gathered_in_one_place_for_the_executor_and_for_the_names():
+    """``policy.gathered``: what a seat means to queue tonight. A plan that leads is gathered
+    instead of the set, whatever the arm's plan switch; a plan beside the set only for an arm
+    that executes its plan; a step by the day its add is due. The executor queues that list."""
+    setup = cats()
+    state, decision, in_set, first, later = leading(setup)
+    tomorrow = state.day + DAY
+
+    def due(add: int):
+        return tomorrow
+
+    for execute_plan in (False, True):
+        assert policy.gathered(decision, execute_plan, due) == ([], [(first, 0)])
+    beside = replace(decision, plan_leads=False)
+    assert policy.gathered(beside, False, due) == ([in_set], [])
+    assert policy.gathered(beside, True, due) == ([in_set], [(first, 0)])
+    # A step dated later is due today when its add waits until then (a claim placed today),
+    # and a step with no date is due.
+    assert policy.gathered(beside, True, lambda add: later.day) == (
+        [in_set],
+        [(first, 0), (later, 1)],
+    )
+    undated = replace(beside, plan=(replace(later, day=None),))
+    assert policy.gathered(undated, True, due) == ([in_set], [(undated.plan[0], 0)])
+    assert policy.gathered(policy.NONE, True, due) == ([], [])
+    # The executor queues what is gathered, on the state's reading of the day a step is due.
+    for d, execute_plan in ((decision, False), (beside, False), (beside, True)):
+        moves, steps = policy.gathered(d, execute_plan, due)
+        want = tuple(mv.Move(m.add, m.drop) for m in (*moves, *(s for s, _ in steps)))
+        assert policy.queue(state, 1, d, 3, None, execute_plan).pending[1] == want
+
+
+@pytest.mark.parametrize("rule", (DROPPED, CONTINUOUS))
+def test_the_day_a_step_is_due_reads_the_same_on_the_problem_as_on_the_state(rule):
+    """The names are made when the seat decides, on its problem (``policy.due_on``), and the
+    queue is built at night, on the state (``policy.due_by``): for every candidate the two say
+    the same day, a free agent's tomorrow and a waiting player's clear date, so the names are
+    made with the list the executor then queues."""
+    setup = waiving(make_setup(**SMALL), "priority", rule)
+    state = replace(initial(setup), day=setup.start + 2 * DAY)
+    soon, late = sorted(state.pool)[:2]
+    tomorrow = state.day + DAY
+    waits = {soon: Waiting(tomorrow, 2), late: Waiting(tomorrow + 2 * DAY, 3)}
+    state = replace(state, waivers=waits)
+    built = policy.problem_of(setup, state, 1, dict(KNOBS), setup.projection, {}, {})
+    due = policy.due_on(built.problem)
+    candidates = [k for k, _ in built.problem.candidates]
+    assert {soon, late} < set(candidates)
+    for k in candidates:
+        assert due(k) == policy.due_by(state, k, tomorrow), k
+    assert due(soon) == tomorrow and due(late) == tomorrow + 2 * DAY
+    assert due(max(state.pool)) == tomorrow
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize(("waivers", "way"), ARRIVALS)
+def test_under_queue_a_returning_held_player_sends_whom_the_plan_s_step_made_charges(
+    waivers, way, h2h
+):
+    """The refit of PR G's names, for the queue's rule: the names are made with what the seat
+    queues that night made. A Tuesday on which the seat's held player is told back, in both
+    formats and every way an add arrives: the queue takes a week plan, whose one step due
+    tomorrow drops ``step.drop``. With the three weeks' set made, which is not queued, the
+    engine's plan charges that very player for the return, and that was the name as PR G made
+    it. With the step made it charges another player on the roster: the morning sends him, the
+    step lands (a free agent's add, or a claim won after the return and the trim, the morning's
+    order), the roster is the plan's and the audit finds nothing. With PR G's name the step's
+    drop left for the return and the step was gone (a claim: failed)."""
+    setup = make_setup(seed=2, weeks=3, playoff_weeks=1, held_slots=("IL",))
+    setup = arriving(setup if h2h == ONE_WIN else every_category(setup), waivers, way)
+    state, status, returns, back, value = held_back(setup)
+    tomorrow = state.day + DAY
+
+    def decided():
+        built = policy.problem_of(
+            setup, state, 1, {**KNOBS, "daily_cap": 3, **FLOORS}, setup.projection, status, returns
+        )
+        return built.problem, policy.decide(built, "exact", policy.QUEUE)
+
+    p, decision = decided()
+    if way == "dropped_claim":
+        # The step's add was dropped by another team and clears tomorrow: the step is a claim.
+        state = replace(state, waivers={decision.plan[0].add: Waiting(tomorrow, 3)})
+        p, decision = decided()
+    assert decision.plan_leads and decision.plan_sends is None and decision.moves
+    moves, steps = policy.gathered(decision, False, policy.due_on(p))
+    ((step, _),) = steps
+    assert moves == [] and step.day == tomorrow and len(decision.plan) > 1
+    # The names: with the step made, and not with the set made.
+    ((held, named),) = decision.sends
+    assert held == back and decision.sends == policy.sends_of(p, [step])
+    as_g = policy.sends_of(p, decision.moves)
+    assert as_g == ((back, step.drop),)
+    assert named != step.drop and named in dict(p.roster) and named not in p.kept
+    night, out = next_morning(setup, state, decision, 3, False, {}, value)
+    assert night.sends == {1: decision.sends} and placed_on(night) == [(step.add, step.drop)]
+    assert bool(night.claims.get(1)) == (way != "free_agent")
+    assert set(out.active(1)) == set(state.active(1)) - {named, step.drop} | {back, step.add}
+    assert out.held(1) == () and len(out.active(1)) == setup.spots()
+    assert out.forced_by == {1: 1} == out.executed_by and not out.gone_by
+    if way != "free_agent":
+        assert [(r.team, r.add, r.outcome) for r in out.resolved] == [(1, step.add, WON)]
+    assert found(setup, night, out, {}) == []
+    # As PR G made the name: the step's drop leaves for the return, and the step is gone.
+    night, lost = next_morning(setup, state, replace(decision, sends=as_g), 3, False, {}, value)
+    assert step.add not in lost.active(1) and named in lost.active(1)
+    assert lost.forced_by == {1: 1} == lost.gone_by and not lost.executed_by
+
+
+@pytest.mark.parametrize(("waivers", "way"), (*ARRIVALS, *LATE))
+def test_an_arm_that_executes_its_plan_names_with_the_set_and_the_step_due_made(waivers, way):
+    """The same refit for the arm that executes its plan beside its set (``execute_plan``),
+    every way an add arrives. PR G's Monday (``test_sim_stash.return_day``), the decision by
+    hand, so the seat weighs nothing and no format is named: no move in the set and a plan step
+    that drops ``low`` for ``free``. With the set alone made the engine's plan charges ``low``
+    for ``back``'s return; with the step made, ``nxt``. The executor keeps the names made with
+    what it queues (``Decision.plan_sends``): ``nxt`` leaves for the return and the step lands
+    on the roster it was planned on. A step that is a claim clearing the morning after next is
+    dated then and is placed tonight (``policy.due_by``), so the names are made with it too:
+    its drop is still on the roster when the claim is decided. With the set's own name ``low``
+    left for the return and the step was gone."""
+    setup, state, status, returns, back, low, nxt = stash.return_day(0)
+    free = max(state.pool)
+    setup = arriving(
+        replace(setup, projection={**setup.projection, free: rates(0.5)}), waivers, way
+    )
+    # The day's state was made for a league without waivers: the priority order and the
+    # dollars are day one's of the league as it now is.
+    first = initial(setup)
+    state = replace(state, priority=first.priority, dollars=first.dollars)
+    tomorrow = state.day + DAY
+    lands = tomorrow + DAY if way == "late_claim" else tomorrow
+    if way in ("dropped_claim", "late_claim"):
+        state = replace(state, waivers={free: Waiting(lands, 3)})
+    built = policy.problem_of(setup, state, 1, dict(KNOBS), setup.projection, status, returns)
+    p = built.problem
+    step = mv.Move(free, low, lands)
+    assert mv.feasible(p, (step,)) and not {low, nxt} & p.kept
+    decision = policy.named(p, policy.Decision(plan=(step,), source="exact"))
+    assert decision.sends == ((back, low),) and decision.plan_sends == ((back, nxt),)
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    cleared = {low: "O"}
+    night, out = next_morning(setup, state, decision, 1, True, cleared, value)
+    assert night.sends == {1: ((back, nxt),)} and placed_on(night) == [(free, low)]
+    assert bool(night.claims.get(1)) == (way != "free_agent")
+    assert back in out.active(1) and nxt in out.pool and out.forced_by == {1: 1}
+    assert found(setup, night, out, cleared) == []
+    if way == "late_claim":
+        # The claim is still open: its drop stayed for it, and it is won the morning after.
+        assert low in out.active(1) and [c.move.add for c in out.claims[1]] == [free]
+        before, out = out, replace(morning(setup, out, lands, cleared, value), day=lands)
+        assert found(setup, before, out, cleared) == []
+    assert set(out.active(1)) == set(state.active(1)) - {nxt, low} | {back, free}
+    assert out.executed_by == {1: 1} and not out.gone_by and out.forced_by == {1: 1}
+    if way != "free_agent":
+        assert [(r.team, r.add, r.outcome) for r in out.resolved] == [(1, free, WON)]
+    # With the set's own name (an arm that queues no step keeps it): ``low`` leaves for the
+    # return, and the step finds its drop gone.
+    plain = replace(decision, plan_sends=None)
+    night, lost = next_morning(setup, state, plain, 1, True, cleared, value)
+    assert night.sends == {1: ((back, low),)} and low in lost.pool
+    if way == "late_claim":
+        lost = replace(morning(setup, lost, lands, cleared, value), day=lands)
+    assert free not in lost.active(1) and nxt in lost.active(1)
+    assert lost.gone_by == {1: 1} and not lost.executed_by
+
+
+def test_a_stash_threshold_and_a_leading_plan_s_step_both_reach_the_name():
+    """An arm that names a stash threshold and executes ``queue``, on PR G's Monday with a free
+    agent above everyone, the leading plan by hand: its step due tomorrow drops ``nxt`` for the
+    star. With no threshold the plan with the step made charges ``low``, the least valuable,
+    for ``back``'s return. At a threshold nobody clears ``low``, a returning player, is left out
+    of the choice (the engine's ``guarded_pool``): made on the set alone the name is ``nxt``,
+    the step's own drop (PR G's name); made with the step made it is ``third``, the weakest of
+    the others. The morning sends him, the step lands, ``low`` stays, the audit finds nothing."""
+    setup, state, status, returns, back, low, nxt = stash.return_day(0)
+    star = max(state.pool)
+    setup = replace(setup, projection={**setup.projection, star: rates(3.0)})
+    step = mv.Move(star, nxt, state.day + DAY)
+    names = {}
+    for threshold in (None, stash.NEVER):
+        knobs = {**KNOBS, "stash_threshold": threshold}
+        built = policy.problem_of(setup, state, 1, knobs, setup.projection, status, returns)
+        p = built.problem
+        assert mv.feasible(p, (step,)) and mv.returning_net(p, low) is not None
+        led = policy.Decision(plan=(step,), source="exact", plan_leads=True)
+        names[threshold] = policy.named(p, led)
+        assert names[threshold].plan_sends is None
+    others = [k for k, _ in p.roster if k not in (low, nxt)]
+    third = min(others, key=lambda k: (p.value[k], str(k)))
+    assert third not in p.kept and p.value[third] < p.value[star]
+    assert names[None].sends == ((back, low),)
+    assert policy.sends_of(p) == ((back, nxt),) and names[stash.NEVER].sends == ((back, third),)
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    cleared = {low: "O"}
+    night, out = next_morning(setup, state, names[stash.NEVER], 1, False, cleared, value)
+    assert night.sends == {1: ((back, third),)} and placed_on(night) == [(star, nxt)]
+    assert set(out.active(1)) == set(state.active(1)) - {third, nxt} | {back, star}
+    assert out.forced_by == {1: 1} == out.executed_by and not out.gone_by
+    assert found(setup, night, out, cleared) == []
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_an_arm_that_names_a_stash_threshold_and_executes_queue_plays_a_season(h2h):
+    """The two together, the arm's own decisions over a season with an IL slot and waivers by
+    priority, in both formats: the audit finds nothing, the queue takes plans, the seat names
+    whom its held players send and a morning takes a name, the run's rows carry the stash count
+    and the queue's, and no name is ever the drop of a move the seat queued that day (in the
+    one-win season the name as PR G made it was, on one night; the other format's season has
+    no such night). The threshold is read: the season at None is another one."""
+    setup = waiving(make_setup(**SMALL, held_slots=("IL",)), "priority")
+    setup = setup if h2h == ONE_WIN else every_category(setup)
+    at_none, plain_days = season(setup, queue_arm(), THRESHOLD_PATH)
+    at_share, days = season(setup, queue_arm(stash_threshold=stash.SHARE), THRESHOLD_PATH)
+    assert at_none.breaches == at_share.breaches == ()
+    row = at_share.counts[1]
+    assert row["plan_days"] >= 1 and row["held_stints"] >= 1 and row["landed"] >= 1
+    assert row["returning_dropped"] is not None and "returning_dropped" not in at_none.counts[1]
+    assert list(row)[-3:] == [*ct.STASH, *ct.PLANS]
+    assert stash.mornings_named(days)
+    assert names_on_a_queued_drop(days) == [] == names_on_a_queued_drop(plain_days)
+    assert [placed(r) for r in days] != [placed(r) for r in plain_days]
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_split_seat_names_on_its_own_table_with_its_queue_made(h2h):
+    """The lesson of the draft PR's review again, for the names: a ``yahoo`` seat, which reads a
+    free agent on one table and its roster on another, executes ``queue`` over a season with an
+    IL slot, in both formats. The audit finds nothing; each night's names are the ones
+    ``policy.named`` gives on the seat's own table of that day with what it queues made; on
+    some night they are not the names made on the set alone (PR G's), and on some night the
+    run's table would name another player; no name is the drop of a move queued that day, and a
+    morning takes one."""
+    setup = make_setup(teams=4, pool=12, weeks=6, playoff_weeks=1, held_slots=("IL",))
+    setup = setup if h2h == ONE_WIN else every_category(setup)
+    lines = recorded_lines(setup, 11)
+    first = {k: {s: v * 1.1 for s, v in r.items()} for k, r in setup.projection.items()}
+    seat = replace(
+        arm("Y", "exact", "market", system="yahoo", daily_cap=3, **FLOORS), executes=policy.QUEUE
+    )
+    arms = ss.believing({"Y": seat}, split.SOURCES)
+    label = arms["Y"].forecaster
+    assert label in ss.splits_of(split.SOURCES, arms)
+    w = split.world_of(setup, lines, first, split.second_of(first), arms)
+    days, result = split.run(setup, w, split.variant_of(setup, arms, {1: "Y"}))
+    assert result.breaches == () and any(r.decisions[1].plan_leads for r in days)
+    named = [r for r in days if r.state.sends.get(1)]
+    moved = apart = 0
+    for r in named:
+        decision = r.decisions[1]
+
+        def names(table, r=r, decision=decision):
+            built = policy.problem_of(setup, r.state, 1, seat.knobs, table, r.status, r.returns)
+            fresh = policy.named(built.problem, replace(decision, sends=()))
+            return fresh.sends, policy.sends_of(built.problem, decision.moves)
+
+        own, on_the_set = names(r.held[label])
+        assert own == r.state.sends[1] == decision.sends, r.day
+        moved += own != on_the_set
+        apart += names(r.beliefs)[0] != own
+    assert named and moved and apart
+    assert names_on_a_queued_drop(days) == [] and stash.mornings_named(days)
 
 
 # --------------------------------------------------------------------------- Rule 1
