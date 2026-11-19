@@ -28,6 +28,7 @@ from typing import Any
 from ..season import Season
 from ..season import decisions as dl
 from ..season import moves as mv
+from ..season import picks as pk
 from ..season import plans as pl
 from ..season import progress as pg
 from ..season import weekly as wk
@@ -282,6 +283,9 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "week": _week(ev, model),
             }
         )
+    picks = payload.get("picks")
+    if picks is not None and picks["moves"]:
+        sets.append(picks_set(built, picks))
     search = payload.get("search") or {}
     return {
         **_common(built, at, "moves"),
@@ -302,6 +306,35 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
             "cycles": search.get("cycles"),
         },
         "sets": sets,
+        # The user's picks in force the solve could not make (#434): only with a pick in force.
+        **({"picks": {"skipped": picks["skipped"]}} if picks is not None else {}),
+    }
+
+
+def picks_set(built: Built, picks: Mapping[str, Any]) -> dict[str, Any]:
+    """The user's picks the solve made (#434) as one more set, ``pick``, after the others: each
+    move logged on the problem before the picks (``season_moves.picked``), with ``decided_by``
+    ``pick``, the user's bid when set and its score (the week plus ``three_weight`` times the
+    three weeks); this week before and after them. The queue takes it first."""
+    b = season_moves.picked(built)
+    p = b.problem
+    ev = mv.Evaluator(p)
+    moves = [
+        {**_logged(m, b), "bid": m["bid"], "decided_by": m["decided_by"], "score": m["score"]}
+        for m in picks["moves"]
+    ]
+    moves = _flagged(_based(moves, b), "moves", "three")
+    model = _moves_of(moves)
+    return {
+        "key": pk.PICK,
+        "weight": None,
+        "moves": moves,
+        "held": [{"player": k, "slot": slot} for k, slot in mv.held_used(p, model)],
+        "comebacks": {
+            h: season_moves.comebacks_rows(mv.comebacks(p, h, model)) for h in p.horizons
+        },
+        "gain": {h: round(ev.gain(h, model), 3) for h in season_moves.HORIZONS},
+        "week": _week(ev, model),
     }
 
 

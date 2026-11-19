@@ -579,7 +579,7 @@ column shows, each move valued on its own from its day as the log values it
   search's stands (both options, A and B). The private league is guarded the same way: it is the
   same engine, and the user still makes every move there by hand.
 - **The pool (#424).** The search, its re-solves and the solve without the guard all search
-  one pool per horizon (`season_moves.pool_for`): the 30 candidates whose best single swap gains
+  one pool per horizon (`season.pool.pool_for`, pure since #430; the API passes `POOL`, `GUARD_POOL`, `MIN_GAIN`): the 30 candidates whose best single swap gains
   most (`POOL`, in that order), then the best 30 by their best single swap the guard admits
   (`GUARD_POOL`, above `MIN_GAIN`), each not already in. A pool cut before the guard ran left the
   search little or nothing when the guard refused most of the 30 (all 30 in 251146's three
@@ -1207,6 +1207,37 @@ The streaming plan turns over a weak spot; a week plan orders the week's moves o
   carries `week_plans`: each plan's source, moves, total, rest of the season, score and matchup
   odds, the queue's index, `judged`, the floor and the seconds, so the choice can be replayed.
 - **Out of scope.** Plans across weeks; the Moves card's section is part 2b.
+
+## Your picks (#434)
+
+The user ruled on 2026-11-19 that we take chances on players who may outplay their projections,
+above all when the drop is a marginal player. A pick is a player the user names: the moves solve
+makes it, and the solver fills the adds left around it.
+
+- **Where.** In each league the pick names (all by default) where its player is available, on no
+  team and with a projection. A pick leaves a league once its player is on any team there, mine
+  included, and every league at its expiry (7 days unless set).
+- **The move.** `season.picks.forced`, on the roster the pending claims leave (#360): the pick
+  takes its add's effective day (a claim's clear day) and one add of that day's week, the picks
+  before it counted; a week with no add left skips it, and it waits for the next week's adds. Its
+  drop is the one the user named where that player is mine, else the option (an open spot, a held-slot
+  move, a drop or a churn) whose set with the picks before it scores best on the queue's score:
+  the week plus `three_weight` times the three weeks, the matchup odds in a playoff week. The keep
+  rule, Yahoo's can't-cut list, the held-slot logic, the stash threshold and the pending claims
+  apply as for any move: a named drop the keep rule keeps skips the pick. The season guard and the
+  noise floor do not: the pick is the user's call.
+- **The solve.** The picks made are folded into the problem like pending claims
+  (`season.picks.fold`): each add on my roster from its day, never a later move's drop or held-slot
+  move, its drop gone, and one add fewer in its week's limit. The keep rule is read again on that
+  roster. Every set, re-solve, plan, guard and comeback is then solved with the picks made. The
+  lineup and the roster views keep Yahoo's roster as read (`Built.real`).
+- **The record.** The moves payload's `picks` (only with a pick in force): `moves`, each with
+  `decided_by` `pick`, what it adds to the picks on each horizon (`marginal`) and to the queue's
+  score (`score`), its rest of the season, whether its drop is the one named, the user's bid and
+  its expiry; and `skipped`, each with why. The decision log adds the set `pick` after the others,
+  its moves logged on the roster before the picks, and `picks.skipped`. The Moves card shows them
+  as "Your picks"; the queue takes the set first (docs/AUTOPILOT.md, "Your picks"). With no pick in
+  force the payload and the log are today's, byte for byte.
 
 ## The breakout flag
 

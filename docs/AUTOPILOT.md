@@ -338,6 +338,22 @@ page, from PR 2:
   whose earlier step failed or was lost is held all day, never executed out of order, and the
   day's cap counts only what executed. A churn step is queued like any other: its add also waits
   on its held drop (below).
+- **Your picks (#434, ruled 2026-11-19).** The user may name players to add wherever they can:
+  `data/autopilot/picks.json`, set and removed from the Queue screen's box (`GET` and
+  `PUT /autopilot/picks`, `DELETE /autopilot/picks/{player}`), or by a session on the user's word
+  in chat. Each pick holds a Yahoo player id, its leagues (all, or a list), an optional drop and
+  bid, an expiry (7 days unless set), and who set it and when. Each league's moves solve makes
+  the picks whose player is available before it searches (`season.picks`), and the queue carries
+  them like its own moves: so this queue no longer takes only the solver's moves. Details in
+  docs/ADD_DROP.md, "Your picks". The build queues the decision log's `pick` set first, each
+  entry with the set and `decided_by` `pick`, judged on the week with the three weeks and its
+  score beside it, under the same rules as a move except the noise floor, the season-costly flag
+  and the re-add rule (the user's call): the private league or the mode off, a protected drop, a
+  claim already placed on the add or its drop, the week's adds not fully read or none left, the
+  day's cap, the picks counting first. The bid is the user's, clamped to the budget left, else
+  the bid policy's on its score (the breakout factor applies); a free agent is $0. A dry-run
+  league shows it; the private league shows it as a suggestion. A pick leaves a league once its
+  player is on any team there (`left` on the pick), and every league at its expiry.
 - **The noise floor.** The plan floor of the knobs against the move's gain; once 20 moves are
   scored, also the scorecard's spread (the standard deviation of realized less projected value of
   the public leagues' scored moves, by scoring) against the move's value on its judging horizon,
