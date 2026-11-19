@@ -1733,8 +1733,10 @@ chosen to suit it. So every look is counted.
 - A tune taken up again counts once. The same tune started again in a new folder reads the season
   again and is another look.
 - A piece learns whether it may play the confirmation's pair (the hour's rule, the routines'
-  window, `--max-minutes`) before the season is read, so a piece that is stopped there has not
-  opened it.
+  window, `--max-minutes`) before that pair is planned, so a piece that is stopped there has
+  read none of the season's games. What the check before the first pair reads of the season is
+  what was on file before it began (its draft table, a stored projection), in every piece and
+  in the dry run.
 - A finished tune whose line the ledger no longer holds (the file removed, the folder copied
   without it) says which look it was from its confirmation pair's own record, says the ledger
   lost it, and adds no line. A folder with pairs and no `tune.json` is refused by name: the
