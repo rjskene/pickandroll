@@ -2,8 +2,9 @@
 guard PR): an arm's ``guard`` (``block``, live's, or ``off``) and its ``stake`` (0 to 1), how
 they are parsed and refused, the allowed set a tier's searches take, the season figure a stake
 splits at the running week's last day, the stake the runner sets once a week, the counts, the
-record, Rule 1, no peek and every league kind once. The pure stake is ``test_sim_stake.py``'s; the screen's two rows are held by
-``test_sim_screen.py``'s list tests and the ones at the end here.
+record, Rule 1, no peek and every league kind once. The pure stake is ``test_sim_stake.py``'s;
+the screen's two rows are held by ``test_sim_screen.py``'s list tests and the ones at the end
+here.
 
 Made-up leagues, fixed seeds. A test whose seat weighs runs in both head-to-head formats, or
 says why it names one."""
