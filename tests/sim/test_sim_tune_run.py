@@ -1346,6 +1346,86 @@ def test_what_only_the_confirmation_s_plan_finds_is_recorded_with_the_final_set(
     assert READS[mark:].count(2022) == 2
 
 
+def test_a_tune_under_a_draft_table_confirms_on_a_season_that_has_one(data: Path, monkeypatch):
+    """The way out the refusal names, played: a tune under a draft table, confirmed on a season
+    whose log has a table and that the search did not play. The league is drafted on the table
+    in the search's pairs and in the confirmation's, the verdict is stated, and no look is
+    counted. The made-up world's carried seasons are this test's own: a season drafted on a
+    table is another record than one drafted on the forecaster."""
+    monkeypatch.setitem(globals(), "CARRIED", {})
+    monkeypatch.setattr(ss, "task_paired", made_up(WIDER))
+    table = ("--adp", "espn", "--adp-spread", "1,0")
+    before = looks(data)
+    code, out = tune(data, *table, levers=("pool",), name="table", confirm="2023")
+    assert code == 0 and "refused" not in out, out
+    rec = record(data, "table")
+    world = rec["spec"]["world"]
+    assert (world["adp"], world["adp_spread"], rec["spec"]["confirm"]) == ("espn", "1,0", 2023)
+    for key, season in (("p1-pool-45-again", "2024"), ("confirm-run", "2023")):
+        drafted = pair_of(data, "table", key)["adp"]
+        assert drafted["source"] == "espn" and set(drafted["seasons"]) == {season}
+    assert rec["final"]["set"] == {"pool": 60}
+    conf = rec["confirmation"]
+    assert (conf["status"], conf["verdict"]["state"]) == (tn.CONFIRMED, tn.HOLDS)
+    assert conf["look"] is None and looks(data) == before
+    assert conf["look_note"] == ss.TUNE_OTHER_SEASON.format(season=2026)
+    assert "the final set is recommended" in out
+
+
+def test_a_forecaster_the_search_read_with_no_cell_on_the_season_is_no_verdict_in_a_run(
+    data: Path, whole, monkeypatch
+):
+    """Two forecasters, searched on a season both serve: the sign rule reads both cells. The
+    season confirmed on has one earlier season on file, so ``marcel`` has no cell there. The
+    check before the first pair refuses such a tune by name. With the check switched off (the
+    files changed under a tune in flight) the confirmation is played for ``prior`` alone:
+    ``marcel`` is listed with replay's reason, and there is no verdict, however ``prior``
+    finished. (``marcel``'s carried seasons are ``prior``'s: the made-up world sets the
+    outcomes.)"""
+
+    def never(*a, **k):
+        raise AssertionError("a path was played")
+
+    flags = ("--forecasters", "prior,marcel")
+    before = looks(data)
+    monkeypatch.setattr(ss, "task_paired", never)
+    code, out = tune(data, *flags, levers=("pool",), name="two", confirm="2023")
+    assert code == 2, out
+    assert (
+        "refused: --confirm 2023: the search reads marcel, which cannot serve season 2023 (" in out
+    )
+    assert "tunes/two" not in folders(data)
+    for (label, path, rules), kept in list(CARRIED.items()):
+        if label == "prior":
+            monkeypatch.setitem(CARRIED, ("marcel", path, rules), {**kept, "forecaster": "marcel"})
+    monkeypatch.setattr(ss, "confirm_unfit", lambda *a, **k: None)
+    monkeypatch.setattr(ss, "task_paired", made_up(WIDER))
+    code, out = tune(data, *flags, levers=("pool",), name="two", confirm="2023")
+    assert code == 0, out
+    rec = record(data, "two")
+    (step,) = rec["steps"]
+    for value in step["values"]:
+        assert set(value["result"]["by_cell"]) == {"2024 prior", "2024 marcel"}
+        assert value["result"]["signs"] == tn.ABOVE
+    conf = rec["confirmation"]
+    assert conf["status"] == tn.CONFIRMED and set(conf["cells"]["run"]) == {"prior"}
+    (why,) = conf["skipped"].values()
+    assert list(conf["skipped"]) == ["marcel"] and why
+    verdict = conf["verdict"]
+    assert (verdict["state"], verdict["read"], verdict["missing"]) == (
+        None,
+        ["prior"],
+        {"marcel": why},
+    )
+    assert verdict["by_forecaster"] == {"prior": {"run": tn.AHEAD}}
+    assert f"  marcel: no cell on the season confirmed on ({why})" in out
+    assert (
+        f"verdict (advisory): no verdict: the search read marcel ({why}), and the season "
+        "confirmed on has no cell for it"
+    ) in out
+    assert "the final set is recommended" not in out and looks(data) == before
+
+
 # --------------------------------------------------------------------------- one seat, one kind
 def test_mirror_rivals_the_static_pair_that_is_one_seat_is_not_planned(data: Path, whole):
     """A baseline whose rivals are its mirror. The search moves the weight of the horizons
