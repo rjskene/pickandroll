@@ -296,7 +296,8 @@ None stays a value only where the engine's default is None (`blend`, `stash_thre
 - `surrogate_days` (Monday and Thursday, a non-empty set of weekdays 0 to 6): the days the
   surrogate solves.
 
-A mirror rival takes the arm whole, knobs and fields. Every payload records the four fields of
+A mirror rival takes the arm whole, knobs and fields, but for the stash threshold, which a rival
+keeps at None (PR G, below). Every payload records the four fields of
 every arm and, under `surrogate`, the surrogate's pool and days as the arm sets them; gate 5's
 check (`checks.surrogate_matches`) takes the arm's. Nothing in the engine that the moves route
 reaches assumes exactly three later weeks.
@@ -347,7 +348,9 @@ before the returning player may leave (the engine's reader, #373: a share, `wort
 a returning player is one of the seat's own, active or held, who is out now, back this season and
 worth something then, `moves.returning_net`). `problem_of` sets it on the seat's problem from the
 arm's knob (`policy.stash_of`): None stays None, no test, and the problem is the one before PR G;
-a number is the share. Nothing else in the simulator reads the knob.
+a number is the share. No decision reads the knob but through the problem: the runner reads it
+only to name the count (below), and a mirror rival is made without it. A number that is not
+finite is refused like any knob's (the engine's own check passes a NaN).
 
 - **The searches.** On the exact and the surrogate tier every set the engine's searches try is
   held to it (`moves.stash_ok` in `moves.feasible`): a set that drops a returning player the
@@ -372,11 +375,21 @@ a number is the share. Nothing else in the simulator reads the knob.
   valuable active player by the day's values. The roster is legal either way and the audit
   holds it to the same rules. The surrogate names on every day, its solve days or not (it
   builds its problem every day; no solve is added), since a player comes back on any morning.
+  The names are made with the whole decided set made and nothing else: not what the day's cap
+  or the week's adds then leave of it in the queue, and not the week plan's steps an arm that
+  executes its plan queues beside it (limits, item 7, says what follows from each).
 - **Whose date.** The engine dates a return by its own reading (an `O` is back next Monday, or
   on his return date when later); the world brings him back the morning after his told date. So
   the seat names every held player its plan charges inside the three weeks, whatever day the plan
   gives him, and the name is used the morning he does come back. A held player the plan charges
   nobody for (the set leaves him an active spot, or he is out past the three weeks) is not named.
+  **In the season's last week no `O` is named:** the engine reads an `O` as out for the rest of
+  this week and there is no later week, so its plan brings him back inside no horizon and charges
+  nobody; a held player told back in that week comes back to the rule before, and the keep rule
+  and the threshold do not reach that morning (the final's week, where the calendar ends with
+  the bracket). (The week's pass
+  of `sends_of` names there only a held player the engine reads as back inside the week: a `GTD`
+  in an `IL+` slot, a day-one status, since a replay hears every absence as `O`.)
 - **Read a result at two levels of the told return's spread.** The knob weighs a return date the
   seat was only told: the world draws it around the true one (`world.NEWS_SD_DAYS`, `replay
   --news-sd`). A result on this knob is to be read at two levels of that spread, and one that
@@ -399,7 +412,9 @@ where live would choose among them. And **a league with held slots may play anot
 every threshold, None included** (Rule 1's exception in this PR): its mornings now follow the
 seat's plan, so wherever the keep rule moves the drop a held record of before PR G is not this
 one's at None; a comparison across thresholds then changes one thing only. A league without
-held slots at None is the one before, key for key.
+held slots at None is the one before, key for key, but for one word of the record: the reads
+table's row for `stash_threshold` ("What each knob reads"), which every record carries and which
+now says who reads the knob, at None too. No figure moves.
 
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters
@@ -788,7 +803,8 @@ side's table is `forecast.system_rates` (a mix passes through `consistent`), bel
 like any forecaster; a `yahoo` or `blend` seat's day table (`run.split_beliefs`) takes the first
 stand-in's belief of every player on any roster of its own league that morning, held slots
 included, and that table's belief of every other player. The table follows the rosters: the
-forced drops at the landing are weighed on the rosters as they stand before anything lands, and
+forced drops at the landing that the seat did not name are weighed on the rosters as they stand
+before anything lands (a drop it named the day before, PR G, was chosen on that day's table), and
 the decision, the lineup, the day record and the score on the rosters after it, so a player
 dropped yesterday reads the available side today and one added yesterday the first's. The seat
 reads one table a day and its values are that table's. The world holds the first stand-in's
@@ -1132,10 +1148,11 @@ What a replay with them does not model, each plainly:
    comes back over the spots, the player who leaves is the one the seat's plan charged
    (`policy.sends_of`, `moves.comebacks` on the seat's problem), checked by the world
    (`policy.arrive`): the keep rule and the stash threshold reach the morning through the seat's
-   choice, and the seat's queue lands on the roster it was planned on. A seat that names none (a
-   static, a market or a ranking seat), and a name that has left the roster, get the rule
-   before: the least valuable active player by the day's per-game values, him included, a tie
-   broken by the id as text as the engine breaks it. Still not seen, each plainly:
+   choice, and in the plain case (the whole set queued, no plan step beside it, the charged
+   player on the roster) the seat's queue lands on the roster it was planned on. A seat that
+   names none (a static, a market or a ranking seat), and a name that is not on the roster, get
+   the rule before: the least valuable active player by the day's per-game values, him included,
+   a tie broken by the id as text as the engine breaks it. Still not seen, each plainly:
    - **the day's choice of an activation's drop** (`moves.choose_activation`, #360), which the
      simulator never calls: it chooses only for a player already cleared in the problem, and the
      morning has brought every such player back before a seat decides; live's objective and its
@@ -1146,7 +1163,26 @@ What a replay with them does not model, each plainly:
      next Monday, or on his return date when later), the world brings him back the morning after
      his told date. The name is used on the world's morning, whatever day the plan gave it;
    - **an add with no drop queued for the morning a held player comes back** meets the morning's
-     order: he takes the open spot first and the add is gone.
+     order: he takes the open spot first and the add is gone;
+   - **the plan can charge the set's own add**, who is on the roster the plan weighs and not on
+     the one the morning finds (the adds land after the returns): the name is then not on the
+     roster, the rule before applies, and another player leaves than the plan charged;
+   - **the queue can land less than the set.** The names are made with the whole decided set
+     made; the queue keeps what the day's cap and the week's adds allow. On a day the cap cuts
+     the set the name is the engine's charge on a roster the morning does not find (it can be
+     the returning player himself, where with the queued moves alone another would go);
+   - **a plan step queued beside the set.** For an arm that executes its week plan the names are
+     still made with the set alone, and both the plan and the charge pick among the players the
+     keep rule does not keep. So a name can be the drop of a plan step queued for the same
+     morning: he leaves as the forced drop and the step finds its drop gone (counted in `gone`),
+     where the rule before sent the least valuable player and landed the step when he was
+     another. When, with the step made, the engine's plan charges the step's own add (who would
+     come and go), the roster the morning leaves is the one that plan charges, by a move that
+     is not made; when it charges a third player, that player stays and the add does not come.
+     PR E, which builds what the exact tier queues, is to make the names with what the seat
+     queues that morning made;
+   - **the season's last week**: no `O` is named there ("Whose date", above), so a held player
+     told back in it comes back to the rule before.
 
 **The waivers** (`policy.clear_waivers`, `policy.queue`, PR Fa). Under `--waivers priority` a player
 who leaves a roster on the morning of day `d` (a seat's drop, a churn's held drop, a drop the world

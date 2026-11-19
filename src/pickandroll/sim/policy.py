@@ -94,10 +94,10 @@ names who leaves and the world checks it: its decision carries, for each held pl
 brings back, the drop the plan charges (:func:`sends_of`, ``moves.comebacks`` on the seat's own
 problem, so the keep rule and the threshold are the seat's), the state keeps the names one night
 (``SimState.sends``), and :func:`arrive` takes a named player who is still active when the roster
-is over its spots; with no name, or one who has left, the least valuable active player leaves, as
-before. The world reads neither the knob nor the keep rule. The day's choice of an activation's
-drop (``moves.choose_activation``, #360) is not made here: no problem a seat decides on holds a
-cleared player.
+is over its spots; with no name, or one who is not on the roster, the least valuable active player
+leaves, as before. The world reads neither the knob nor the keep rule. The day's choice of an
+activation's drop (``moves.choose_activation``, #360) is not made here: no problem a seat decides
+on holds a cleared player.
 """
 
 from __future__ import annotations
@@ -411,7 +411,15 @@ def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tu
     him an active spot, or he is out past the horizons) is not named. The engine dates a return
     by its own reading (an ``O`` is back next Monday, or on his return date when later); the
     morning he does come back is the world's (:func:`arrive`), which takes the drop named here
-    whatever day the plan gave it."""
+    whatever day the plan gave it.
+
+    The three weeks' pass names every held player who is back inside the horizons while there
+    is a later week. The week's pass adds to it in the season's last week alone, where there is
+    none, and only a held player the engine reads as back inside the week (a ``GTD`` in an
+    ``IL+`` slot): an ``O`` is out for the rest of the week to the engine, so in the last week
+    its plan charges nobody for him and he is not named (the README's limits). ``moves`` is the
+    decided set, whole: not what the queue then keeps of it within the day's cap and the week's
+    adds, and not the week plan's steps an arm that executes its plan queues beside it."""
     held = {k for k, _ in problem.held}
     if not held:
         return ()
@@ -1600,11 +1608,14 @@ def _activate(
     each. A seat that plans with the engine names who (``named``, PR G: the returning player to
     the drop its plan charged him, :func:`sends_of`), and the world only checks it: the named
     player leaves when he is still one of the team's active players, the returning player
-    himself when the plan named him. With no name, or one who has left the roster, and for every
-    seat that names none (a static, a market or a ranking seat), the rule before PR G: the least
-    valuable active player by ``value`` leaves, the returning player included, a tie broken as
-    the engine breaks it. The world reads no knob and no keep rule here: both reach the morning
-    only through the seat's own choice. The players who left."""
+    himself when the plan named him. With no name, or one who is not on the roster (he has
+    left, or he is an add of the seat's that lands after this), and for every seat that names
+    none (a static, a market or a ranking seat), the rule before PR G: the least valuable active
+    player by ``value`` leaves, the returning player included, a tie broken as the engine breaks
+    it. The world reads no knob and no keep rule here: both reach the morning only through the
+    seat's own choice. It does not read the team's queue either: a named player a move queued
+    for this morning also drops leaves here, and that move then finds its drop gone
+    (:func:`land`). The players who left."""
     back: list[int] = []
     for i, (k, slot) in enumerate(roster):
         if slot in mv.HELD and mv.is_cleared(status.get(k), slot):
