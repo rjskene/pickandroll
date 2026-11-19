@@ -3,6 +3,12 @@ own searches read it there (``moves.stash_ok`` in every set's feasibility): a re
 is the search's drop with no threshold and is kept at one, on the plain drop and on a churn's
 held drop. A mirror rival keeps None and the ranking tier's one swap is not held to it.
 
+And the morning a held player comes back: a seat that plans with the engine names whom he sends
+(``policy.sends_of``: ``moves.comebacks`` on the seat's own problem, so the keep rule and the
+threshold are the seat's), and the world only checks it (``policy.arrive``). The day's choice of
+an activation's drop (``moves.choose_activation``) is not built: no problem a seat decides on
+holds a cleared player (the README's limits, "What the executor sees since PR G").
+
 Made-up leagues, fixed seeds. The days' seats weigh on one made-up day and compare two decisions
 made in the same run, so they name no format (the engine's threshold test reads season values,
 never the week's measure)."""
@@ -17,9 +23,10 @@ import pytest
 
 from pickandroll.sim import opponents as op
 from pickandroll.sim import policy
-from pickandroll.sim.engine import mv
+from pickandroll.sim.engine import mv, wk
 from pickandroll.sim.state import BENCH, initial
 from tests.sim.sim_league import KNOBS, make_setup, rates
+from tests.sim.test_sim_held_morning import KINDS, WAYS, found, full_with_one_held, play
 
 TEAM = 1
 WEEK = timedelta(7)
@@ -173,3 +180,213 @@ def test_a_mirror_rival_keeps_none():
     own = policy.problem_of(setup, state, TEAM, named, setup.projection, status, returns)
     kept = policy.decide(own, "surrogate", with_plan=False)
     assert kept.moves and gone not in {m.drop for m in kept.moves}
+
+
+# --------------------------------------------------------------------------- the morning
+def return_day(weekday: int):
+    """Seat 1 with an IL slot on the first Monday (``weekday`` 0) or Tuesday (1) of a six-week
+    league: its best drafted player ``back`` in the slot, out (``O``) and told back today, so
+    his status clears tomorrow morning; its six active spots full with its other four, ``low``
+    and ``nxt``, its two weakest and both below the league's average, ``low`` the weaker and out
+    (``O``, no date: back next Monday). Every free agent is weaker still, so nobody is beaten by
+    the best add. On the Monday ``low`` is a week from back and the keep rule lets him go; on the
+    Tuesday he is back inside a week and it keeps him on the bench (``moves.kept_of``'s short
+    absence). The setup, the state, the statuses, the return dates, ``back``, ``low``, ``nxt``."""
+    setup = make_setup(weeks=6, held_slots=("IL",))
+    state = initial(setup)
+    pool = sorted(state.pool)
+    low, nxt, wire = pool[0], pool[1], pool[2:]
+    back, *rest = (k for k, _ in state.rosters[TEAM])
+    projection = {
+        **setup.projection,
+        low: rates(0.3),
+        nxt: rates(0.35),
+        **{k: rates(0.1 + 0.01 * i) for i, k in enumerate(wire)},
+    }
+    setup = replace(setup, projection=projection)
+    roster = (*((k, BENCH) for k in (*rest, low, nxt)), (back, "IL"))
+    day = setup.start + timedelta(weekday)
+    state = replace(state, day=day, rosters={**state.rosters, TEAM: roster}, pool=frozenset(wire))
+    return setup, state, {back: "O", low: "O"}, {back: day}, back, low, nxt
+
+
+def named_on(day, tier: str, threshold: float | None):
+    """The seat's decision on the day, and the problem it was made on."""
+    setup, state, status, returns, *_ = day
+    built = policy.problem_of(
+        setup, state, TEAM, knobs_at(threshold), setup.projection, status, returns
+    )
+    return built, policy.decide(built, tier, with_plan=False)
+
+
+def next_morning(day, decision, names: bool = True):
+    """The state the morning after ``decision`` is queued: ``back``'s status has cleared, the
+    rest stands. ``names`` False: the seat's names are taken off, as for a seat that names none."""
+    setup, state, status, _, back, *_ = day
+    spots = setup.spots()
+    placed = policy.queue(state, TEAM, decision, 1, setup.max_weekly_adds, False, spots, setup)
+    if not names:
+        placed = replace(placed, sends={})
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    cleared = {k: s for k, s in status.items() if k != back}
+    out = policy.land(placed, setup.teams, spots, None, cleared, value)
+    return placed, replace(out, day=state.day + timedelta(1)), cleared
+
+
+@pytest.mark.parametrize("tier", SEARCH)
+def test_the_keep_rule_moves_the_drop_a_returning_held_player_forces(tier):
+    """On the Tuesday the keep rule keeps ``low`` on the bench, so the engine's plan charges
+    ``nxt``, and ``nxt`` is who leaves; the rule before PR G, which a seat that names none still
+    gets, sends ``low``, the least valuable by the day's values. On the Monday the keep rule
+    keeps neither and both rules send ``low``. (The surrogate solves on neither Tuesday: it
+    names on every day.)"""
+    for weekday, charged in ((1, "nxt"), (0, "low")):
+        day = return_day(weekday)
+        setup, _, _, _, back, low, nxt = day
+        who = {"low": low, "nxt": nxt}[charged]
+        built, decision = named_on(day, tier, None)
+        assert (low in built.problem.kept) is (weekday == 1) and nxt not in built.problem.kept
+        assert (
+            built.problem.value[low]
+            < built.problem.value[nxt]
+            == min(
+                v
+                for k, v in built.problem.value.items()
+                if k in dict(built.problem.roster) and k != low
+            )
+        )
+        assert decision.moves == () and decision.sends == ((back, who),)
+        placed, out, status = next_morning(day, decision)
+        assert placed.sends == {TEAM: ((back, who),)} and out.sends == {}
+        assert back in out.active(TEAM) and who in out.pool and out.forced_by == {TEAM: 1}
+        assert set(out.active(TEAM)) == set(placed.active(TEAM)) - {who} | {back}
+        assert found(setup, placed, out, status) == []
+        _, before, _ = next_morning(day, decision, names=False)
+        assert low in before.pool and nxt in before.active(TEAM) and before.forced_by == {TEAM: 1}
+
+
+@pytest.mark.parametrize("tier", SEARCH)
+def test_the_threshold_moves_the_drop_a_returning_held_player_forces(tier):
+    """On the Monday ``low`` is a returning player the keep rule does not keep. With no
+    threshold the plan charges him; at a threshold ``nxt``, the one who would go instead, does
+    not clear, the engine leaves him out of the choice (``moves.guarded_pool``) and ``nxt``
+    leaves. The world reads no knob: the same morning without the seat's names sends ``low``."""
+    day = return_day(0)
+    setup, _, _, _, back, low, nxt = day
+    built, at_none = named_on(day, tier, None)
+    assert mv.returning_net(built.problem, low) is not None
+    assert mv.returning_net(built.problem, nxt) is None
+    assert at_none.sends == ((back, low),)
+    _, kept = named_on(day, tier, NEVER)
+    assert kept.sends == ((back, nxt),)
+    placed, out, status = next_morning(day, kept)
+    assert nxt in out.pool and low in out.active(TEAM) and back in out.active(TEAM)
+    assert out.forced_by == {TEAM: 1} and found(setup, placed, out, status) == []
+    _, unnamed, _ = next_morning(day, kept, names=False)
+    assert low in unnamed.pool and nxt in unnamed.active(TEAM)
+
+
+def test_a_named_drop_that_has_left_the_roster_falls_back_and_an_open_spot_sends_nobody():
+    day = return_day(0)
+    setup, state, _, _, back, low, nxt = day
+    _, kept = named_on(day, "surrogate", NEVER)
+    assert kept.sends == ((back, nxt),)
+    # ``nxt`` left overnight (not by a move of the seat's): the rule before PR G sends ``low``.
+    roster = tuple(x for x in state.rosters[TEAM] if x[0] != nxt)
+    short = replace(state, rosters={**state.rosters, TEAM: roster}, pool=state.pool | {nxt})
+    wire = wk.per_game_values(setup.projection, setup.cats, None)
+    names = replace(short, sends={TEAM: kept.sends})
+    cleared = {low: "O"}
+    # One spot is open now: he takes it and nobody leaves, named or not.
+    out = policy.land(names, setup.teams, setup.spots(), None, cleared, wire)
+    assert back in out.active(TEAM) and low in out.active(TEAM) and out.forced_by == {}
+    # Full again with another player, the named one still gone: the least valuable leaves.
+    other = max(state.pool)
+    full = replace(
+        names,
+        rosters={**names.rosters, TEAM: (*roster, (other, BENCH))},
+        pool=names.pool - {other},
+    )
+    out = policy.land(full, setup.teams, setup.spots(), None, cleared, wire)
+    weakest = min((k for k, s in full.rosters[TEAM] if s == BENCH), key=lambda k: wire[k])
+    assert weakest in out.pool and back in out.active(TEAM) and out.forced_by == {TEAM: 1}
+    # The plan named the returning player himself: he is active once back, and he leaves.
+    own = replace(full, sends={TEAM: ((back, back),)})
+    out = policy.land(own, setup.teams, setup.spots(), None, cleared, wire)
+    assert back in out.pool and weakest in out.active(TEAM) and out.forced_by == {TEAM: 1}
+
+
+@pytest.mark.parametrize("way", WAYS)
+@pytest.mark.parametrize("waivers", KINDS)
+def test_the_named_drop_leaves_before_the_claims_so_the_add_finds_its_drop(waivers, way):
+    """The morning's order of Fc's review (``arrive``, ``clear_waivers``, ``land``) with a name:
+    ``z`` clears the morning team 2's add of ``x`` for ``y`` comes in, and ``y`` is its least
+    valuable by the day's values. The rule before PR G takes ``y`` and the add fails or is gone
+    (``test_sim_held_morning``'s first case). The seat's plan charged ``extra``: he leaves, on
+    waivers like anyone who leaves a roster, and the add lands for ``y``, every way it arrives,
+    by priority and by FAAB, under both waiver rules. The seat's moves are scripted, so the case
+    names no format."""
+    setup, s, x, z, extra, y = full_with_one_held(waivers, way)
+    decision = policy.Decision((mv.Move(x, y),), sends=((z, extra),))
+    value = {k: 10.0 for k, _ in s.rosters[2]} | {x: 1.0, y: 5.0}
+    placed, out = play(setup, s, 2, decision, {}, value)
+    assert placed.sends == {2: ((z, extra),)} and out.sends == {}
+    assert x in out.active(2) and z in out.active(2) and y in out.pool and extra in out.pool
+    assert out.forced_by == {2: 1} and not out.gone_by.get(2)
+    assert out.waivers[extra].by == 2 and out.waivers[extra].clears == out.day + timedelta(2)
+    assert found(setup, placed, out) == []
+
+
+def test_a_name_made_on_one_day_is_replaced_by_the_next_day_s():
+    """The names are one night's. On the Monday the seat names ``low``; ``back`` is told a day
+    later and does not clear, so the morning spends the name unused. On the Tuesday the keep
+    rule keeps ``low`` and the seat names ``nxt``: he is who leaves the morning ``back`` does
+    come back. A decision with no name takes the team's off, and another team's stand."""
+    setup, state, status, _, back, low, nxt = return_day(0)
+    spots = setup.spots()
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    tuesday = state.day + timedelta(1)
+
+    def decide(s, told):
+        built = policy.problem_of(
+            setup, s, TEAM, knobs_at(None), setup.projection, status, {back: told}
+        )
+        return policy.decide(built, "surrogate")
+
+    first = decide(state, tuesday)
+    assert first.sends == ((back, low),)
+    placed = policy.queue(state, TEAM, first, 1, None, False, spots, setup)
+    morning = replace(policy.land(placed, setup.teams, spots, None, status, value), day=tuesday)
+    assert morning.rosters == state.rosters and morning.sends == {} and morning.forced_by == {}
+    second = decide(morning, tuesday)
+    assert second.sends == ((back, nxt),)
+    placed = policy.queue(
+        replace(morning, sends={TEAM: first.sends, 2: ((1, 2),)}),
+        TEAM,
+        second,
+        1,
+        None,
+        False,
+        spots,
+        setup,
+    )
+    assert placed.sends == {TEAM: ((back, nxt),), 2: ((1, 2),)}
+    out = policy.land(placed, setup.teams, spots, None, {low: "O"}, value)
+    assert nxt in out.pool and low in out.active(TEAM) and back in out.active(TEAM)
+    none = policy.queue(placed, TEAM, policy.Decision(), 1, None, False, spots, setup)
+    assert none.sends == {2: ((1, 2),)}
+
+
+def test_an_add_with_no_drop_still_meets_the_morning_s_order():
+    """A limit the README names: the seat adds into its open spot and its plan charges ``low``
+    for ``back``'s return, with the add in. The morning brings ``back`` first: he takes the open
+    spot, nobody leaves (the roster is not over its spots), and the add finds no spot."""
+    setup, state, _, _, back, low, nxt = return_day(0)
+    roster = tuple(x for x in state.rosters[TEAM] if x[0] != nxt)
+    short = replace(state, rosters={**state.rosters, TEAM: roster}, pool=state.pool | {nxt})
+    decision = policy.Decision((mv.Move(nxt),), sends=((back, low),))
+    placed = policy.queue(short, TEAM, decision, 1, None, False, setup.spots(), setup)
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    out = policy.land(placed, setup.teams, setup.spots(), None, {low: "O"}, value)
+    assert back in out.active(TEAM) and low in out.active(TEAM) and nxt in out.pool
+    assert out.forced_by == {} and out.gone_by == {TEAM: 1}

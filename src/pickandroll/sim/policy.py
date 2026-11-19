@@ -359,9 +359,36 @@ class Decision:
     #: What its claims bid on in a FAAB league (PR Fb); None elsewhere, and for a tier that
     #: holds no gain in the engine's units (ranking), whose claims bid $0.
     basis: Basis | None = None
+    #: Whom each of the seat's held players sends when he comes back (PR G, :func:`sends_of`):
+    #: (the held player, the drop the engine's plan charges him), by player. Only a seat that
+    #: plans with the engine names any (the exact and the surrogate tiers, a mirror rival).
+    sends: tuple[tuple[int, int], ...] = ()
 
 
 NONE = Decision()
+
+
+def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tuple[int, int], ...]:
+    """Whom each of the seat's held players sends when he comes back (#172, PR G), as the
+    engine's plan charges it on the seat's own problem: for each held player ``moves.comebacks``
+    brings back inside a horizon with ``moves`` made (the three weeks' first, the horizon the
+    queue's set is judged on, then the week's), the player it drops for him then. So the keep
+    rule (never a kept player while another can go) and the stash threshold (a returning player
+    it keeps goes only when no one else can, ``moves.guarded_pool``) are the seat's own, and
+    nothing of either is written here. A held player the plan charges nobody for (the set leaves
+    him an active spot, or he is out past the horizons) is not named. The engine dates a return
+    by its own reading (an ``O`` is back next Monday, or on his return date when later); the
+    morning he does come back is the world's (:func:`arrive`), which takes the drop named here
+    whatever day the plan gave it."""
+    held = {k for k, _ in problem.held}
+    if not held:
+        return ()
+    out: dict[int, int] = {}
+    for key in (QUEUE_SET, "week"):
+        for c in mv.comebacks(problem, key, moves):
+            if c.player in held:
+                out.setdefault(c.player, c.drop)
+    return tuple(sorted(out.items()))
 
 
 def gains_of(ev: mv.Valued, key: str, moves: Sequence[mv.Move]) -> tuple[float, ...]:
@@ -892,7 +919,7 @@ def exact(
             plan, taken = planned.steps, planned
         solves += 1
     basis = basis_of(built, ev, moves, taken)
-    return Decision(tuple(moves), held, plan, solves, "exact", basis)
+    return Decision(tuple(moves), held, plan, solves, "exact", basis, sends_of(p, moves))
 
 
 def _games(built: Built, member: mv.Member, from_day: date) -> int:
@@ -929,7 +956,8 @@ def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
         allowed=allowed,
     )
     basis = basis_of(built, plain, moves)
-    return Decision(tuple(moves), tuple(mv.held_used(p, moves)), (), 1, "surrogate", basis)
+    held = tuple(mv.held_used(p, moves))
+    return Decision(tuple(moves), held, (), 1, "surrogate", basis, sends_of(p, moves))
 
 
 def ranking(built: Built) -> Decision:
@@ -964,12 +992,15 @@ def decide(
     with_plan: bool = True,
     fields: Fields = DEFAULT_FIELDS,
 ) -> Decision:
-    """The tier's decision on the day: the surrogate solves on its days only."""
+    """The tier's decision on the day: the surrogate solves on its days only. On its other days
+    it still names whom each of its held players sends when he comes back (:func:`sends_of`, PR
+    G: no solve, the plan's charge with no move made), so a return on any morning finds the
+    seat's own choice."""
     if tier == "exact":
         return exact(built, executes, with_plan, fields)
     if tier == "surrogate":
         if built.problem.first_day.weekday() not in fields.surrogate_days:
-            return Decision(source="surrogate")
+            return Decision(source="surrogate", sends=sends_of(built.problem))
         return surrogate(built, fields)
     if tier == "ranking":
         return ranking(built)
@@ -1460,6 +1491,10 @@ def queue(
         placed.append(Claim(mv.Move(m.add, m.drop), state.day, clears, number, (), churn, bid(i)))
     pending = dict(state.pending)
     pending[team] = tuple(kept)
+    # Whom the seat's returning held players send (PR G), for tomorrow morning alone.
+    sends = {t: x for t, x in state.sends.items() if t != team}
+    if decision.sends:
+        sends[team] = decision.sends
     need = sum(1 for m in kept if m.drop is None or m.drop in held_keys)
     free = 0
     if spots is not None:
@@ -1470,7 +1505,7 @@ def queue(
     pending_held = dict(state.pending_held)
     pending_held[team] = tuple(decision.held[: max(0, need)])
     if not waiting:
-        return replace(state, pending=pending, pending_held=pending_held)
+        return replace(state, pending=pending, pending_held=pending_held, sends=sends)
     rest = list(decision.held[max(0, need) :])
     left = max(0, free - sum(1 for m in kept if m.drop is None or m.drop in held_keys))
     claims_out: list[Claim] = []
@@ -1498,6 +1533,7 @@ def queue(
         claim_counts=counts,
         recent=recent,
         market_recent=market_recent,
+        sends=sends,
     )
 
 
@@ -1510,23 +1546,36 @@ def _activate(
     spots: int | None,
     status: Mapping[int, str | None],
     value: Mapping[int, float],
+    named: Mapping[int, int] | None = None,
 ) -> list[int]:
     """A team's held players whose status no longer fits their slot (``moves.is_cleared``) come
-    back to the bench; then, while the active roster is over ``spots``, its least valuable active
-    player by ``value`` leaves, as the engine charges a cleared player (``moves.comebacks``), a
-    tie broken as the engine breaks it. Two things apart, which the executor does not see: the
-    keep rule (``problem.kept``) and the day's choice of an activation's drop
-    (``moves.choose_activation``, #360, which the simulator never calls), so the engine's plan
-    can charge another player than the one who leaves (PR G's to finish). The players who
-    left."""
+    back to the bench; then, while the active roster is over ``spots``, a player leaves for
+    each. A seat that plans with the engine names who (``named``, PR G: the returning player to
+    the drop its plan charged him, :func:`sends_of`), and the world only checks it: the named
+    player leaves when he is still one of the team's active players, the returning player
+    himself when the plan named him. With no name, or one who has left the roster, and for every
+    seat that names none (a static, a market or a ranking seat), the rule before PR G: the least
+    valuable active player by ``value`` leaves, the returning player included, a tie broken as
+    the engine breaks it. The world reads no knob and no keep rule here: both reach the morning
+    only through the seat's own choice. The players who left."""
+    back: list[int] = []
     for i, (k, slot) in enumerate(roster):
         if slot in mv.HELD and mv.is_cleared(status.get(k), slot):
             roster[i] = (k, BENCH)
+            back.append(k)
     out: list[int] = []
-    # The keep rule stays out of the executor: the engine's ``comebacks`` never sends a kept
-    # player while another can go, but the executor sees no problem and no rule, only the day's
-    # values. The whole active roster is weighed, the returning player included. A tie on value
-    # breaks as the engine's does, by the id as text (#172, PR D4c: 10 before 9).
+    for k in back:
+        if spots is None or _active_count(roster) <= spots:
+            break
+        drop = (named or {}).get(k)
+        at = next(
+            (i for i, (pk, slot) in enumerate(roster) if pk == drop and slot not in mv.HELD), None
+        )
+        if drop is not None and at is not None:
+            del roster[at]
+            out.append(drop)
+    # The whole active roster is weighed, the returning player included. A tie on value breaks
+    # as the engine's does, by the id as text (#172, PR D4c: 10 before 9).
     while spots is not None and _active_count(roster) > spots:
         weakest = min(
             (k for k, slot in roster if slot not in mv.HELD),
@@ -1562,11 +1611,13 @@ def arrive(
     """The first half of the morning (:func:`land`'s first steps), team by team in ``order``:
     given the day's ``status`` and ``value`` (a team's own in ``values`` when it has one there:
     its seat's forecaster's), each team's cleared held players come back and the active roster
-    is trimmed to ``spots`` (:func:`_activate`; each player it sends counts in the team's
-    ``forced_by``, never in ``executed_by`` or ``gone_by``); then the held players the churns'
-    claims drop (``pending_drops``) leave, on their own, as a churn's held drop does. Every
-    player who leaves goes on waivers until ``waiver``'s day plus its days (None without
-    waivers).
+    is trimmed to ``spots`` (:func:`_activate`: the player its seat named for the returning one
+    yesterday, ``state.sends``, PR G, when he is still active there, else the least valuable;
+    each player it sends counts in the team's ``forced_by``, never in ``executed_by`` or
+    ``gone_by``); then the held players the churns' claims drop (``pending_drops``) leave, on
+    their own, as a churn's held drop does. Every player who leaves goes on waivers until
+    ``waiver``'s day plus its days (None without waivers). The names are yesterday's and are
+    spent here, used or not.
 
     In a waiver league the runner calls it before the morning's claims are decided
     (:func:`clear_waivers`, #172, Fc's review): a claim then meets the roster its team has that
@@ -1582,7 +1633,7 @@ def arrive(
         roster = rosters.setdefault(team, [])
         own = (values or {}).get(team, value)
         if status is not None and own is not None:
-            left = _activate(roster, spots, status, own)
+            left = _activate(roster, spots, status, own, dict(state.sends.get(team, ())))
             for k in left:
                 _leaves(pool, waivers, waiver, k, team)
             if left:
@@ -1599,6 +1650,7 @@ def arrive(
         forced_by=forced,
         waivers=waivers,
         pending_drops={},
+        sends={},
     )
 
 
