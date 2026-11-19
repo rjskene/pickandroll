@@ -11,7 +11,8 @@ holds a cleared player (the README's limits, "What the executor sees since PR G"
 
 Made-up leagues, fixed seeds. The days' seats weigh on one made-up day and compare two decisions
 made in the same run, so they name no format (the engine's threshold test reads season values,
-never the week's measure); the seasons run in both."""
+never the week's measure); the seasons that ask what the seat does run in both, and a season
+that names one says why."""
 
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ import pytest
 
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
+from pickandroll.sim import forecast as fc
 from pickandroll.sim import nopeek, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
@@ -44,9 +46,11 @@ from tests.sim.sim_league import (
     rates,
     recorded_lines,
 )
+from tests.sim.test_no_peek import WEIGHTS
 from tests.sim.test_sim_continuous import morning
 from tests.sim.test_sim_held_morning import KINDS, WAYS, found, full_with_one_held, play
 from tests.sim.test_sim_seasons import rounded
+from tests.sim.test_sim_split import second_of
 
 TEAM = 1
 DAY = timedelta(1)
@@ -224,7 +228,7 @@ def test_a_mirror_rival_keeps_none():
 
 
 # --------------------------------------------------------------------------- the morning
-def return_day(weekday: int):
+def return_day(weekday: int, week: int = 0, slot: str = "IL", heard: str = "O"):
     """Seat 1 with an IL slot on the first Monday (``weekday`` 0) or Tuesday (1) of a six-week
     league: its best drafted player ``back`` in the slot, out (``O``) and told back today, so
     his status clears tomorrow morning; its six active spots full with its other four, ``low``
@@ -232,8 +236,10 @@ def return_day(weekday: int):
     (``O``, no date: back next Monday). Every free agent is weaker still, so nobody is beaten by
     the best add. On the Monday ``low`` is a week from back and the keep rule lets him go; on the
     Tuesday he is back inside a week and it keeps him on the bench (``moves.kept_of``'s short
-    absence). The setup, the state, the statuses, the return dates, ``back``, ``low``, ``nxt``."""
-    setup = make_setup(weeks=6, held_slots=("IL",))
+    absence). ``week``: the same day that many weeks on (5: the season's last week); ``slot``
+    and ``heard``: the held slot and ``back``'s status in it. The setup, the state, the
+    statuses, the return dates, ``back``, ``low``, ``nxt``."""
+    setup = make_setup(weeks=6, held_slots=(slot,))
     state = initial(setup)
     pool = sorted(state.pool)
     low, nxt, wire = pool[0], pool[1], pool[2:]
@@ -245,10 +251,10 @@ def return_day(weekday: int):
         **{k: rates(0.1 + 0.01 * i) for i, k in enumerate(wire)},
     }
     setup = replace(setup, projection=projection)
-    roster = (*((k, BENCH) for k in (*rest, low, nxt)), (back, "IL"))
-    day = setup.start + timedelta(weekday)
+    roster = (*((k, BENCH) for k in (*rest, low, nxt)), (back, slot))
+    day = setup.start + week * WEEK + timedelta(weekday)
     state = replace(state, day=day, rosters={**state.rosters, TEAM: roster}, pool=frozenset(wire))
-    return setup, state, {back: "O", low: "O"}, {back: day}, back, low, nxt
+    return setup, state, {back: heard, low: "O"}, {back: day}, back, low, nxt
 
 
 def named_on(day, tier: str, threshold: float | None):
@@ -260,12 +266,15 @@ def named_on(day, tier: str, threshold: float | None):
     return built, policy.decide(built, tier, with_plan=False)
 
 
-def next_morning(day, decision, names: bool = True):
+def next_morning(day, decision, names: bool = True, execute_plan: bool = False):
     """The state the morning after ``decision`` is queued: ``back``'s status has cleared, the
-    rest stands. ``names`` False: the seat's names are taken off, as for a seat that names none."""
+    rest stands. ``names`` False: the seat's names are taken off, as for a seat that names none.
+    ``execute_plan``: the arm executes its week plan, so the plan's steps due are queued too."""
     setup, state, status, _, back, *_ = day
     spots = setup.spots()
-    placed = policy.queue(state, TEAM, decision, 1, setup.max_weekly_adds, False, spots, setup)
+    placed = policy.queue(
+        state, TEAM, decision, 1, setup.max_weekly_adds, execute_plan, spots, setup
+    )
     if not names:
         placed = replace(placed, sends={})
     value = wk.per_game_values(setup.projection, setup.cats, None)
@@ -325,6 +334,86 @@ def test_the_threshold_moves_the_drop_a_returning_held_player_forces(tier):
     assert out.forced_by == {TEAM: 1} and found(setup, placed, out, status) == []
     _, unnamed, _ = next_morning(day, kept, names=False)
     assert low in unnamed.pool and nxt in unnamed.active(TEAM)
+
+
+def test_a_ranking_seat_names_none_and_its_morning_is_the_rule_before():
+    """A seat that does not plan with the engine, by its own decision and not by a name taken
+    off: on the Tuesday the ranking tier's decision carries no name, at any threshold, though
+    its problem holds ``back`` and its keep rule keeps ``low``. So the morning ``back`` comes
+    back sends ``low``, the least valuable active player by the day's values, as before PR G;
+    the seat's own swap (the wire's best by value times games for ``nxt``) then lands."""
+    day = return_day(1)
+    setup, _, _, _, back, low, nxt = day
+    for threshold in (None, NEVER):
+        built, decision = named_on(day, "ranking", threshold)
+        assert low in built.problem.kept and dict(built.problem.held_slots) == {back: "IL"}
+        assert decision.source == "ranking" and decision.sends == ()
+        assert [m.drop for m in decision.moves] == [nxt]
+        placed, out, status = next_morning(day, decision)
+        assert placed.sends == {} and out.forced_by == {TEAM: 1} == out.executed_by
+        assert low in out.pool and nxt in out.pool and back in out.active(TEAM)
+        assert found(setup, placed, out, status) == []
+
+
+@pytest.mark.parametrize("tier", SEARCH)
+def test_in_the_last_week_the_plan_charges_nobody_for_an_o_and_the_rule_before_applies(tier):
+    """A limit the README names ("Whose date"), pinned. The engine reads an ``O`` as out for the
+    rest of this week, and the season's last week has no later one: its plan brings ``back``
+    back inside no horizon and charges nobody, so the seat names none and the morning the world
+    brings him back is the rule before, ``low`` leaving though the seat's keep rule keeps him.
+    A held player the engine does read as back inside the week is named there, by the week's
+    pass of ``sends_of``: a ``GTD`` in an ``IL+`` slot (a day-one status; a replay hears every
+    absence as ``O``). In any earlier week the three weeks' pass names both."""
+    day = return_day(1, week=5)
+    setup, state, _, _, back, low, nxt = day
+    assert setup.week_of(state.day).number == max(w.number for w in setup.calendar.weeks)
+    built, decision = named_on(day, tier, None)
+    assert built.problem.horizons[policy.QUEUE_SET] == () and low in built.problem.kept
+    assert decision.moves == () == decision.sends
+    placed, out, status = next_morning(day, decision)
+    assert low in out.pool and nxt in out.active(TEAM) and back in out.active(TEAM)
+    assert out.forced_by == {TEAM: 1} and found(setup, placed, out, status) == []
+    day = return_day(1, week=5, slot="IL+", heard="GTD")
+    setup = day[0]
+    built, decision = named_on(day, tier, None)
+    assert mv.comebacks(built.problem, policy.QUEUE_SET, ()) == []
+    assert [(c.player, c.drop) for c in mv.comebacks(built.problem, "week", ())] == [(back, nxt)]
+    assert decision.sends == ((back, nxt),)
+    placed, out, status = next_morning(day, decision)
+    assert nxt in out.pool and low in out.active(TEAM) and back in out.active(TEAM)
+    assert out.forced_by == {TEAM: 1} and found(setup, placed, out, status) == []
+    # The week before, the three weeks' pass names an ``O`` and the week's adds nothing to it.
+    earlier, named = named_on(return_day(1, week=4), tier, None)
+    assert mv.comebacks(earlier.problem, "week", ()) == [] and named.sends == ((back, nxt),)
+
+
+def test_a_name_made_on_the_set_alone_can_take_the_drop_of_a_plan_step_queued_beside_it():
+    """A limit the README names (limits, 7), pinned. The names are made with the decided set
+    made, not with the week plan's steps an arm that executes its plan queues beside the set.
+    On the Tuesday the seat's plan charges ``nxt`` for ``back``'s return, and a plan step due
+    tomorrow drops ``nxt`` for a free agent. The morning brings ``back`` first: ``nxt`` leaves
+    as the forced drop and the step finds its drop gone (counted in ``gone``), where the rule
+    before PR G sent ``low``, whom the seat's keep rule keeps, and landed the step. With the
+    step made the engine's plan charges the step's own add, who would come and go: the roster
+    the morning leaves is the one that plan charges, by a move that is not made."""
+    day = return_day(1)
+    setup, state, _, _, back, low, nxt = day
+    built, decision = named_on(day, "exact", None)
+    assert decision.moves == () and decision.sends == ((back, nxt),)
+    free = max(state.pool)
+    step = mv.Move(free, nxt, state.day + DAY)
+    assert mv.feasible(built.problem, (step,))
+    assert policy.sends_of(built.problem, (step,)) == ((back, free),)
+    planned = replace(decision, plan=(step,))
+    placed, out, status = next_morning(day, planned, execute_plan=True)
+    assert placed.pending[TEAM] == (mv.Move(free, nxt),) and placed.sends == {TEAM: decision.sends}
+    assert nxt in out.pool and free in out.pool and out.gone_by == {TEAM: 1}
+    assert set(out.active(TEAM)) == set(placed.active(TEAM)) - {nxt} | {back}
+    assert out.forced_by == {TEAM: 1} and not out.executed_by
+    assert found(setup, placed, out, status) == []
+    _, before, _ = next_morning(day, planned, names=False, execute_plan=True)
+    assert low in before.pool and nxt in before.pool and free in before.active(TEAM)
+    assert before.forced_by == {TEAM: 1} == before.executed_by and not before.gone_by
 
 
 def test_a_named_drop_that_has_left_the_roster_falls_back_and_an_open_spot_sends_nobody():
@@ -589,21 +678,42 @@ EXACT_KINDS = (
     ("points", "priority", DROPPED, ONE_WIN),
 )
 SEASONS = [("surrogate", k) for k in LEAGUE_KINDS] + [("exact", k) for k in EXACT_KINDS]
+#: The seasons of :data:`SEASONS` in which a morning takes a name the rule before PR G would
+#: not have sent (:func:`mornings_moved`; seed and path :data:`SEASON`). In the others the one
+#: morning that takes a name sends the player who is also the least valuable that day.
+NAME_MOVES = (("exact", EXACT_KINDS[1]), ("exact", EXACT_KINDS[2]))
 
 
-def mornings_named(days) -> list[tuple[int, int]]:
-    """The mornings that took seat 1's name: (the held player, the drop) it named on a day whose
-    next morning has the held player off his slot and the named player off the roster."""
+def mornings_named(days, team: int = TEAM) -> list[tuple[int, int, int]]:
+    """The mornings that took ``team``'s name: (the day's index, the held player, the drop) it
+    named on a day whose next morning has the held player off his slot and the named player off
+    the roster."""
     out = []
-    for before, after in pairwise(days):
-        was = {k for k, _ in before.state.held(TEAM)}
-        now = {k for k, _ in after.state.held(TEAM)}
-        roster = {k for k, _ in after.state.rosters[TEAM]}
+    for i, (before, after) in enumerate(pairwise(days)):
+        was = {k for k, _ in before.state.held(team)}
+        now = {k for k, _ in after.state.held(team)}
+        roster = {k for k, _ in after.state.rosters[team]}
         out += [
-            (back, drop)
-            for back, drop in before.state.sends.get(TEAM, ())
+            (i, back, drop)
+            for back, drop in before.state.sends.get(team, ())
             if back in was and back not in now and drop not in roster
         ]
+    return out
+
+
+def mornings_moved(setup, days) -> list[tuple[int, int, int]]:
+    """Of the mornings that took seat 1's name, those the name moved: the named player is not
+    the one the rule before PR G sends, the least valuable of the active players and the one
+    coming back by that morning's values (the run's, which the seat holds here), a tie by the
+    id as text. A morning that ignored the names could not show one: no move of the seat's own
+    drops a player it named (the names are made with the set made)."""
+    points = dict(setup.points) if setup.scoring == "points" and setup.points else None
+    out = []
+    for i, back, drop in mornings_named(days):
+        value = wk.per_game_values(days[i + 1].beliefs, setup.cats, points)
+        active = (*days[i].state.active(TEAM), back)
+        if drop != min(active, key=lambda k: (value.get(k, 0.0), str(k))):
+            out.append((i, back, drop))
     return out
 
 
@@ -612,8 +722,12 @@ def mornings_named(days) -> list[tuple[int, int]]:
 )
 def test_a_season_with_a_threshold_named_plays_clean_in_every_league_kind(tier, kind):
     """Fc's lesson: the new morning is played once in every league kind with the IL slot, the
-    audit clean. In each the seat holds a player, names a drop for him, and a morning takes its
-    name; only the seat that builds a problem has the count."""
+    audit clean. In each the seat holds a player, names a drop for him, and the morning that
+    brings him back sends the named player; only the seat that builds a problem has the count.
+    A named player is often also the one the rule before would send, so that alone would pass
+    with the names ignored: in the kinds of :data:`NAME_MOVES` a morning sends a named player
+    who is not the least valuable that day (the mornings on made-up days above hold the rule
+    itself, under every way an add arrives)."""
     scoring, waivers, rule, h2h = kind
     setup = of_format(held_league(scoring, waivers, rule), h2h)
     (result,), days = season(setup, (SHARE,), tier)
@@ -623,15 +737,18 @@ def test_a_season_with_a_threshold_named_plays_clean_in_every_league_kind(tier, 
     assert row["returning_dropped"] is not None
     assert all(result.counts[t]["returning_dropped"] is None for t in setup.teams if t != TEAM)
     assert mornings_named(days[0])
+    if (tier, kind) in NAME_MOVES:
+        assert mornings_moved(setup, days[0])
     if rule == CONTINUOUS:
         assert row["landed"] == row["claims_won"] >= 1
 
 
-def test_the_lever_does_something_the_threshold_changes_the_roster_at_the_end():
-    """D4c's lesson. One made-up season with the IL slot, the surrogate at None and at a
-    threshold through one world: the audit is clean in both, both count the returning players
-    dropped, and the seat ends the season on another roster."""
-    setup = held_league()
+@pytest.mark.parametrize("h2h", (ONE_WIN, EACH_CATEGORY))
+def test_the_lever_does_something_the_threshold_changes_the_roster_at_the_end(h2h):
+    """D4c's lesson, in both formats. One made-up season with the IL slot, the surrogate at None
+    and at a threshold through one world: the audit is clean in both, both count the returning
+    players dropped, and the seat ends the season on another roster."""
+    setup = of_format(held_league(), h2h)
     (none, share), days = season(setup, (None, SHARE))
     assert none.breaches == share.breaches == ()
     last = [{k for k, _ in days[i][-1].state.rosters[1]} for i in (0, 1)]
@@ -648,7 +765,9 @@ def test_a_pair_and_a_room_carry_the_count_when_an_arm_names_a_threshold_and_onl
     """The count through the runner's pair and room (``run.paired``, ``run.room``): a row of
     every arm, and the rivals' (market rivals build no problem, so theirs is None), when one arm
     names a threshold; no such key when none does. The command's blocks pool it and say what it
-    is in their note (``cli.paired_blocks``, ``cli.room_blocks``), in such a run only."""
+    is in their note (``cli.paired_blocks``, ``cli.room_blocks``), in such a run only. One
+    format (the league's own, one win): what is held is where the key goes, which reads no
+    format; what the seat does with a threshold is the lever test's, in both."""
     setup = held_league()
 
     def world():
@@ -687,7 +806,10 @@ def test_a_pair_and_a_room_carry_the_count_when_an_arm_names_a_threshold_and_onl
 def test_no_peek_with_a_threshold_named():
     """The seat's names and its count read nothing ahead: a second season that agrees with the
     first through a Thursday and differs after gives the same day records through that day, the
-    state's names and the decisions' among them."""
+    state's names and the decisions' among them. One format (one win): the names and the
+    reading are made from the seat's problem by the same calls in both (``moves.comebacks``,
+    ``moves.returning_net``, neither of which reads the week's measure), and the no-peek check
+    of every other field in both formats is ``test_no_peek``'s."""
     setup = held_league()
     lines = recorded_lines(setup, 11)
     day = setup.start + timedelta(17)
@@ -703,6 +825,77 @@ def test_no_peek_with_a_threshold_named():
     first = nopeek.first_difference(base, got)
     assert first is not None and first[0] > day
     assert all(base[key] == got[key] for key in base if key[0] <= day)
+
+
+SOURCES = (fc.Forecaster("espn"), fc.Forecaster("marcel"))
+
+
+@pytest.mark.parametrize(
+    ("system", "blend", "h2h"), [("yahoo", None, ONE_WIN), ("blend", 0.25, EACH_CATEGORY)]
+)
+def test_a_split_seat_names_on_its_own_table_and_plays_clean(system, blend, h2h):
+    """#432's lesson: a rule that reads the seat's own forecaster is played with a split seat,
+    which reads a free agent on one table and its roster on another. A ``yahoo`` and a
+    ``blend`` seat with the IL slot and a threshold: the audit is clean, each name is the one
+    ``sends_of`` gives on the seat's own table of that day (the table its record holds), a
+    morning takes one and the seat has the count. For the ``yahoo`` seat the run's table names
+    another player on at least one of those days, so the names are read off the seat's own.
+    Each system once and each format once: the name is made the same way in both formats."""
+    setup = of_format(held_league(), h2h)
+    lines = recorded_lines(setup, 11)
+    first = {k: {st: v * 1.1 for st, v in r.items()} for k, r in setup.projection.items()}
+    a = arm("Y", "surrogate", "market", system=system, blend=blend, stash_threshold=SHARE)
+    arms = ss.believing({"Y": a}, SOURCES)
+    seat = arms["Y"].seat()
+    fixed = ss.Fixed({"espn": first, "marcel": second_of(first)}, {})
+    w = rn.replay_world(
+        setup,
+        lines,
+        1,
+        *SEASON,
+        WEIGHTS,
+        label="run",
+        forecasts=ss.forecasts_of(SOURCES, fixed, lines, 1, SEASON[1], "stat", arms),
+        split=ss.splits_of(SOURCES, arms),
+    )
+    assert seat.forecaster in w.split
+    days: list = []
+    variant = {**{t: op.Market(0.3) for t in setup.teams}, TEAM: seat}
+    (result,) = rn.simulate(setup, w, [variant], on_day=days.append, stash=True)
+    assert result.breaches == ()
+    named = [r for r in days if r.state.sends.get(TEAM)]
+    assert named and mornings_named(days)
+    apart = 0
+    for r in named:
+        moves = r.decisions[TEAM].moves
+
+        def names(table, r=r, moves=moves):
+            built = policy.problem_of(setup, r.state, TEAM, a.knobs, table, r.status, r.returns)
+            return policy.sends_of(built.problem, moves)
+
+        assert names(r.held[seat.forecaster]) == r.state.sends[TEAM]
+        apart += names(r.beliefs) != r.state.sends[TEAM]
+    assert apart or system != "yahoo"
+    assert result.counts[TEAM]["held_stints"] >= 1
+    assert result.counts[TEAM]["returning_dropped"] is not None
+
+
+@pytest.mark.parametrize("h2h", (ONE_WIN, EACH_CATEGORY))
+def test_a_mirror_rival_names_too_keeps_none_and_has_the_count(h2h):
+    """A mirror rival plans with the engine: it is made without the arm's threshold, names whom
+    its own held players send, a morning takes a rival's name, and, building a problem, it has
+    the count the market rivals of the other seasons do not. The audit is clean."""
+    setup = of_format(held_league(), h2h)
+    a = arm("U", "surrogate", "mirror", stash_threshold=SHARE)
+    variant = {**rn.opponents_of(setup, a, TEAM), TEAM: a.seat()}
+    rivals = [t for t in setup.teams if t != TEAM]
+    assert all(variant[t].knobs["stash_threshold"] is None for t in rivals)
+    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *SEASON)
+    days: list = []
+    (result,) = rn.simulate(setup, w, [variant], on_day=days.append, stash=True)
+    assert result.breaches == ()
+    assert all(result.counts[t]["returning_dropped"] is not None for t in setup.teams)
+    assert any(mornings_named(days, t) for t in rivals)
 
 
 # --------------------------------------------------------------------------- the command
