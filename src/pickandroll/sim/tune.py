@@ -51,6 +51,10 @@ UNSCREENED = (
 
 #: Why a value is not played: the nudge leaves the lever where the current arm holds it.
 CURRENT = "the current value"
+#: How near two figures of one lever are one value: one unit of the fourth significant digit,
+#: the rounding a measured figure is kept to (the screen's season scale). A quarter of the scale
+#: taken twice and its half taken once are each rounded, so they can differ by that much.
+ROUNDING = 1.1e-3
 #: The second steps the rules of :func:`second_of` cannot derive, by the nudge's key: what arm B
 #: takes at the nudge again. A step from None has no size to repeat, so the sizing's two (a
 #: multiplier, None being 1) are written here: the same factor again.
@@ -110,6 +114,9 @@ AGAINST = "against"
 #: The two kinds of rivals the confirmation is played against.
 RUN, STATIC = "run", "static"
 RIVALS_WORDS = {RUN: "the run's rivals", STATIC: "static rivals"}
+#: A kind of rivals against which the final arm is the baseline's seat (the two arms differ only
+#: in what neither reads there): its pair is not played, and its finish is this.
+ONE_SEAT = "the baseline's seat: no difference by construction"
 #: The confirmation's statuses in the record.
 CONFIRMED = "played"
 NO_CONFIRMATION = "no confirmation, not a verdict"
@@ -122,6 +129,10 @@ SAME_SEAT = (
     "baseline's seat and the season the search never played is not read"
 )
 NOT_YET = "left for the next piece"
+UNPLANNED = (
+    "not played: the confirmation's pair cannot be planned on the season confirmed on, and the "
+    "season was not read"
+)
 #: The verdict's rule, for the record.
 VERDICT_RULE = (
     "on the season the search never played, the final set (B) against the baseline (A), by "
@@ -129,9 +140,11 @@ VERDICT_RULE = (
     "odds is above zero or its change in final rank below zero (a better finish) by more than "
     "one SE and neither is the other way by more than one SE; behind the other way round; the "
     "final set holds when every forecaster the rule reads is ahead, is against when one is "
-    "behind, and is not shown otherwise; the standings' measure is shown beside and decides "
-    "nothing here; the same pair against static rivals is shown, and an edge against one kind "
-    "of rivals only is flagged"
+    "behind, and is not shown otherwise; a forecaster the search read that has no cell on that "
+    "season is no verdict; the standings' measure is shown beside and decides nothing here; "
+    "the same pair against static rivals is shown, and an edge against one kind of rivals only "
+    "is flagged (against static rivals the final arm can be the baseline's seat: that pair is "
+    "not played, and an edge against the run's rivals is then against one kind only)"
 )
 #: What a verdict is and is not, printed with every one.
 ADVISORY = (
@@ -357,13 +370,26 @@ def second_of(
     )
 
 
-def _same_arm(x: Mapping[str, Any] | None, y: Mapping[str, Any] | None) -> bool:
-    """Whether two specs are one arm, their names aside."""
-    if x is None or y is None:
+def _one_value(x: Any, y: Any) -> bool:
+    """Whether two values of a lever are one: equal, or two figures within the rounding a
+    measured figure is kept to (:data:`ROUNDING`; whole numbers are never rounded)."""
+    if x == y:
+        return True
+    if not (_number(x) and _number(y)) or (isinstance(x, int) and isinstance(y, int)):
         return False
-    return {k: v for k, v in x.items() if k != "name"} == {
-        k: v for k, v in y.items() if k != "name"
-    }
+    return math.isclose(float(x), float(y), rel_tol=ROUNDING, abs_tol=0.0)
+
+
+def _same_arm(name: str, x: sc.Row, y: sc.Row) -> bool:
+    """Whether two rows of lever ``name`` to play have one arm B: the specs equal apart from
+    their names and the lever's own value, and the lever's two values one value
+    (:func:`_one_value`)."""
+    if x.b is None or y.b is None or x.values is None or y.values is None:
+        return False
+    blank = {name: None, "name": None}
+    return sc.applied(x.b, blank) == sc.applied(y.b, blank) and _one_value(
+        x.values["b"], y.values["b"]
+    )
 
 
 def values_of(
@@ -378,7 +404,8 @@ def values_of(
     (:func:`second_of`). A lever the league does not read is its one row saying why; a nudge
     that cannot be made says why; a nudge that is the current value is not played (a screen
     refuses it; a tune has moved there); a second step that lands on a value already listed is
-    not played twice."""
+    not played twice (two figures within a measured figure's rounding are one value: a quarter
+    of the season scale taken twice is the half)."""
     firsts = [
         replace(r, status=sc.NOT_PLAYED, why=CURRENT, a=None, b=None)
         if r.status == sc.REFUSED
@@ -398,7 +425,7 @@ def values_of(
                 (
                     x
                     for x in (*firsts, *out)
-                    if x.status == sc.PLAY and x.key != second.key and _same_arm(x.b, second.b)
+                    if x.status == sc.PLAY and x.key != second.key and _same_arm(name, x, second)
                 ),
                 None,
             )
@@ -529,8 +556,9 @@ def choose(values: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     (every cell above zero) and its mean is above one SE; the eligible value with the largest
     mean is taken (a tie to the first in the lever's order), and none when none is eligible. A
     noisy value does not block a sure one: a value that counts with a larger mean than the one
-    taken, and not above one SE, is ``passed`` over and named. With each value's standing by its
-    key, and ``depends`` naming the values whose cells flip when the lever stays."""
+    taken, and an SE it is not above, is ``passed`` over and named (a value with no SE is not
+    passed over for want of one: its standing says it has none). With each value's standing by
+    its key, and ``depends`` naming the values whose cells flip when the lever stays."""
     eligible = [v for v in values if v["result"]["clears"] and not v["result"]["did_nothing"]]
     taken = max(eligible, key=lambda v: v["result"]["mean"]) if eligible else None
     passed = [
@@ -539,13 +567,14 @@ def choose(values: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if taken is not None
         and v["result"]["signs"] == ABOVE
         and not v["result"]["clears"]
+        and v["result"]["se"] is not None
         and v["result"]["mean"] > taken["result"]["mean"]
     ]
     standings = {}
     for v in values:
         if taken is not None and v["key"] == taken["key"]:
             standings[v["key"]] = TAKEN
-        elif v["key"] in passed and v["result"]["se"] is not None:
+        elif v["key"] in passed:
             standings[v["key"]] = PASSED
         else:
             standings[v["key"]] = standing_of(v["result"])
@@ -674,19 +703,51 @@ def confirmation_of(payload: Mapping[str, Any], season: int) -> dict[str, Any]:
     return out
 
 
+def skipped_of(payload: Mapping[str, Any], season: int) -> dict[str, str]:
+    """The forecasters a confirmation pair names that have no cell on ``season``, each with the
+    reason ``replay`` gives (its record's ``cells``: a forecaster that cannot serve the season)."""
+    by_label = (payload.get("cells") or {}).get(str(season)) or {}
+    return {
+        label: str(c.get("reason") or "the forecaster cannot serve this season")
+        for label, c in by_label.items()
+        if not c.get("served")
+    }
+
+
+def searched_of(steps: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The forecasters the search read: those with a cell some played value's figures rest on,
+    in the order met."""
+    out: dict[str, None] = {}
+    for step in steps:
+        for value in step["values"]:
+            for cell in (value.get("result") or {}).get("by_cell") or ():
+                out[cell.split(" ", 1)[1]] = None
+    return list(out)
+
+
 def verdict_of(
-    cells: Mapping[str, Mapping[str, Mapping[str, Any]]], voided: int = 0
+    cells: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    voided: int = 0,
+    missing: Mapping[str, str] | None = None,
+    one_seat: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The confirmation's verdict (:data:`VERDICT_RULE`) from its cells by kind of rivals
     (:data:`RUN`, and :data:`STATIC` when the run's rivals are not static) and forecaster:
     ``state`` (:data:`HOLDS`, :data:`NOT_SHOWN`, :data:`AGAINST`; None with ``why`` when the
-    audit voided a path, a cell the rule reads has no SE or no forecaster is left to read), the
-    finish by forecaster and kind, and a flag for each forecaster ahead against one kind of
-    rivals only."""
+    audit voided a path, a forecaster the search read has no cell (``missing``, each with the
+    reason), a cell the rule reads has no SE or no forecaster is left to read), the finish by
+    forecaster and kind, and a flag for each forecaster ahead against one kind of rivals only.
+    ``one_seat``: the kinds of rivals against which the final arm is the baseline's seat, whose
+    pair was not played (:data:`ONE_SEAT`): ahead against the other kind is ahead against one
+    kind only."""
     run = cells[RUN]
+    missing = dict(missing or {})
     read = [label for label, c in run.items() if c["read"]]
     by_forecaster = {
-        label: {kind: cells[kind][label]["finish"] for kind in cells if label in cells[kind]}
+        label: {
+            **{kind: cells[kind][label]["finish"] for kind in cells if label in cells[kind]},
+            **{kind: ONE_SEAT for kind in one_seat if kind not in cells},
+        }
         for label in run
     }
     flags = []
@@ -695,12 +756,22 @@ def verdict_of(
             continue
         ahead = [kind for kind in (RUN, STATIC) if by_kind[kind] == AHEAD]
         if len(ahead) == 1:
-            flags.append(f"{label}: ahead against {RIVALS_WORDS[ahead[0]]} only")
+            flag = f"{label}: ahead against {RIVALS_WORDS[ahead[0]]} only"
+            if ONE_SEAT in by_kind.values():
+                other = RUN if ahead[0] == STATIC else STATIC
+                flag += f" (against {RIVALS_WORDS[other]} the final arm is the baseline's seat)"
+            flags.append(flag)
     state: str | None = None
     why: str | None = None
     unsure = [label for label in read if run[label]["finish"] == UNSURE]
     if voided:
         why = f"no verdict: the audit voided {voided} path(s)"
+    elif missing:
+        why = (
+            "no verdict: the search read "
+            + ", ".join(f"{label} ({w})" for label, w in missing.items())
+            + ", and the season confirmed on has no cell for it"
+        )
     elif not read:
         why = (
             "no verdict: no forecaster the rule may rest on (an oracle is a yardstick, and a "
@@ -718,6 +789,7 @@ def verdict_of(
         "rule": VERDICT_RULE,
         "advisory": ADVISORY,
         "read": read,
+        "missing": missing,
         "by_forecaster": by_forecaster,
         "flags": flags,
         "state": state,
@@ -736,7 +808,8 @@ def _figure(d: Mapping[str, Any], scale: float = 1.0, digits: int = 3) -> str:
 def confirmation_lines(conf: Mapping[str, Any], measure: str) -> list[str]:
     """A played confirmation as the run prints it: a row a forecaster and kind of rivals (the
     change in playoff odds in points, in final rank and on the standings' measure, each with its
-    SE, and the finish), the flags, the verdict's line and what a verdict is. The verdict's line
+    SE, and the finish), each named forecaster with no cell and why, a kind of rivals whose pair
+    is one seat, the flags, the verdict's line and what a verdict is. The verdict's line
     says which look at the confirmation season it is, when it is one (``conf["look"]``): its
     number for the league kind and its line in the ledger, where every run's look is counted."""
     rows = [
@@ -767,6 +840,15 @@ def confirmation_lines(conf: Mapping[str, Any], measure: str) -> list[str]:
     out.append(
         "  (B less A: the final set less the baseline; a rank below zero is a better finish)"
     )
+    out += [
+        f"  {label}: no cell on the season confirmed on ({why})"
+        for label, why in (conf.get("skipped") or {}).items()
+    ]
+    out += [
+        f"  against {RIVALS_WORDS[kind]}: not played, {ONE_SEAT} (the two arms differ only in "
+        f"{'; '.join(names)})"
+        for kind, names in (conf.get("one_seat") or {}).items()
+    ]
     out += [f"flag: {f}" for f in conf["verdict"]["flags"]]
     look = conf.get("look")
     which = (
@@ -839,9 +921,11 @@ __all__ = [
     "NO_CONFIRMATION",
     "NO_SE",
     "NO_SIGN",
+    "ONE_SEAT",
     "PASSED",
     "PASSES",
     "RIVALS_WORDS",
+    "ROUNDING",
     "RUN",
     "SAME_SEAT",
     "SEARCH_RULE",
@@ -849,6 +933,7 @@ __all__ = [
     "STATIC",
     "TAKEN",
     "TUNE_VERSION",
+    "UNPLANNED",
     "UNSCREENED",
     "UNSURE",
     "VERDICT_RULE",
@@ -867,8 +952,10 @@ __all__ = [
     "order_words",
     "own_look",
     "pair_key",
+    "searched_of",
     "second_of",
     "signs_of",
+    "skipped_of",
     "standing_of",
     "step_words",
     "strength_of",

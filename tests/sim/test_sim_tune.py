@@ -200,6 +200,32 @@ def test_every_lever_of_the_list_has_its_nudge_and_its_nudge_again_or_none():
     assert pinned | {"faab_sizing"} == set(sc.NAMES)
 
 
+def test_a_quarter_of_the_scale_taken_again_is_the_half_whatever_the_rounding():
+    """A measured figure is kept to four significant digits, so a quarter of the season scale
+    taken twice and its half taken once can differ in the last digit. They are one value: over
+    made-up scales the quarter again is never a second pair beside the half, and the half again,
+    which is another value, always is one."""
+    apart = 0
+    for i in range(400):
+        scale = 0.05 + 4.95 * i / 399
+        ctx = sc.Context("categories", "faab", scale, sc.NO_RATIO)
+        rows = {r.key: r for r in tn.values_of("season_weight", base(), [EVERY], ctx)}
+        again, half = rows["season_weight-quarter-again"], rows["season_weight-half"]
+        assert (again.status, again.why) == (
+            sc.NOT_PLAYED,
+            "the same value as season_weight-half",
+        ), scale
+        assert half.status == rows["season_weight-half-again"].status == sc.PLAY, scale
+        quarter = rows["season_weight-quarter"].values["b"]
+        apart += sc._figure(quarter + scale / 4) != half.values["b"]
+    # The case is real: on some of these scales the two figures differ in the last digit.
+    assert apart > 0
+    # Whole numbers are never rounded, and a figure a whole step away is another value.
+    assert tn._one_value(0.8264, 0.8265) and tn._one_value(45, 45)
+    assert not tn._one_value(1000, 1001) and not tn._one_value(0.5, 0.25)
+    assert not tn._one_value(None, 0.5) and tn._one_value([0], [0])
+
+
 def test_a_step_along_the_frontier_goes_on_to_the_next_neighbour():
     """From ``even`` the nudge to ``natural`` taken again is ``season``: the one row the lever
     offers from the nudged arm and not from this one that does not go back."""
@@ -531,6 +557,17 @@ def test_a_noisy_larger_mean_is_passed_over_for_the_surer_value_and_the_step_say
     # A smaller mean that does not clear is within one SE, not passed over.
     small = value("pool-x", {cell: [3.0, -3.0, 0.0, 1.0]})
     assert tn.choose([values[0], small])["standings"]["pool-x"] == tn.WITHIN
+    # A larger mean with no SE (one path stands) is not "not above one SE": it has none. Its
+    # standing says so, it is not passed over, and the step's words do not call it that.
+    lone = value("pool-45-again", {cell: [9.0, 9.0]}, 60, breach=(2024, "prior", 1))
+    assert lone["result"]["se"] is None and lone["result"]["mean"] > sure["mean"]
+    unsure = tn.choose([values[0], lone])
+    assert (unsure["key"], unsure["passed"]) == ("pool-45", [])
+    assert unsure["standings"] == {"pool-45": tn.TAKEN, "pool-45-again": tn.NO_SE}
+    words = tn.step_words(
+        {"lever": "pool", "from": 30, "values": [values[0], lone], "choice": unsure}
+    )
+    assert "passed over" not in words and words.endswith("the best of the values that clear")
 
 
 def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():
@@ -671,6 +708,75 @@ def test_an_edge_against_one_kind_of_rivals_only_is_flagged():
     assert tn.verdict_of(cells(prior=(tn.AHEAD,)))["flags"] == []
 
 
+def test_a_forecaster_the_search_read_with_no_cell_on_the_season_is_no_verdict():
+    """The verdict is stated for every forecaster the search read. One of them with no cell on
+    the season confirmed on is no verdict, named with replay's reason, however the others
+    finished; a forecaster the search never read is listed and decides nothing."""
+    ahead = cells(prior=(tn.AHEAD, tn.AHEAD))
+    got = tn.verdict_of(ahead, missing={"marcel": "one earlier season on file"})
+    assert got["state"] is None and got["read"] == ["prior"]
+    assert got["missing"] == {"marcel": "one earlier season on file"}
+    assert got["why"] == got["words"]
+    assert got["why"] == (
+        "no verdict: the search read marcel (one earlier season on file), and the season "
+        "confirmed on has no cell for it"
+    )
+    assert "recommended" not in got["words"]
+    assert tn.verdict_of(ahead, missing={})["state"] == tn.HOLDS
+    assert tn.verdict_of(ahead)["missing"] == {}
+    # A voided path is said first: it is the audit's.
+    assert "the audit voided" in tn.verdict_of(ahead, 1, {"marcel": "x"})["why"]
+    # What a pair's record says of its cells, and what the search read.
+    payload = {
+        "cells": {
+            "2023": {
+                "prior": {"served": True, "reason": None},
+                "marcel": {"served": False, "reason": "one earlier season on file"},
+            }
+        }
+    }
+    assert tn.skipped_of(payload, 2023) == {"marcel": "one earlier season on file"}
+    assert tn.skipped_of(payload, 2024) == tn.skipped_of({}, 2023) == {}
+    steps = [
+        {"values": [{"key": "a", "status": sc.NOT_PLAYED}]},
+        {"values": [{"result": {"by_cell": {"2024 prior": 1.0, "2024 marcel": 1.0}}}]},
+        {"values": [{"result": {"by_cell": {"2023 prior": 1.0}}}]},
+    ]
+    assert tn.searched_of(steps) == ["prior", "marcel"] and tn.searched_of([]) == []
+    # The printed table lists the forecaster with no cell.
+    conf = {"cells": ahead, "skipped": {"marcel": "one earlier season on file"}, "verdict": got}
+    lines = tn.confirmation_lines(conf, M)
+    assert "  marcel: no cell on the season confirmed on (one earlier season on file)" in lines
+    assert lines[-2] == f"verdict (advisory): {got['why']}"
+
+
+def test_a_kind_of_rivals_that_is_one_seat_is_not_a_cell_and_the_edge_is_flagged():
+    """Against static rivals the final arm can be the baseline's seat (what moved is read only
+    through the run's rivals): that pair is not played, its finish says so, and a forecaster
+    ahead against the run's rivals is ahead against one kind only."""
+    run_only = {tn.RUN: cells(prior=(tn.AHEAD,), espn=(tn.LEVEL,))[tn.RUN]}
+    got = tn.verdict_of(run_only, one_seat=[tn.STATIC])
+    assert got["by_forecaster"] == {
+        "prior": {tn.RUN: tn.AHEAD, tn.STATIC: tn.ONE_SEAT},
+        "espn": {tn.RUN: tn.LEVEL, tn.STATIC: tn.ONE_SEAT},
+    }
+    assert got["flags"] == [
+        (
+            "prior: ahead against the run's rivals only (against static rivals the final arm is "
+            "the baseline's seat)"
+        )
+    ]
+    assert got["state"] == tn.NOT_SHOWN
+    names = ["horizon_weight (not read)", "surrogate_days (not read)"]
+    conf = {"cells": run_only, "one_seat": {tn.STATIC: names}, "verdict": got}
+    assert (
+        f"  against static rivals: not played, {tn.ONE_SEAT} (the two arms differ only in "
+        "horizon_weight (not read); surrogate_days (not read))"
+    ) in tn.confirmation_lines(conf, M)
+    # With no such kind nothing changes: one kind played is one kind, and nothing to flag.
+    assert tn.verdict_of(run_only)["flags"] == []
+
+
 def test_a_confirmation_pair_is_read_by_forecaster_from_its_record():
     payload, _, _ = played({(2026, "prior"): [1.0, 1.0, 2.0], (2026, "oracle:0.1"): [0.0, 0.0]})
     payload["verdict"]["rows"] = {"oracle:0.1": {"mark": rn.YARDSTICK, "cells": {}}}
@@ -690,7 +796,8 @@ def test_the_verdict_s_words_recommend_and_never_say_more():
     final set, never "optimal", and a promotion only to say there is none."""
     conf = {"cells": cells(prior=(tn.AHEAD, tn.LEVEL)), "verdict": None}
     texts = [tn.SEARCH_RULE, tn.CARRY_NOTE, tn.VERDICT_RULE, tn.ADVISORY, tn.NO_CONFIRMATION]
-    texts += [tn.NOTHING_TO_CONFIRM, tn.SAME_SEAT, *tn.VERDICT_WORDS.values()]
+    texts += [tn.NOTHING_TO_CONFIRM, tn.SAME_SEAT, tn.UNPLANNED, tn.ONE_SEAT]
+    texts += list(tn.VERDICT_WORDS.values())
     for state in (tn.HOLDS, tn.NOT_SHOWN, tn.AGAINST):
         assert "recommended" in tn.VERDICT_WORDS[state]
     conf["verdict"] = tn.verdict_of(conf["cells"])
