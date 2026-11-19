@@ -1,8 +1,8 @@
 """The season guard as an arm's choice, and the weight that reads the week's stake (#172, the
 guard PR): an arm's ``guard`` (``block``, live's, or ``off``) and its ``stake`` (0 to 1), how
-they are parsed and refused, the allowed set a tier's searches take, the weight in force, the
-stake the runner sets once a week, the counts, the record, Rule 1, no peek and every league
-kind once. The pure stake is ``test_sim_stake.py``'s; the screen's two rows are held by
+they are parsed and refused, the allowed set a tier's searches take, the season figure a stake
+splits at the running week's last day, the stake the runner sets once a week, the counts, the
+record, Rule 1, no peek and every league kind once. The pure stake is ``test_sim_stake.py``'s; the screen's two rows are held by
 ``test_sim_screen.py``'s list tests and the ones at the end here.
 
 Made-up leagues, fixed seeds. A test whose seat weighs runs in both head-to-head formats, or
@@ -18,7 +18,7 @@ import json
 import re
 import sys
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -186,7 +186,7 @@ def test_an_arm_names_its_guard_and_its_stake_or_holds_the_defaults():
         ({"stake": "0.5"}, "stake '0.5': a number from 0 to 1"),
         ({"stake": True}, "stake True: a number from 0 to 1"),
         ({"stake": float("nan")}, "stake nan: a number from 0 to 1"),
-        ({"stake": 0.5}, "stake 0.5 with season_weight 0: the stake scales the season weight"),
+        ({"stake": 0.5}, "stake 0.5 with season_weight 0: the stake scales the season term"),
     ],
 )
 def test_a_field_out_of_its_choices_or_with_nothing_to_act_on_is_refused_by_name(more, words):
@@ -281,16 +281,22 @@ def test_the_reads_table_s_rows_for_the_two_fields():
 # --------------------------------------------------------------------------- the block and off
 def test_a_seat_at_the_defaults_decides_on_the_problem_as_it_was_built():
     """Rule 1 where a seat decides: with neither field the problem is the one built, the allowed
-    set is the season guard and the weight is the knob itself."""
+    set is the season guard and the term is the season figure itself at the knob's weight."""
     setup = disagreeing()
     state = initial(setup)
     built = built_of(setup, season_weight=0.37)
     assert (built.guard, built.stake, built.level) == (policy.BLOCK, 0.0, 0.0)
     assert policy.guarded(built, setup, state) is built
     assert policy.guarded(built, setup, state, policy.BLOCK, 0.0) is built
-    assert policy.season_weight_of(built) == 0.37
-    # Stake 0 is the knob exactly, whatever the week's stake.
-    assert policy.season_weight_of(replace(built, level=1.0)) == 0.37
+    assert policy.later_share(built) == 1.0
+    # Rule 1 to the bit: with no stake whatever the week's stake, and at a stake in a week
+    # whose stake is 0, the term reads the season figure as it was, on the path it had: the
+    # one class, never the split one at a share of 1.
+    ev = mv.Evaluator(built.problem)
+    for same in (built, replace(built, level=1.0), replace(built, stake=1.0)):
+        assert type(policy.season_figure_of(same)) is policy.SeasonFigure
+        term = policy.seasoned(same, ev, policy.QUEUE_SET)
+        assert type(term.figure) is policy.SeasonFigure and term.weight == 0.37
     assert policy.allowed_of(built) is not None
     assert policy.allowed_of(replace(built, guard=policy.OFF)) is None
     with pytest.raises(ValueError, match="guard 'maybe': one of block, off"):
@@ -384,13 +390,73 @@ def test_a_mirror_rival_stays_on_the_block_and_reads_no_stake(monkeypatch):
     assert seen == [(2, policy.BLOCK, 0.0, 0.0), (1, policy.OFF, 1.0, 0.4)]
 
 
-# --------------------------------------------------------------------------- the weight in force
+# --------------------------------------------------------------------------- the stake in force
+def by_hand(built: policy.Built, move: mv.Move, share: float) -> float:
+    """A move's season figure split by hand (``playoff_weight`` 1, nobody away): each player's
+    season value above a dead spot times his team's games from the day the move counts to the
+    running week's last day, plus ``share`` times his games after it; the add's less the drop's."""
+    p = built.problem
+    day = mv.day_of(p, move)
+    players = {**dict(p.candidates), **dict(p.roster)}
+
+    def worth(key: int) -> float:
+        team = players[key].nba_team
+        days = [d for d, teams in p.schedule.items() if team in teams and day <= d <= p.season_end]
+        this = sum(1 for d in days if d <= built.week.end)
+        return (p.season_value[key] - p.dead) * (this + share * (len(days) - this))
+
+    return worth(move.add) - (0.0 if move.drop is None else worth(move.drop))
+
+
+def test_a_stake_splits_the_season_figure_at_the_running_week_s_last_day():
+    """The rule: ``season_weight x (this week's part + (1 - stake x L) x the rest)``. A move's
+    figure in a week that has a stake counts its games from its landing to the running week's
+    last day in full and its games after ``1 - stake x L`` times. One format: the figure is a
+    value times games and weighs nothing by format."""
+    setup = disagreeing(teams=4)
+    state = initial(setup)
+    built = built_of(setup, season_weight=1.0)
+    whole = policy.SeasonFigure(built, 1.0)
+    mine = [k for k, _ in built.problem.roster if k != DEAD]
+    moves = [
+        mv.Move(LATE, DEAD),
+        mv.Move(SOON, DEAD),
+        mv.Move(SOON, mine[0]),
+        mv.Move(LATE, mine[-1]),
+    ]
+    week = built.week
+    assert week.number == 1 and all(mv.day_of(built.problem, m) <= week.end for m in moves)
+    for stake, level in ((1.0, 1.0), (0.5, 1.0), (1.0, 0.25)):
+        staked = policy.guarded(built, setup, replace(state, stakes={1: level}), stake=stake)
+        share = policy.later_share(staked)
+        assert share == 1 - stake * level
+        figure = policy.season_figure_of(staked)
+        assert type(figure) is policy.StakedFigure
+        assert (figure.share, figure.later) == (share, week.end + timedelta(1))
+        for m in moves:
+            assert figure.move(m) == pytest.approx(by_hand(built, m, share), abs=1e-9)
+        # The split is of the figure as it was: at a share of 1 the two parts are the whole.
+        assert all(whole.move(m) == pytest.approx(by_hand(built, m, 1.0), abs=1e-9) for m in moves)
+        # A player whose games are all after this week keeps only his share of the term; one of
+        # the seat's, who plays this week, keeps this week's games in full beside it.
+        assert figure.move(moves[0]) == pytest.approx(share * whole.move(moves[0]), abs=1e-9)
+        kept = by_hand(built, moves[2], 0.0)
+        assert kept < 0 and figure.move(moves[2]) == pytest.approx(
+            kept + share * (whole.move(moves[2]) - kept), abs=1e-9
+        )
+    # A set's figure is its moves' summed, as the figure's it splits (here at a share of 0.75).
+    assert figure.of(moves[:2]) == figure.move(moves[0]) + figure.move(moves[1]) > 0
+
+
 @pytest.mark.parametrize("h2h", FORMATS)
 @pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
-def test_the_weight_in_force_shrinks_with_the_week_s_stake_and_turns_the_choice(tier, h2h):
-    """At a season weight the seat adds the late player; with a stake of 1 in a week whose stake
-    is 1 the weight in force is 0 and it adds the one who plays the three weeks, the set of an
-    arm with no season weight; in a week whose stake is 0 nothing changes."""
+def test_a_decisive_week_takes_the_term_off_the_later_season_and_turns_the_choice(tier, h2h):
+    """At a season weight the seat adds the late player, whose games are all after the three
+    weeks. With a stake of 1 in a week whose stake is 1 the games after the running week count
+    nothing: a player whose value is all after this week has lost his season term, and the seat
+    adds the one who plays the three weeks, as an arm with no season weight does. The running
+    week's games still count: he comes in for the spot that plays nothing, not for a player
+    who plays this week. In a week whose stake is 0 nothing changes."""
     setup = disagreeing(h2h=h2h)
     state = initial(setup)
     built = built_of(setup, season_weight=1.0)
@@ -399,19 +465,26 @@ def test_the_weight_in_force_shrinks_with_the_week_s_stake_and_turns_the_choice(
     assert LATE in adds(full) and LATE not in adds(plain) and SOON in adds(plain)
     decisive = policy.guarded(built, setup, replace(state, stakes={1: 1.0}), stake=1.0)
     assert (decisive.guard, decisive.stake, decisive.level) == (policy.BLOCK, 1.0, 1.0)
-    assert policy.season_weight_of(decisive) == 0.0
-    assert policy.decide(decisive, tier, with_plan=False).moves == plain.moves
+    assert policy.later_share(decisive) == 0.0
+    late = mv.Move(LATE, DEAD)
+    assert policy.SeasonFigure(built, 1.0).move(late) > 0
+    assert policy.season_figure_of(decisive).move(late) == 0.0
+    got = policy.decide(decisive, tier, with_plan=False)
+    assert adds(got) == adds(plain) == {SOON} and drops(got) == {DEAD}
     idle = policy.guarded(built, setup, replace(state, stakes={1: 0.0}), stake=1.0)
-    assert policy.season_weight_of(idle) == 1.0
+    assert policy.later_share(idle) == 1.0
+    assert type(policy.season_figure_of(idle)) is policy.SeasonFigure
     assert policy.decide(idle, tier, with_plan=False).moves == full.moves
-    # In between the weight is season_weight x (1 - stake x L), and the term is built at it.
+    # In between the share is 1 - stake x L, and the term is built on it at the knob's weight.
     half = policy.guarded(built, setup, replace(state, stakes={1: 0.25}), stake=0.5)
-    assert policy.season_weight_of(half) == 1.0 * (1 - 0.5 * 0.25) == 0.875
+    assert policy.later_share(half) == 1 - 0.5 * 0.25 == 0.875
     ev = mv.Evaluator(half.problem)
     term = policy.seasoned(half, ev, policy.QUEUE_SET)
-    assert isinstance(term, policy.Seasoned) and term.weight == 0.875
-    # At a weight in force of 0 no term is built: the search is the engine's own.
-    assert policy.seasoned(decisive, ev, policy.QUEUE_SET) is ev
+    assert isinstance(term, policy.Seasoned) and term.weight == 1.0
+    assert type(term.figure) is policy.StakedFigure and term.figure.share == 0.875
+    # At a share of 0 the term is still built: the running week's games count.
+    last = policy.seasoned(decisive, ev, policy.QUEUE_SET)
+    assert isinstance(last, policy.Seasoned) and last.figure.share == 0.0
 
 
 def test_the_week_s_stake_is_the_runner_s_figure_or_the_same_function_of_the_finished_weeks():
@@ -671,11 +744,12 @@ def test_a_season_in_which_the_stake_changes_what_the_seat_queues(h2h):
     """Four seats, two in the final: on day one every seat is level with the line with four
     regular weeks after this one, so the week's stake is the formula's at a lead of 0. The season
     weight is one at which the seat trades the three weeks for the late player, close above one
-    at which it does not; a stake of 1 takes the weight in force below that, and the seat adds
-    the player of the three weeks instead: it stops trading the three weeks after this one for
-    the weeks after them (not the running week, which the key it queues on does not hold: the
-    stated limit's test, below). The runner's figure is the pure function's every day, the same
-    all week, and the counts are its mean and the weeks above a half."""
+    at which it does not. A stake of 1 counts the games after the running week ``1 - L`` times
+    (none of the three players in the choice plays the running week, so that is the whole of
+    each move's figure), which takes the term below the turning point, and the seat adds the
+    player of the three weeks instead: it stops trading the weeks near at hand for the later
+    season. The runner's figure is the pure function's every day, the same all week, and the
+    counts are its mean and the weeks above a half."""
     setup = disagreeing(teams=4, h2h=h2h)
     w = replay_of(setup, 2, 0)
     level = stk.swing(0.0, 4)
@@ -713,14 +787,14 @@ def test_a_season_in_which_the_stake_changes_what_the_seat_queues(h2h):
     assert not set(SEASON_KEYS) & set(got["counts"]["rivals"])
 
 
-# --------------------------------------------------------------------------- the stake's limit
+# --------------------------------------------------------------------------- the running week
 #: A made-up free agent who plays every day of one week and never after.
 NOW = 104
 
 
-def on_monday(setup, week, knobs=None, **state):
-    """Seat 1's problem on ``week``'s Monday at a season weight of 1, and the day's state."""
-    at = replace(initial(setup), day=week.start, **state)
+def on_day(setup, day, knobs=None, **state):
+    """Seat 1's problem on ``day`` at a season weight of 1, and the day's state."""
+    at = replace(initial(setup), day=day, **state)
     weighted = {**KNOBS, "season_weight": 1.0, **(knobs or {})}
     built = policy.problem_of(setup, at, 1, weighted, setup.projection, {}, {})
     assert built is not None
@@ -728,16 +802,16 @@ def on_monday(setup, week, knobs=None, **state):
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-def test_a_stated_limit_the_set_is_scored_on_no_day_of_the_week_whose_stake_is_read(h2h):
-    """The stake's limit starts here: the key both tiers queue on holds the weeks after the
-    running one and no day of it, fewer as the season runs out and none in its last week. A
-    move lands the day after it is decided, so of a queued set's score the season term alone
-    counts the rest of the running week."""
+def test_the_key_a_seat_queues_on_holds_no_day_of_the_running_week(h2h):
+    """Why the stake splits the figure and does not scale it whole: the key both tiers queue on
+    holds the weeks after the running one and no day of it, fewer as the season runs out and
+    none in its last week. A move lands the day after it is decided, so of a queued set's
+    score the season term alone counts the rest of the running week."""
     setup = disagreeing(teams=4, h2h=h2h)
     weeks = setup.calendar.weeks
     held = []
     for week in weeks:
-        built, _ = on_monday(setup, week)
+        built, _ = on_day(setup, week.start)
         days = [d for span in built.problem.horizons[policy.QUEUE_SET] for d in span.days]
         assert all(d > week.end for d in days)
         held.append(len(days))
@@ -747,26 +821,28 @@ def test_a_stated_limit_the_set_is_scored_on_no_day_of_the_week_whose_stake_is_r
 
 @pytest.mark.parametrize("h2h", FORMATS)
 @pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
-def test_a_stated_limit_in_the_final_a_seat_with_a_stake_of_one_decides_no_set(tier, h2h):
-    """A stated limit, pinned so that a change of it is seen (the README's "What a stake moves,
-    and its limit"): the stake takes away the only term that counts the running week. On the
-    final's Monday a seat inside the field has a week's stake of 1 ("full in the playoffs"). At
-    a season weight and no stake it adds the player who plays the final; at a stake of 1 its
-    weight in force is 0, the key it queues on is empty, and it decides no set, on either tier,
-    the exact tier's week plan drawn or not."""
+def test_in_the_final_a_seat_with_a_stake_of_one_still_adds_the_player_who_plays_it(tier, h2h):
+    """Full in the playoffs: on the final's Monday a seat inside the field has a week's stake
+    of 1, and the key it queues on is empty. The stake takes the term off the season after the
+    running week, of which there is none, so at a stake of 1 the seat adds the player who plays
+    the final as it does with no stake, on either tier, the exact tier's plan drawn or not. (A
+    weight scaled whole would be 0 here and the seat would decide no set.)"""
     setup = disagreeing(teams=4, h2h=h2h)
     final = setup.calendar.weeks[-1]
     # Every regular week a tie: the league's own order puts seat 1 inside the field of two.
     tied: dict = {w: {} for w in setup.spec.regular_weeks}
     assert stk.level(setup.spec, tied, 1, final.number) == 1.0
-    built, state = on_monday(setup, final, totals=tied)
+    built, state = on_day(setup, final.start, totals=tied)
     assert built.problem.horizons[policy.QUEUE_SET] == ()
     plain = policy.decide(built, tier, with_plan=False)
     assert adds(plain) == {LATE} and drops(plain) == {DEAD}
     staked = policy.guarded(built, setup, state, stake=1.0)
-    assert staked.level == 1.0 and policy.season_weight_of(staked) == 0.0
-    assert policy.decide(staked, tier, with_plan=False).moves == ()
-    assert policy.decide(staked, tier).moves == ()
+    assert staked.level == 1.0 and policy.later_share(staked) == 0.0
+    figure = policy.season_figure_of(staked)
+    assert figure.later > built.problem.season_end
+    assert figure.move(plain.moves[0]) == policy.SeasonFigure(built, 1.0).move(plain.moves[0]) > 0
+    assert policy.decide(staked, tier, with_plan=False).moves == plain.moves
+    assert policy.decide(staked, tier).moves == plain.moves
     # A seat outside the field reads no stake there, and adds him as before.
     out = policy.guarded(built, setup, replace(state, stakes={1: 0.0}), stake=1.0)
     assert policy.decide(out, tier, with_plan=False).moves == plain.moves
@@ -774,11 +850,13 @@ def test_a_stated_limit_in_the_final_a_seat_with_a_stake_of_one_decides_no_set(t
 
 @pytest.mark.parametrize("h2h", FORMATS)
 @pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
-def test_a_stated_limit_a_decisive_regular_week_s_own_games_are_not_played_for(tier, h2h):
-    """The same limit in a regular week: a free agent plays every day of the last regular week
-    and never after. His add gains nothing on the key the seat queues on and a good deal on
-    the running week. At a season weight the seat adds him (the term counts his games this
-    week); in a week whose stake is 1, at a stake of 1, it does not."""
+def test_in_a_decisive_regular_week_a_seat_still_adds_the_player_who_plays_only_that_week(
+    tier, h2h
+):
+    """A free agent plays every day of the last regular week and never after: his add gains
+    nothing on the key the seat queues on and a good deal on the running week, which the season
+    term alone counts. In a week whose stake is 1, at a stake of 1, the seat still adds him:
+    the running week's part of the term is kept in full."""
     base = disagreeing(teams=4, h2h=h2h)
     week = base.calendar.weeks[4]
     assert week.number == base.spec.regular_weeks[-1]
@@ -792,14 +870,54 @@ def test_a_stated_limit_a_decisive_regular_week_s_own_games_are_not_played_for(t
         schedule={d: frozenset(t) for d, t in schedule.items()},
         pool=(NOW,),
     )
-    built, state = on_monday(setup, week, stakes={1: 1.0})
+    built, state = on_day(setup, week.start, stakes={1: 1.0})
     plain = policy.decide(built, tier, with_plan=False)
     assert adds(plain) == {NOW}
     ev = mv.Evaluator(built.problem)
     assert ev.gain(policy.QUEUE_SET, plain.moves) == 0.0 and ev.gain("week", plain.moves) > 0.01
     staked = policy.guarded(built, setup, state, stake=1.0)
-    assert policy.season_weight_of(staked) == 0.0
-    assert NOW not in adds(policy.decide(staked, tier, with_plan=False))
+    assert policy.later_share(staked) == 0.0
+    assert policy.decide(staked, tier, with_plan=False).moves == plain.moves
+    # With no season weight nothing counts his games this week, and he is not added.
+    bare, _ = on_day(setup, week.start, {"season_weight": 0.0})
+    assert NOW not in adds(policy.decide(bare, tier, with_plan=False))
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_a_stated_limit_a_move_decided_on_a_week_s_last_day_is_scaled_whole(tier, h2h):
+    """A stated limit, pinned by name (the README's "What a stake moves, and its limit"): a
+    move decided on a Sunday lands in the next week, so it has no part in the running week and
+    its whole figure is scaled by the ending week's stake, not the stake of the week it plays
+    in. At a stake of 1 on the Sunday of a week whose stake is 1, every move's term is 0 and
+    the seat decides as one with no season weight; on the Monday after, at the same stake for
+    the new week, a player's games that week are in the term again."""
+    setup = disagreeing(teams=4, h2h=h2h)
+    sunday = setup.calendar.weeks[0].end
+    assert sunday.weekday() == 6
+    built, state = on_day(setup, sunday, stakes={1: 0.6})
+    assert built.week.number == 1
+    late, soon = mv.Move(LATE, DEAD), mv.Move(SOON, DEAD)
+    assert all(mv.day_of(built.problem, m) == sunday + timedelta(1) for m in (late, soon))
+    whole = policy.SeasonFigure(built, 1.0)
+    part = policy.season_figure_of(policy.guarded(built, setup, state, stake=1.0))
+    assert part.share == pytest.approx(0.4)
+    for m in (late, soon):
+        assert whole.move(m) > 0
+        assert part.move(m) == pytest.approx(part.share * whole.move(m), abs=1e-9)
+    # At a share of 0 the seat's Sunday is the Sunday of a seat with no season weight.
+    decisive = policy.guarded(built, setup, replace(state, stakes={1: 1.0}), stake=1.0)
+    none = policy.season_figure_of(decisive)
+    assert none.move(late) == none.move(soon) == 0.0
+    bare, _ = on_day(setup, sunday, {"season_weight": 0.0})
+    assert (
+        policy.decide(decisive, tier, with_plan=False).moves
+        == policy.decide(bare, tier, with_plan=False).moves
+    )
+    # The Monday after, the first of the soon player's weeks: his games that week are counted.
+    monday, at = on_day(setup, sunday + timedelta(1), stakes={1: 1.0})
+    after = policy.season_figure_of(policy.guarded(monday, setup, at, stake=1.0))
+    assert after.share == 0.0 and after.move(soon) > 0 and after.move(late) == 0.0
 
 
 # --------------------------------------------------------------------------- no peek, a split seat

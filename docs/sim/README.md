@@ -354,10 +354,9 @@ has a `ROS_w`, has a row whose `ratio` is null. `paths` counts the paths that ha
 key is in every run that has a scale, whatever its arms name; no figure moves with it.
 
 **The season guard and the week's stake** (the guard PR; `policy.allowed_of`,
-`policy.season_weight_of`, `sim/stake.py`). Two fields of an arm, both about how a seat trades the
-weeks its queued set is scored on (the three after the running one) against the rest of the
-season. Live runs the hard block and reads no stake. Both are here to be measured, and a result
-here changes nothing live without the user.
+`policy.season_figure_of`, `sim/stake.py`). Two fields of an arm, both about how a seat trades
+the weeks near at hand against the rest of the season. Live runs the hard block and reads no
+stake. Both are here to be measured, and a result here changes nothing live without the user.
 
 - **`guard`**: `block` (the default) or `off`. Under `block` every search of the arm's tier is
   handed the engine's season guard (`moves.season_guard`: a set whose rest of the season is below
@@ -369,14 +368,21 @@ here changes nothing live without the user.
   stream's own check (a step's path must be no worse on the weeks after, `stream.plan`) still
   does. The ranking tier and a static seat search under no guard: an arm that names `guard`
   there is refused by name.
-- **`stake`**: a number from 0 to 1 (default 0). The season weight in force on a day is
-  `season_weight × (1 − stake × L)`, where `L`, between 0 and 1, is the week's stake for the seat:
-  how much this week's result can move whether it makes the playoffs. At `stake` 0 the weight is
-  the knob itself and nothing changes; at `stake` 1 a seat whose week decides its season (`L` 1)
-  weighs no season term that week. Every reader of the weight calls one function
-  (`policy.season_weight_of`, through `policy.seasoned`): both tiers' searches, and gate 5's
-  worth, which gate 5 measures at the defaults (the block, no stake). The season scale is measured
-  without the term and does not change. An arm with `stake` above 0 and `season_weight` 0 is
+- **`stake`**: a number from 0 to 1 (default 0). The season term on a day is
+
+      season_weight × (this week's part + (1 − stake × L) × the rest)
+
+  where `L`, between 0 and 1, is the week's stake for the seat (how much this week's result can
+  move whether it makes the playoffs) and a move's `ROS_w` is split at the running week's last
+  day: "this week's part" is its figure over the days from its landing to that day, "the rest"
+  its figure over the days after, a bracket day counted `playoff_weight` times in both as
+  before. At `stake` 0, and in a week whose `L` is 0, the term is the figure as it was, on the
+  path it had, and nothing changes. At `stake` 1 a seat whose week decides its season (`L` 1)
+  keeps the term on that week's games and weighs nothing after it. One place hands every reader
+  of the term its figure (`policy.season_figure_of`, through `policy.seasoned`; the share
+  `1 − stake × L` is `policy.later_share`): both tiers' searches, and gate 5's worth, which
+  gate 5 measures at the defaults (the block, no stake). The season scale is measured without
+  the term and does not change. An arm with `stake` above 0 and `season_weight` 0 is
   refused by name (there is nothing to scale); so is one in a league whose bracket is not read
   (the cut line and the bracket's weeks are not trusted), before any path. Both refusals are by
   the field, on any tier: an arm on the ranking tier, whose seat reads no stake, is refused the
@@ -415,28 +421,33 @@ limit: a seat that lost its first round still has `L` 1 in the weeks after).
 **What a stake moves, and its limit.** The set a seat queues is searched on `three`, the weeks
 after the running one: no day of the running week is in that key, and a move lands the day after
 it is decided. Of a queued set's score the season term is then the only part that counts the
-rest of the running week (`ROS_w` runs from the day the move lands to the season's end). So a
-stake does not make a seat play for the week whose stake it reads. It moves weight from the
-season to the three weeks after that week, and takes away the one term that counted the week
-itself:
+rest of the running week (`ROS_w` runs from the day the move lands to the season's end). So the
+stake does not scale the term whole. A weight of `season_weight × (1 − stake × L)` on the whole
+figure would take away, in the week that is decisive, the one term that counts that week; and in
+the bracket's last week, where no week comes after and the key is empty, a seat inside the field
+at `stake` 1 would decide no set. The figure is split at the running week's last day instead
+(`policy.StakedFigure`), and a decisive week moves the term's weight from the later season to
+the week itself:
 
-- In the bracket's last week no week comes after, and the key is empty. A seat inside the field
-  at `stake` 1 (`L` 1, a weight in force of 0) decides no set there, on either tier, where the
-  same seat at `stake` 0 still adds a player who plays the final.
-- In a regular week whose `L` is 1 (the last, for a seat level with the line), a free agent who
-  plays only the rest of that week is added at `stake` 0 and not at `stake` 1: his add gains
-  nothing on the weeks after.
-- `L` is the stake of the week the day is in, and a move decided that day lands the next. On a
-  week's last day the weight reads the ending week's stake for moves that can only play from
-  Monday (the exact tier decides every day; the default surrogate, on Mondays and Thursdays,
-  does not meet it). The roster that starts the bracket's first round was set by moves decided
-  in the last regular week, at that week's `L`, not the bracket's.
+- In the bracket's last week nothing comes after the week. A seat inside the field at `stake` 1
+  (`L` 1) adds a player who plays the final as it does at `stake` 0, on either tier.
+- In the last regular week, for a seat level with the line (`L` 1), a free agent who plays only
+  the rest of that week is still added at `stake` 1: his games are this week's part.
+- A player whose games are all after the running week has no season term at `stake` 1 in a week
+  whose `L` is 1, and `1 − stake × L` of it otherwise.
 
-An exact arm that executes its week plan still plays the running week through the plan, which
-takes no season term and reads no stake. This is how the formula meets the key the engine
-queues on. It is not the ruling's idea, a seat that plays for the week that decides its season,
-and it is stated here as a limit (pinned in `tests/sim/test_sim_guard.py`): a result on `stake`
-is read with it, and in the bracket's last week it measures a seat that stops adding.
+The limit that stays: `L` is the stake of the week the day is in, and a move lands the day after
+it is decided. A move decided on a week's last day lands in the next week, so it has no part in
+the running week and its whole figure is scaled by the ending week's `L`, not by the `L` of the
+week it plays in (the exact tier decides every day; the default surrogate, on Mondays and
+Thursdays, does not meet it). The same on any day for the games after the week: a move decided
+in the last regular week counts the bracket's games at that week's `L`, whatever the seat's `L`
+in the bracket will be. A claim that clears after the running week is scaled whole too. An
+exact arm's week plan takes no season term and reads no stake.
+
+The split is a working default, as the formula of `L` is: the ruling fixes the idea (a decisive
+week wins over the rest of the season). The three cases and the limit are pinned by name in
+`tests/sim/test_sim_guard.py`.
 
 `Φ` is from `math.erf`, and `L` is rounded to twelve decimals before anything reads it, so two
 machines decide alike. The runner computes it once a week for each seat that reads or counts one,
@@ -467,7 +478,7 @@ built:
 | `horizon_weight` | exact executing `weighted` | any other arm |
 | `plan_floor_cats` | exact drawing and executing the week plan, in a categories league that counts every category; in such a FAAB run any exact or surrogate seat and a mirror rival (the typical gain until ten moves, PR Fb) | any other arm or league; in a one-win league nobody: the engine's plan floor is its own there (the format PR) |
 | `plan_floor_points` | the same, points | any other arm or league |
-| `season_weight` | exact, surrogate: the weight in force, `season_weight × (1 − stake × L)`, the knob itself at `stake` 0 | the ranking tier holds no odds |
+| `season_weight` | exact, surrogate: with a `stake` the term counts a game after the running week `1 − stake × L` times, and the figure as it was at `stake` 0 | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read | no term, or no bracket |
 | `three_weight` | nobody | the queue's rule, PR E |
 | `system` | the arm's own seat, on a replay that names the two sources' stand-ins | a run without stand-ins |

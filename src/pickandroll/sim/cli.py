@@ -498,7 +498,7 @@ SEASON_NOTE = {
     "stake": {
         "stake_mean": "the week's stake L for the seat, its mean over the weeks played (the "
         "standings it reads are the arm's own season's; an arm's stake field does not change "
-        "what L is, only whether its weight reads it)",
+        "what L is, only whether its season term reads it)",
         "stake_weeks_above_half": "the weeks whose stake L was above a half",
     },
 }

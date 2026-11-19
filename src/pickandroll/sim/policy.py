@@ -86,12 +86,14 @@ odds and do not change. :func:`measure_of` names the measure for the record.
 **The guard and the stake** (the guard PR, an arm's two season fields, :data:`SEASON_FIELDS`).
 ``guard`` is ``block`` (the default: the engine's season guard on every search of the tier, as
 live) or ``off`` (no search of the tier is handed an allowed set, :func:`allowed_of`; what holds
-a set back is the season term alone). ``stake``, 0 to 1 (0 by default), shrinks the season weight
-as the week's stake grows: the weight in force on a day is ``season_weight x (1 - stake x L)``
-(:func:`season_weight_of`, the one function every reader of the weight calls), ``L`` the week's
-stake for the seat from the finished weeks' standings (``sim/stake.py``). Both are the arm's own
-seat's (:func:`guarded`): a rival, a mirror too, stays on the block and reads no stake. With
-neither named nothing moves.
+a set back is the season term alone). ``stake``, 0 to 1 (0 by default), moves the season term's
+weight from the season after the running week to that week as the week's stake grows: the term
+is ``season_weight x (this week's part + (1 - stake x L) x the rest)``, the season figure split
+at the running week's last day (:func:`later_share`, :class:`StakedFigure`;
+:func:`season_figure_of` is the one place every reader of the term takes its figure), ``L`` the
+week's stake for the seat from the finished weeks' standings (``sim/stake.py``). Both are the
+arm's own seat's (:func:`guarded`): a rival, a mirror too, stays on the block and reads no
+stake. With neither named nothing moves.
 """
 
 from __future__ import annotations
@@ -335,8 +337,8 @@ class Built:
     bids: bool = False
     #: The seat's guard, its stake and the week's stake ``L`` for it (the guard PR,
     #: :func:`guarded`): the block, no stake and no ``L`` unless the arm's seat says otherwise.
-    #: E reads ``guard`` through :func:`allowed_of`; every reader of the season weight reads
-    #: ``stake`` and ``level`` through :func:`season_weight_of`.
+    #: E reads ``guard`` through :func:`allowed_of`; every reader of the season term reads
+    #: ``stake`` and ``level`` through :func:`later_share` (:func:`season_figure_of`).
     guard: str = BLOCK
     stake: float = 0.0
     level: float = 0.0
@@ -845,28 +847,66 @@ class Seasoned:
         return self.value(key, moves) - self.base[key]
 
 
-def season_weight_of(built: Built) -> float:
-    """The season weight in force on ``built``'s day (the guard PR), the one function every
-    reader of the weight calls: the arm's ``season_weight`` times ``1 - stake x L``, ``L`` the
-    week's stake for the seat (``Built.level``, 0 to 1). At ``stake`` 0 the knob itself, no
-    arithmetic on it. The season scale (:func:`scale_of`) is measured without the term and does
-    not read it. What a smaller weight leaves is the key the set is searched on, the weeks after
-    the running one, never the running week itself (``sim/stake.py``, the stated limit)."""
-    weight = float(knob(built.knobs, "season_weight"))
-    if built.stake == 0:
-        return weight
-    return weight * (1.0 - built.stake * built.level)
+def later_share(built: Built) -> float:
+    """``1 - stake x L``: how many times the season term counts a game after the running week
+    on ``built``'s day (the guard PR), the one function every reader of the stake in force
+    calls; ``L`` is the week's stake for the seat (``Built.level``, 0 to 1). 1 at ``stake`` 0
+    and in a week whose stake is 0: the term is then the season figure itself
+    (:func:`season_figure_of`). The season scale (:func:`scale_of`) is measured without the
+    term and does not read it."""
+    return 1.0 - built.stake * built.level
+
+
+class StakedFigure(SeasonFigure):
+    """The season figure a seat's term reads in a week that has a stake for it (the guard PR):
+    :class:`SeasonFigure` with a game after the running week's last day counted ``share`` times
+    (:func:`later_share`, ``1 - stake x L``) and a game of the running week counted in full, a
+    bracket day's ``playoff_weight`` times in both parts as there. So a move's figure is
+
+        its part over the days from its landing to the running week's last day
+        + share x its part over the days after
+
+    and a decisive week moves the term's weight from the later season to the week itself: at a
+    share of 0 a player whose games are all after this week has no term, and one who plays
+    this week keeps this week's. A move that lands after the running week (one decided on its
+    last day, or a claim that clears later) has no part in it: its whole figure is scaled, by
+    the stake of the week it was decided in (a limit, stated in the README)."""
+
+    def __init__(self, built: Built, playoff_weight: float, share: float) -> None:
+        super().__init__(built, playoff_weight)
+        self.share = float(share)
+        #: The first day after the running week: where the figure is split.
+        self.later = built.week.end + timedelta(1)
+
+    def games(self, nba_team: str | None, start: date) -> float:
+        """``nba_team``'s games from ``start`` on, those after the running week counted
+        ``share`` times."""
+        whole = super().games(nba_team, start)
+        rest = super().games(nba_team, max(start, self.later))
+        return (whole - rest) + self.share * rest
+
+
+def season_figure_of(built: Built) -> SeasonFigure:
+    """The season term's figure in force on ``built``'s day (the guard PR), the one place every
+    reader of the term takes it: :class:`SeasonFigure` at the arm's ``playoff_weight``, the
+    figure as it was, whenever ``stake x L`` is 0 (no stake, or a week whose stake is 0: the
+    same object on the same path, never a sum of two parts); :class:`StakedFigure` at
+    :func:`later_share` otherwise."""
+    playoff = knob(built.knobs, "playoff_weight")
+    if built.stake * built.level == 0:
+        return SeasonFigure(built, playoff)
+    return StakedFigure(built, playoff, later_share(built))
 
 
 def seasoned(built: Built, inner: mv.Valued, key: str) -> mv.Valued:
-    """``inner`` with the season term on ``key`` (:class:`Seasoned`) at the season weight in
-    force (:func:`season_weight_of`: the arm's ``season_weight``, less what its ``stake`` takes
-    off this week); ``inner`` itself at a weight of 0, where the wrapper is not built and the
-    search is the engine's own."""
-    weight = season_weight_of(built)
+    """``inner`` with the season term on ``key`` (:class:`Seasoned`) at the arm's
+    ``season_weight``, on the season figure in force (:func:`season_figure_of`: with a
+    ``stake``, the games after the running week count ``1 - stake x L`` times); ``inner`` itself
+    at ``season_weight`` 0, where the wrapper is not built and the search is the engine's own."""
+    weight = float(knob(built.knobs, "season_weight"))
     if weight == 0:
         return inner
-    return Seasoned(inner, key, weight, SeasonFigure(built, knob(built.knobs, "playoff_weight")))
+    return Seasoned(inner, key, weight, season_figure_of(built))
 
 
 # --------------------------------------------------------------------------- the tiers
@@ -1373,7 +1413,7 @@ def season_of(
         raise ValueError(f"stake {stake!r}: a number from 0 to 1")
     if stake > 0 and not float(knob(knobs, "season_weight")) > 0:
         raise ValueError(
-            f"stake {stake:g} with season_weight 0: the stake scales the season weight, and "
+            f"stake {stake:g} with season_weight 0: the stake scales the season term, and "
             "there is none to scale"
         )
     return str(guard), float(stake), named
