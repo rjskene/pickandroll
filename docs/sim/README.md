@@ -1675,6 +1675,10 @@ cannot tell the two apart. So one season is kept out of every search and read on
   read it, there is **no verdict**: the rule does not rest on the forecasters left. (The check
   before the first pair refuses such a tune, so this is met only when the files changed under a
   tune in flight.)
+- A cell the rule does not read is another thing: an oracle's, or `espn`'s when that season
+  fails its freeze check, which only the season's own games show. It has its row in the table,
+  marked "not read", as a search's has. The verdict then rests on the forecasters read and
+  names them (`verdict.read`).
 - **The rivals.** The pair is played against the run's rivals, and again against static ones
   when the baseline's rivals are not static. Both cells are in the record. An edge against one
   kind of rivals only is flagged: against rivals that never move it may be an edge over nobody,
@@ -1710,7 +1714,8 @@ cannot tell the two apart. So one season is kept out of every search and read on
   its looks are counted together.
 - It is the forecasters' the search read, every one of them. A set ahead under one forecaster
   and not under another does not hold, and a forecaster with no cell on the season is no
-  verdict.
+  verdict. The one exception is a cell the season's freeze check leaves out: its row says "not
+  read", and the verdict names the forecasters it rests on.
 - A tune with `--confirm none`, or one whose search moved nothing, has no verdict. A search's
   set alone is no recommendation: it was chosen on the seasons it was searched on.
 
