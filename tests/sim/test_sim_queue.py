@@ -32,13 +32,22 @@ from tests.sim.test_sim_knobs import flip_setup, points_setup, weakened
 
 DAY = timedelta(1)
 FORMATS = (ONE_WIN, EACH_CATEGORY)
+#: The plan floors every problem and season of this file reads, away from 0. At a floor of 0 a
+#: plan that only ties its set (the set's own moves, a step that adds nothing) is taken or not,
+#: and trimmed or not, on a float's last bit, which moves with the process's hash seed
+#: (``sim_league.KNOBS``' note: a test that reads a plan floor sets it away from 0). Under the
+#: queue's rule a league that counts every category and a points league read the knob as the
+#: gate a week plan clears; a one-win league reads neither (its floor is the engine's own).
+#: Small, so the made-up leagues' plans clear it.
+FLOORS = {"plan_floor_cats": 0.01, "plan_floor_points": 0.01}
 
 
 def built_on(setup, team: int = 1, day: int = 0, status=None, returns=None, **knobs):
     """``team``'s problem ``day`` days into the made-up season, on the day-one rosters. The
-    cap is three a day unless the case says otherwise, so a plan may take several steps a day."""
+    cap is three a day unless the case says otherwise, so a plan may take several steps a day;
+    the plan floors are :data:`FLOORS` unless the case names one."""
     today = replace(initial(setup), day=setup.start + day * DAY)
-    knobs = {**KNOBS, "daily_cap": 3, **knobs}
+    knobs = {**KNOBS, "daily_cap": 3, **FLOORS, **knobs}
     return policy.problem_of(
         setup, today, team, knobs, setup.projection, status or {}, returns or {}
     )
@@ -603,8 +612,14 @@ PATH = (1, 0)
 
 
 def queue_arm(name: str = "Q", **knobs) -> rn.Arm:
+    """An exact arm that executes ``queue`` among market rivals, three moves a day, its plan
+    floors :data:`FLOORS` unless the test names one."""
     return rn.Arm(
-        name, "exact", {**KNOBS, "daily_cap": 3, **knobs}, {"kind": "market"}, policy.QUEUE
+        name,
+        "exact",
+        {**KNOBS, "daily_cap": 3, **FLOORS, **knobs},
+        {"kind": "market"},
+        policy.QUEUE,
     )
 
 
@@ -773,7 +788,7 @@ def test_a_split_seat_executes_the_queue_s_rule_on_its_own_table():
     first = {k: {st_: v * 1.1 for st_, v in r.items()} for k, r in setup.projection.items()}
     second = split.second_of(first)
     blend = replace(
-        arm("Y", "exact", "market", three_weight=0.0, system="blend", blend=0.25),
+        arm("Y", "exact", "market", three_weight=0.0, system="blend", blend=0.25, **FLOORS),
         executes=policy.QUEUE,
     )
     plain = replace(blend, name="B", knobs={**blend.knobs, "system": "bbm", "blend": None})
@@ -806,36 +821,57 @@ def rounded(x):
     return x
 
 
-def pair_digest(setup) -> str:
+def pair_digest(setup) -> tuple[str, int]:
     """SHA-256 of a pair's whole task result (``run.paired``: both arms' outcomes, their
     difference, the solves, the moves, the counts of both arms and of the rivals, the breaches
     and the season scale, every key), each figure rounded to nine places: an exact arm that
     executes ``three`` with its streaming plan drawn and executed against one that executes
-    ``weighted``, in seat 1 among market rivals through one world."""
-    knobs = {**KNOBS, "daily_cap": 3}
+    ``weighted``, in seat 1 among market rivals through one world. With it, the days the first
+    arm held a streaming plan.
+
+    The pair's plan floors are below zero, so the first arm takes each plan the stream draws
+    (as ``test_sim_knobs.py``'s read cases do) and the digest holds the executor's plan path. At
+    ``KNOBS``' floor of 0 the every-category digest moved with the process's hash seed: a plan
+    that ties its set was taken or not on a float's last bit."""
+    knobs = {**KNOBS, "daily_cap": 3, "plan_floor_cats": -1.0, "plan_floor_points": -1.0}
     three = rn.Arm("A", "exact", knobs, {"kind": "market"}, policy.QUEUE_SET, True, True)
     weighted = rn.Arm("B", "exact", knobs, {"kind": "market"}, policy.WEIGHTED, False, False)
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *PATH)
-    out = rounded(rn.paired(setup, w, three, weighted, 1))
-    return hashlib.sha256(json.dumps(out, sort_keys=True, default=str).encode()).hexdigest()
+    days: list[rn.DayRecord] = []
+    out = rounded(rn.paired(setup, w, three, weighted, 1, on_day=days.append))
+    planned = sum(1 for r in days if r.variant == 0 and r.decisions[1].plan)
+    digest = hashlib.sha256(json.dumps(out, sort_keys=True, default=str).encode()).hexdigest()
+    return digest, planned
 
 
 #: Rule 1's pins: the pair of :func:`pair_digest` on two of :data:`KINDS` (one win by priority
 #: with an IL slot; every category by FAAB under continuous waivers with an IL slot), as main
 #: ``4b26577`` gave them (``~/sim-notes/vm/scratch/e/rule1_pins.py``, the same digest, run on a
-#: copy of main's code and on this PR's tree).
+#: copy of main's code and on this PR's tree, each under hash seeds 0 to 9: one value a league).
 RULE1_ONE_WIN = "c439af76da05a93a1a938fedfac6ecee69cc511c17b88bd3293ea28724f17dc4"
-RULE1_EACH = "8bbd948eb04f1d5f9a7917400df4416c50d705258e765c8efe5b83cd59ede35a"
+RULE1_EACH = "e27288e2530c4b08ad248b7b3d1d04701551b7fb6f3e398dc564fa61f1373e75"
 
 
 def test_rule_1_an_arm_that_does_not_name_queue_plays_as_main_s():
     """Arms that execute ``three`` and ``weighted`` give main's results, counts and keys, to the
-    last key of the pair's record; and no row of such a run has the queue's counts."""
-    assert pair_digest(KINDS["one win, priority, a dropped player waits, IL"]()) == RULE1_ONE_WIN
-    assert pair_digest(KINDS["every category, FAAB, continuous, IL"]()) == RULE1_EACH
+    last key of the pair's record; and no row of such a run has the queue's counts. Where every
+    category counts the first arm holds a streaming plan on some days and queues its steps, so
+    the pin holds the executor's plan path as main's; a one-win league's plan floor is the
+    engine's own, and no plan of that season clears it."""
+    one, _ = pair_digest(KINDS["one win, priority, a dropped player waits, IL"]())
+    each, planned = pair_digest(KINDS["every category, FAAB, continuous, IL"]())
+    assert one == RULE1_ONE_WIN
+    assert each == RULE1_EACH
+    assert planned >= 1, "the pair's first arm held no streaming plan: the pin holds less"
 
 
 def test_a_pair_s_rows_carry_the_queue_s_counts_only_when_an_arm_names_queue():
+    """Which rows of a pair carry the queue's two keys: none when neither arm names ``queue``,
+    every row (both arms' and the rivals') when one does, in one league or in two drafted apart,
+    and the other arm's own figures do not move. One format is played, every category: which
+    rows carry a key is the runner's bookkeeping and reads no format (the counts themselves are
+    held in both formats by the league kinds' test above), and each pair here is two exact
+    seasons, the file's dearest."""
     setup = KINDS["every category, no waivers"]()
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *PATH)
     three = replace(queue_arm("T"), executes=policy.QUEUE_SET)

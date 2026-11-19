@@ -207,8 +207,13 @@ def queue_records(setup, lines):
     """The day records of a seat that executes the queue's rule (#172, PR E) in seat 1 among the
     market, each day's digest, and the days its queue took a week plan. The arm's
     ``three_weight`` is 0: the arm found whose queue takes a plan on this league
-    (``~/sim-notes/vm/scratch/e/probe7.py``)."""
-    q = replace(arm("Q", "exact", "market", three_weight=0.0), executes=policy.QUEUE)
+    (``~/sim-notes/vm/scratch/e/probe7.py``). Its plan floor is away from 0, where a plan that
+    only ties its set is taken or not on a float's last bit (``sim_league.KNOBS``' note): the
+    league counts every category, so the queue's gate reads the knob."""
+    q = replace(
+        arm("Q", "exact", "market", three_weight=0.0, plan_floor_cats=0.01),
+        executes=policy.QUEUE,
+    )
     got: dict[tuple[date, int], dict[str, str]] = {}
     led: list[date] = []
 

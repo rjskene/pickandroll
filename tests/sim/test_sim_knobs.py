@@ -622,6 +622,10 @@ LEAGUES = {
     "strong": lambda: strong(make_setup(seed=3, weeks=3, playoff_weeks=1)),
 }
 
+#: The plan floors of a queue case whose league reads one the case does not move (PR E): away
+#: from 0, where a plan that only ties its set is taken or not on a float's last bit.
+QUEUE_FLOORS = {"plan_floor_cats": 0.01, "plan_floor_points": 0.01}
+
 #: For each knob, cases of two arms that differ only in it: the arm's tier, what it executes,
 #: whether it draws and executes the plan, the knobs it starts from, the two values, the seat and
 #: the league (:data:`LEAGUES`). The rows say ``read`` or not; the records must agree with them.
@@ -668,14 +672,16 @@ CASES = [
     # The queue's rule (PR E): the weight is read in every league kind, a floor where its
     # league kind reads it (the knob in every category and in points; one win has the engine's
     # own), and the season term on the set. Found by ``~/sim-notes/vm/scratch/e/probe5.py``.
+    # Where the league's own floor is read and is not the knob the case moves, it sits away
+    # from 0 (``QUEUE_FLOORS``), as the note above says of a floor of exactly zero.
     ("three_weight", "exact", "queue", False, False, {}, (0.0, 0.9), 1, "weak cats"),
-    ("three_weight", "exact", "queue", False, False, {}, (0.0, 0.9), 1, "each"),
-    ("three_weight", "exact", "queue", False, False, {}, (0.0, 0.9), 1, "points"),
+    ("three_weight", "exact", "queue", False, False, QUEUE_FLOORS, (0.0, 0.9), 1, "each"),
+    ("three_weight", "exact", "queue", False, False, QUEUE_FLOORS, (0.0, 0.9), 1, "points"),
     ("plan_floor_cats", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "each"),
     ("plan_floor_cats", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "cats"),
-    ("plan_floor_cats", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "points"),
+    ("plan_floor_cats", "exact", "queue", False, False, QUEUE_FLOORS, (-1.0, 50.0), 1, "points"),
     ("plan_floor_points", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "points"),
-    ("plan_floor_points", "exact", "queue", False, False, {}, (-1.0, 50.0), 1, "each"),
+    ("plan_floor_points", "exact", "queue", False, False, QUEUE_FLOORS, (-1.0, 50.0), 1, "each"),
     ("season_weight", "exact", "queue", False, False, {}, (0.0, 1.0), 1, "cats"),
 ]
 
