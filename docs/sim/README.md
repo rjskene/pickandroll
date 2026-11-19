@@ -1429,8 +1429,9 @@ What the bid policy does not model, each plainly:
     week bids as one at the same weight on the season wherever both gains are above 0. From its
     tenth move the seat reads a size on each. On the tests' made-up seasons of six weeks a
     surrogate seat on its two days a week makes its tenth move late in the season or not at all,
-    and never holds ten in a fortnight. A look at a real season says on which day its seat makes
-    its tenth move.
+    and never holds ten in a fortnight; on one found path of the command tests' league of three
+    weeks its seat does hold ten in one. A look at a real season says on which day its seat
+    makes its tenth move.
 
 **Not yet.** The ruling of 2026-11-07
 makes the market rivals' add rate a parameter of the league shape, with a default written as a
