@@ -646,14 +646,18 @@ def reads_of(
     arms: Mapping[str, rn.Arm], shapes: Sequence[policy.Shape], rivals: bool
 ) -> dict[str, Any]:
     """The reads table by arm and by each shape of the run: each knob and field ``read`` or the
-    reason it is not (``policy.reads``, ``policy.field_reads``)."""
+    reason it is not (``policy.reads``, ``policy.field_reads``). An arm's fields are the ones
+    its record names (``policy.Fields.payload``): ``guard_pool`` has a row only for an arm that
+    sets it above 0 (PR pool), so an arm that leaves it off has the four rows it had."""
     out: dict[str, Any] = {}
     for key, arm in arms.items():
         mirror = rivals and rn.mirrored(arm)
+        named = arm.fields.payload()
+        fields = {k: v for k, v in policy.field_reads(arm, mirror).items() if k in named}
         out[key] = {
             shape.label(): {
                 "knobs": policy.reads(arm, shape, mirror),
-                "fields": policy.field_reads(arm, mirror),
+                "fields": fields,
             }
             for shape in sorted(set(shapes), key=lambda s: s.label())
         }

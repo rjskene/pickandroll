@@ -130,8 +130,8 @@ SPEC_KEYS = (
 
 def arm_of(spec: Mapping[str, Any]) -> Arm:
     """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
-    four fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
-    ``surrogate_days``; ``policy.fields_of``); a key the simulator does not read
+    five fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
+    ``surrogate_days``, ``guard_pool``; ``policy.fields_of``); a key the simulator does not read
     (:data:`SPEC_KEYS`, and ``opponents.SPEC_KEYS`` under ``opponents``), a knob missing,
     unknown or out of the engine's bounds, a field out of its own or a tier unknown is refused
     by name."""

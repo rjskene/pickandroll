@@ -229,8 +229,11 @@ def check_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- the arm's fields
-#: The arm's four fields beside its knobs, in the order the payload names them.
-FIELDS = ("pool", "min_gain", "weeks_ahead", "surrogate_days")
+#: The arm's five fields beside its knobs, in the order the payload names them. The fifth,
+#: ``guard_pool`` (#172, PR pool), is written in a payload only above 0.
+FIELDS = ("pool", "min_gain", "weeks_ahead", "surrogate_days", "guard_pool")
+#: ``guard_pool`` off: the default, and the exact tier's pools as they were before the field.
+NO_GUARD_POOL = 0
 
 
 @dataclass(frozen=True)
@@ -240,21 +243,29 @@ class Fields:
     move must add on the key the arm executes (with the season term, on the combined figure);
     ``weeks_ahead``, the weeks a problem looks ahead, this one included (the ``three`` horizon is
     the ``weeks_ahead - 1`` after it, fewer near the season's end); ``surrogate_days``, the
-    weekdays the surrogate solves on (Monday 0). Part of a seat's ``repr``, so two seats that
-    differ in one never share a decision."""
+    weekdays the surrogate solves on (Monday 0); ``guard_pool`` (PR pool), the size of the
+    guard's list the exact tier's pools take beside their best ``pool`` (``season.pool``'s
+    ``guard_size``), 0 for none: the pools as they were, and the default. Part of a seat's
+    ``repr``, so two seats that differ in one never share a decision."""
 
     pool: int = POOL
     min_gain: float = MIN_GAIN
     weeks_ahead: int = WEEKS_AHEAD
     surrogate_days: tuple[int, ...] = SURROGATE_DAYS
+    guard_pool: int = NO_GUARD_POOL
 
     def payload(self) -> dict[str, Any]:
-        return {
+        """The fields as a record names them: the four an arm always had, and ``guard_pool``
+        only above 0, so an arm that leaves it off is recorded as before the field."""
+        out: dict[str, Any] = {
             "pool": self.pool,
             "min_gain": self.min_gain,
             "weeks_ahead": self.weeks_ahead,
             "surrogate_days": list(self.surrogate_days),
         }
+        if self.guard_pool > 0:
+            out["guard_pool"] = self.guard_pool
+        return out
 
 
 DEFAULT_FIELDS = Fields()
@@ -268,7 +279,8 @@ def fields_of(spec: Mapping[str, Any]) -> Fields:
     """An arm's fields from its spec, each at its default when the spec names none; a bad value is
     refused by name (ValueError): ``pool`` a whole number, 1 or more; ``min_gain`` a number, 0 or
     more; ``weeks_ahead`` a whole number, 2 or more (the three weeks' set needs a later week);
-    ``surrogate_days`` a non-empty set of weekdays 0 to 6."""
+    ``surrogate_days`` a non-empty set of weekdays 0 to 6; ``guard_pool`` a whole number, 0 or
+    more (0 is off)."""
     pool = spec.get("pool", POOL)
     if not _whole(pool) or pool < 1:
         raise ValueError(f"pool {pool!r}: a whole number, 1 or more")
@@ -294,7 +306,10 @@ def fields_of(spec: Mapping[str, Any]) -> Fields:
         or not all(_whole(d) and 0 <= d <= 6 for d in days)
     ):
         raise ValueError(f"surrogate_days {days!r}: a non-empty set of weekdays, 0 (Monday) to 6")
-    return Fields(pool, float(gain), weeks, tuple(sorted(set(days))))
+    listed = spec.get("guard_pool", NO_GUARD_POOL)
+    if not _whole(listed) or listed < 0:
+        raise ValueError(f"guard_pool {listed!r}: a whole number, 0 or more (0 is off)")
+    return Fields(pool, float(gain), weeks, tuple(sorted(set(days))), listed)
 
 
 @dataclass(frozen=True)
@@ -1134,8 +1149,16 @@ WHEN_READ: Mapping[str, str] = {
     "min_gain": "the exact or the surrogate tier",
     "weeks_ahead": "the exact or the surrogate tier",
     "surrogate_days": "the surrogate tier",
+    "guard_pool": "the exact tier",
 }
 STATIC = "a static seat makes no move"
+#: Why ``guard_pool`` is not read off the exact tier (#172, PR pool): the union is of pools
+#: ranked by single swaps, which only the exact tier draws.
+NO_SWAPS = (
+    "the surrogate tier ranks its pool by value times games: it has no single swap to ask the "
+    "season guard about"
+)
+NO_LIST = "the ranking tier searches no set, so it draws no guard's list"
 #: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
 NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"
 
@@ -1228,8 +1251,10 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
 
 
 def field_reads(arm: Configured, mirrored: bool = False) -> dict[str, str]:
-    """For each of the arm's four fields, :data:`READ` or the reason it is not, as
-    :func:`reads` (no field depends on the league's shape)."""
+    """For each of the arm's five fields, :data:`READ` or the reason it is not, as
+    :func:`reads` (no field depends on the league's shape). ``guard_pool`` (PR pool) is the
+    exact tier's alone, whatever it executes: a mirror rival is the surrogate, whose pool is
+    ranked by value times games with no single swaps, so nothing reads it through a mirror."""
     odds = _odds(arm, mirrored)
     if odds:
         out = dict.fromkeys(("pool", "min_gain", "weeks_ahead"), READ)
@@ -1250,6 +1275,14 @@ def field_reads(arm: Configured, mirrored: bool = False) -> dict[str, str]:
         out["surrogate_days"] = f"the {arm.tier} tier decides every day"
     else:
         out["surrogate_days"] = STATIC
+    if arm.tier == "exact":
+        out["guard_pool"] = READ
+    elif arm.tier == "surrogate":
+        out["guard_pool"] = NO_SWAPS
+    elif arm.tier == "ranking":
+        out["guard_pool"] = NO_LIST
+    else:
+        out["guard_pool"] = STATIC
     return {k: out[k] for k in FIELDS}
 
 

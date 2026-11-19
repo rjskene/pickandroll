@@ -495,8 +495,9 @@ def test_the_reads_table_as_built():
     }
     for never in ("three_weight", "system", "blend", "faab_sizing", "stash_threshold"):
         assert all(policy.reads(c, s)[never] != policy.READ for c in CONFIGS for s in SHAPES)
+    # The surrogate reads every field but the exact tier's own (``guard_pool``, PR pool).
     f = policy.field_reads(rn.Arm("R", "surrogate", KNOBS, {}))
-    assert set(f.values()) == {policy.READ}
+    assert {k for k, v in f.items() if v != policy.READ} == {"guard_pool"}
     assert policy.field_reads(exact)["surrogate_days"] == "the exact tier decides every day"
 
 
@@ -718,6 +719,7 @@ FULL_SPEC = {
     "min_gain": 0.02,
     "weeks_ahead": 3,
     "surrogate_days": [0, 3],
+    "guard_pool": 5,
     "fit_sha": "abc",
 }
 
@@ -729,7 +731,7 @@ def test_the_spec_keys_are_the_ones_the_simulator_reads():
     a = rn.arm_of(spec)
     rn.check_fit(spec, "abc")
     assert spec.read == set(rn.SPEC_KEYS) == set(FULL_SPEC)
-    assert a.fields == policy.Fields(20, 0.02, 3, (0, 3))
+    assert a.fields == policy.Fields(20, 0.02, 3, (0, 3), 5)
     opponents = _Reading(a.opponents)
     op.of(opponents, a.knobs, 0.1, a.fields)
     assert opponents.read == set(op.SPEC_KEYS)
