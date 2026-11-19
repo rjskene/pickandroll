@@ -4,7 +4,12 @@ tiers that solve it, and the executor that lands what they decide.
 :func:`problem_of` mirrors ``api.season_moves.build`` step for step from in-memory inputs: the
 spans from the setup's calendar, the opponents projected with ``weekly.project_week`` from the
 shared beliefs, the candidates from the pool, the add limits from the league's rule and the adds
-used, the keep rule's inputs from the same beliefs, then the knobs. **Every knob comes in as a
+used, the keep rule's inputs from the same beliefs, then the knobs. This week's opponent and
+both sides' totals so far come from one place, :func:`week_view`: the pairing's opponent, and in
+a round of the bracket the round's (PR bracket: :func:`seed_round` seeds each round on its first
+morning from the state's own totals, :func:`opponent_of` reads it), where a week had no opponent
+before; the runner keys a seat that reads the week (:func:`reads_week`) on the same view.
+**Every knob comes in as a
 mapping of the twelve names of** :data:`KNOBS` **(the ten the live knob file takes,
 ``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two); a
 missing name raises; nothing here reads the knob file.** The season guard is
