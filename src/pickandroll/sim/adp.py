@@ -158,6 +158,12 @@ class Draft:
     seats: Mapping[int, Mapping[int, Mapping[str, float]]] = field(default_factory=dict)
     rule: str = OWN_DRAFT
 
+    def __post_init__(self) -> None:
+        if self.rule not in SEAT_DRAFTS:
+            raise ValueError(
+                f"a seat's draft rule is one of {', '.join(SEAT_DRAFTS)}, not {self.rule!r}"
+            )
+
 
 def rival_board(
     picks: Mapping[int, float],

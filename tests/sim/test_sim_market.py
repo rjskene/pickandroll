@@ -511,7 +511,7 @@ def test_a_pair_on_one_belief_records_its_one_draft():
     # A pair that drafted apart on a path says so in the rule's own words.
     two = [{**r, "drafts": 2, "drafted_unprojected": [0, 0]} for r in results]
     parted = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, two, True, "market")
-    assert parted["pair"] == ss.ADP_APART_MARKET and "pass on different players" in parted["pair"]
+    assert parted["pair"] == ss.ADP_APART_MARKET and "every roster equal" in parted["pair"]
     own = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, two, True, "own")
     assert own["pair"] == ss.ADP_APART and own["pair"].endswith("the pair shares no draft")
     assert (market["seat"], market["limit"]) == (ss.ADP_SEAT["market"], ss.ADP_LIMIT["market"])

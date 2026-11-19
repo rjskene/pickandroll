@@ -874,7 +874,10 @@ the snake, the best player left on its own board:
   drafted. Under `market` the two drafts are one league whenever the two forecasters pass on
   the same players (or differ only on players the seat never reached): every roster is then
   equal, and the pair shares that league, both arms starting the season with the same thirteen
-  players among the same rivals. Otherwise, and always under `own`, each arm's season is its
+  players among the same rivals. The test is the rosters and not the boards because a league
+  is its rosters: two boards that differ only below the seat's picks draft the same thirteen,
+  and nothing else of a league reads the arm, so the pair keeps one world and one set of
+  rivals wherever it can. Otherwise, and always under `own`, each arm's season is its
   own league from the draft on: two setups and two worlds on the same `(seed, path)`, so the
   world's draws and the rivals' boards stay common. The world's newcomer prior reads who went
   undrafted, so one world cannot serve two drafts. The seat still rotates with the path under

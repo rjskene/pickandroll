@@ -279,6 +279,8 @@ def test_the_rules_are_two_and_the_market_s_is_the_default():
         assert set(texts) == set(adp.SEAT_DRAFTS)
     # A draft that names its seats and no rule is the rule before the PR.
     assert adp.Draft({}, SPREAD, 1, 0, {1: {}}).rule == adp.OWN_DRAFT
+    with pytest.raises(ValueError, match="one of market, own, not 'rival'"):
+        adp.Draft({}, SPREAD, 1, 0, rule="rival")
     assert adp.market_seat_board([5, 2, 9, 4], {4: 1.0, 5: 0.0}) == [5, 4]
 
 

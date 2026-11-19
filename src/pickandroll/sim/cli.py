@@ -1306,7 +1306,9 @@ ADP_LIMIT = {
 ADP_SHARED = {
     adp.MARKET_DRAFT: (
         "one draft and one league, shared by both arms: the arms' seat drafts as a rival does on "
-        "the same draw for either arm, and the two arms' forecasters pass on the same players"
+        "the same draw for either arm, and the two arms' drafts came out the same league, every "
+        "roster equal (their forecasters pass on the same players, or differ only on players "
+        "the seat never reached)"
     ),
     adp.OWN_DRAFT: "one draft and one league, shared by both arms",
 }
@@ -1329,10 +1331,10 @@ ADP_APART = (
 #: The same under ``adp.MARKET_DRAFT``, where two beliefs part a pair only on the paths where
 #: they pass on different players.
 ADP_APART_MARKET = (
-    "on some path the two arms' forecasters pass on different players, so there each arm's "
-    "season is a league of its own from the draft on, on the same (seed, path) and the same "
-    "rivals' boards; where the two drafts come out the same league the pair shares it "
-    "(drafts_per_path)"
+    "on some path the two arms' forecasters pass on different players the seat reached, so "
+    "there each arm's season is a league of its own from the draft on, on the same (seed, path) "
+    "and the same rivals' boards; where the two drafts come out the same league, every roster "
+    "equal, the pair shares it (drafts_per_path)"
 )
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
