@@ -90,8 +90,8 @@ def test_queue_is_a_third_choice_of_executes_and_three_stays_the_default():
     assert rn.arm_of({"name": "T", "tier": "exact", "knobs": dict(KNOBS)}).executes == "three"
     q = rn.arm_of(spec())
     assert (q.tier, q.executes) == ("exact", policy.QUEUE)
-    # The seat it puts in a room takes the rule the same way: a rival that plans with the
-    # engine is such a seat.
+    # The arm's own seat (a pair's, or each of its seats in a room) takes the rule; no rival
+    # does (``test_no_rival_takes_the_queue_s_rule``).
     assert q.seat().executes == policy.QUEUE and q.seat().tier == "exact"
 
 
@@ -434,10 +434,11 @@ def test_the_parity_cases_are_what_their_names_say():
     assert {m.day for m in steps} > {tomorrow} and min(m.day for m in steps) == tomorrow
 
 
-def test_the_plan_switches_are_not_read_by_the_rule():
+@pytest.mark.parametrize("case", ["one win, a plan taken", "every category, a plan taken"])
+def test_the_plan_switches_are_not_read_by_the_rule(case):
     """``with_plan`` reaches ``policy.decide`` from a seat built by hand; the rule draws its own
-    plan either way."""
-    built = PARITY["one win, a plan taken"][0]()
+    plan either way, in both head-to-head formats."""
+    built = PARITY[case][0]()
     drawn = policy.decide(built, "exact", policy.QUEUE, True)
     assert drawn.plan_leads and drawn == policy.decide(built, "exact", policy.QUEUE, False)
     assert drawn == policy.exact(built, policy.QUEUE) == policy.queue_rule(built)
