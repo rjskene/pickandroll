@@ -1041,6 +1041,15 @@ def reserve_held(
     }
 
 
+def reserve_adds(built: Built, ev: mv.Evaluator, moves: Sequence[mv.Move]) -> list[dict[str, Any]]:
+    """What each of ``moves`` adds to the set on the queue's score (#436, ``reserve.worths``),
+    the number the rules compare to the price: logged so the queue judges on the same one."""
+    worths = rs.worths(ev, queue_value(built), moves)
+    return [
+        {"add": m.add, "drop": m.drop, "adds": _r(w)} for m, w in zip(moves, worths, strict=True)
+    ]
+
+
 def reserve_payload(built: Built) -> dict[str, Any] | None:
     """The rules in force on the solve (#436): the week the reserve holds adds in, how many,
     the price, my players added within the re-cut days and those of them out; None when neither

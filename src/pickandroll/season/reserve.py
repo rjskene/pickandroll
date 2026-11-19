@@ -18,7 +18,9 @@ Two rules keep adds and players from going cheaply:
 - **No quick re-cut.** A move dropping a player I added within ``recut_days`` days is allowed
   only when it adds more than the price, or that player is out (an O, a status that keeps a
   player out of every week, or a held slot). A pick's drop is chosen before the search and never
-  refused.
+  refused. A set's own earlier add counts as added on its move's day (the master's review): a
+  later move of the set dropping it within the days, a streaming chain's next step, pays the price
+  too, so the plans never count on a chain the queue refuses on the later step's day.
 
 The price is ``reserve_price`` when set, else the fortnight's typical recommended gain the bid
 policy scales by (``autopilot.typical_gain``). The rule composes with the season guard into the
@@ -101,10 +103,13 @@ class ReserveRule:
     recent: Mapping[int, date] = field(default_factory=dict)
     #: Of them, those out: a drop of one is never refused.
     out: frozenset[int] = frozenset()
+    #: The re-cut days: a set's own add dropped by a later move of the set within them pays the
+    #: price too; 0 for none.
+    days: int = 0
 
     @property
     def applies(self) -> bool:
-        return (self.week is not None and self.reserved > 0) or bool(self.recent)
+        return (self.week is not None and self.reserved > 0) or bool(self.recent) or self.days > 0
 
 
 def released(limit: mv.AddLimit, today: date, release: str) -> bool:
@@ -149,6 +154,7 @@ def rule_of(
         frozenset(c for c, level in flags.items() if level in EXEMPT_LEVELS),
         within,
         out,
+        max(0, days),
     )
     return rule if rule.applies else None
 
@@ -173,9 +179,21 @@ class Refusal:
 
 
 def marginal(ev: mv.Evaluator, objective: Objective, moves: Sequence[mv.Move], m: mv.Move) -> float:
-    """What ``m`` adds to the set ``moves`` on ``objective``."""
+    """What ``m`` adds to the set ``moves`` on ``objective``: the set less the set without it, or
+    when a later move needs it (a chain's later step drops its add) what it adds to the moves
+    before its day."""
     rest = [x for x in moves if x != m]
-    return objective(ev, list(moves)) - objective(ev, rest)
+    if not any(x.drop == m.add for x in rest):
+        return objective(ev, list(moves)) - objective(ev, rest)
+    day = mv.day_of(ev.problem, m)
+    before = [x for x in rest if mv.day_of(ev.problem, x) < day]
+    return objective(ev, [*before, m]) - objective(ev, before)
+
+
+def worths(ev: mv.Evaluator, objective: Objective, moves: Sequence[mv.Move]) -> list[float]:
+    """Each of ``moves``'s :func:`marginal`, in their order: what the queue compares to the
+    price (the master's review)."""
+    return [marginal(ev, objective, moves, m) for m in moves]
 
 
 def refusal(
@@ -194,6 +212,19 @@ def refusal(
         recut = m.drop is not None and m.drop in rule.recent and m.drop not in rule.out
         if recut and adds(m) <= rule.price + mv.EPS:
             return Refusal(RECUT, m, adds(m))
+    if rule.days > 0:
+        # The set's own adds, on their days: a later move dropping one within the days.
+        added = {m.add: mv.day_of(p, m) for m in moves}
+        players = dict(p.candidates)
+        for m in moves:
+            if m.drop is None or m.drop not in added:
+                continue
+            if (mv.day_of(p, m) - added[m.drop]).days >= rule.days:
+                continue
+            if is_out(p, m.drop, players.get(m.drop)):
+                continue
+            if adds(m) <= rule.price + mv.EPS:
+                return Refusal(RECUT, m, adds(m))
     if rule.week is None or rule.week.adds is None:
         return None
     week = [m for m in moves if rule.week.start <= mv.day_of(p, m) <= rule.week.end]

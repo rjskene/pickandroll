@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from pickandroll.api import season_decisions as sd
 from pickandroll.api import season_knobs
 from pickandroll.api import season_moves as sm
 from pickandroll.season import autopilot as qa
@@ -81,12 +84,14 @@ def test_a_large_gain_a_strong_flag_or_the_release_day_frees_the_held_add():
     # An add flagged add or must-add uses the reserve whatever it gains.
     for level in ("add", "must-add"):
         assert solved(p, rule(p, flags={11: level})) == [BIG, SMALL]
-    # From the release day on the reserve is free: no rule at all without a recent add.
-    assert rule(p, today=FRI) is None and rule(p, today=FRI - timedelta(days=1)) is not None
-    assert rule(p, today=MON, knobs={rs.RESERVE_RELEASE: "monday"}) is None
-    # No limit, or the rule off: nothing to hold.
-    assert rule(two_adds(None)) is None
+    # From the release day on the reserve is free: the re-cut days alone stay.
+    assert rule(p, today=FRI).week is None and rule(p, today=FRI - timedelta(days=1)).week
+    assert rule(p, today=MON, knobs={rs.RESERVE_RELEASE: "monday"}).week is None
+    assert solved(p, rule(p, today=FRI)) == [BIG, SMALL]
+    # No limit: nothing to hold. Both rules off: no rule at all.
+    assert rule(two_adds(None)).week is None
     assert rule(p, knobs=rs.OFF) is None
+    assert rule(p, knobs={**rs.OFF, rs.RECUT_DAYS: 1}).days == 1
     # The knob's price stands in for the typical gain.
     assert rule(p, knobs={rs.RESERVE_PRICE: 0.25}).price == 0.25
 
@@ -109,10 +114,34 @@ def test_a_player_added_within_the_recut_days_is_kept_against_a_small_gain():
     # A large gain re-cuts the player.
     assert solved(p, rule(p, price=0.1, recent={2: MON})) == [BIG, SMALL]
     # Added three days ago or more: out of the window.
-    assert rule(p, recent={2: MON - timedelta(days=3)}) is None
-    assert rule(p, knobs={rs.RECUT_DAYS: 5}, recent={2: MON - timedelta(days=3)}) is not None
+    assert rule(p, recent={2: MON - timedelta(days=3)}).recent == {}
+    assert rule(p, knobs={rs.RECUT_DAYS: 5}, recent={2: MON - timedelta(days=3)}).recent
     # A player who is not mine any more is no re-cut.
-    assert rule(p, recent={99: MON}) is None
+    assert rule(p, recent={99: MON}).recent == {}
+
+
+def test_a_chain_that_re_cuts_its_own_add_pays_the_price():
+    """The master's review: a set's earlier add counts as added on its move's day, so a two-step
+    stream dropping it within the re-cut days is refused at a small gain, allowed above."""
+    p = two_adds(None)
+    step1, step2 = mv.Move(11, 2, MON), mv.Move(10, 11, MON + timedelta(days=2))
+    chain = [step1, step2]
+    assert mv.feasible(p, chain)
+    ev = mv.Evaluator(p)
+    worth = rs.worths(ev, OBJECTIVE, chain)
+    # Step 1 is needed by step 2: its worth is what it adds before its day.
+    assert worth[0] == pytest.approx(OBJECTIVE(ev, [step1]) - OBJECTIVE(ev, []))
+    high = rule(p, price=worth[1] + 0.5)
+    why = rs.refusal(ev, high, OBJECTIVE, chain)
+    assert why is not None and (why.rule, why.move) == (rs.RECUT, step2)
+    assert rs.refusal(ev, rule(p, price=worth[1] - 0.5), OBJECTIVE, chain) is None
+    # Three days apart: out of the window. A streamer who is out: never refused.
+    later = [step1, mv.Move(10, 11, MON + timedelta(days=3))]
+    assert rs.refusal(ev, high, OBJECTIVE, later) is None
+    out = replace(p, candidates=(player(10, "MIN"), player(11, "MIN", "O")))
+    assert rs.refusal(mv.Evaluator(out), high, OBJECTIVE, chain) is None
+    # The re-cut days at 0: no chain check.
+    assert rs.refusal(ev, replace(high, days=0), OBJECTIVE, chain) is None
 
 
 def test_a_recent_add_who_is_out_may_be_dropped_for_any_gain():
@@ -150,6 +179,14 @@ def test_the_payload_logs_the_rule_and_the_set_it_held_back():
         "recent": {},
         "out": [],
     }
+    # The log carries each move's worth on the queue's score, the queue's number.
+    e = sd.moves_entry(built, out, datetime(2026, 10, 26, 12, tzinfo=UTC))
+    logged = {s["key"]: s for s in e["sets"]}
+    assert logged["three"]["reserve"]["adds"] == sm.reserve_adds(built, mv.Evaluator(p), [BIG])
+    assert logged["three"]["reserve"]["held_back"] and e["reserve"] == out["reserve"]
+    assert [r["add"] for r in logged["week"]["reserve"]["adds"]] == [
+        m["add"] for m in out["recommended"]["week"]["moves"]
+    ]
     # The week plans keep the rule: no plan takes both adds (the small one on the held add).
     plans = (out.get("week_plans") or {}).get("plans") or []
     assert plans
@@ -187,6 +224,17 @@ def test_the_queue_holds_the_weeks_last_add_and_a_quick_recut_for_a_small_gain()
     assert reasons(out) == [(101, None, 1), (102, qa.RESERVE_HELD, None)]
     assert out[1]["reserve"] == {"worth": 0.2, "price": 0.3, "days": 3}
     assert "reserve" not in out[0]
+    # The solve's own number when logged (the master's review): 101's worth on the queue's
+    # score was 0.1, so 101 is the one held, whatever its three-week gain.
+    e["sets"][1]["reserve"] = {
+        "adds": [{"add": 101, "drop": 201, "adds": 0.1}, {"add": 102, "drop": 202, "adds": 0.5}]
+    }
+    out = qa.queue_of(day, DAY, PLAN, TYPICAL, None)
+    assert reasons(out) == [(101, None, 1), (102, None, 2)]
+    e["sets"][1]["reserve"]["adds"][1]["adds"] = 0.25
+    out = qa.queue_of(day, DAY, PLAN, TYPICAL, None)
+    assert reasons(out) == [(101, None, 1), (102, qa.RESERVE_HELD, None)]
+    assert out[1]["reserve"]["worth"] == 0.25
     # An add flagged add may use it; a larger gain clears it; three adds left leave it free.
     flagged = {**e, "reserve": reserve_record(exempt=[102])}
     assert (

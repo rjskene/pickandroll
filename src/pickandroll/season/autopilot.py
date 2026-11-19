@@ -378,6 +378,11 @@ def queue_of(
     # The add reserve and the re-cut rule the solve ran with (#436): None in an entry without.
     rule = lg.entry.get("reserve")
     rule_days = ((rule or {}).get("knobs") or {}).get("recut_days")
+    # What each move adds on the queue's score as the solve computed it (the set's logged record).
+    solved = {
+        (int(r["add"]), None if r.get("drop") is None else int(r["drop"])): r.get("adds")
+        for r in ((s or {}).get("reserve") or {}).get("adds") or ()
+    }
     # The user's picks first (#434): queued like the set's moves, with neither the floor, the
     # season guard nor the re-add rule (the user's call), and ahead of them for the cap.
     for m in (picks or {}).get("moves") or []:
@@ -487,9 +492,12 @@ def queue_of(
         below = floor.below(gain, value) if plan is None else None
         # A step's bid scales on its score (the ruling): its week gain alone when none was logged.
         worth = m.get("score") if plan is not None and m.get("score") is not None else gain
+        logged = solved.get((add, None if drop is None else int(drop)))
         held = reserve_reason(
-            rule, add, drop, worth, week, None if week is None else left.get(week)
+            rule, add, drop, worth, week, None if week is None else left.get(week), logged
         )
+        # What the rules compared to the price: the solve's own number, else the bid's.
+        compared = worth if logged is None else logged
         reason = None
         if lg.private:
             reason = PRIVATE
@@ -578,7 +586,7 @@ def queue_of(
                 "floor": {**floor.to_dict(), "below": below},
                 # What the add reserve or the re-cut rule held back (#436): only on such a move.
                 **(
-                    {"reserve": {"worth": worth, "price": rule["price"], "days": rule_days}}
+                    {"reserve": {"worth": compared, "price": rule["price"], "days": rule_days}}
                     if reason in (RESERVE_HELD, RECUT_HELD) and rule is not None
                     else {}
                 ),
@@ -609,15 +617,18 @@ def reserve_reason(
     worth: float | None,
     week: tuple[date, date] | None,
     left: int | None,
+    adds: float | None = None,
 ) -> str | None:
     """Why the add reserve or the re-cut rule (#436) holds a move back, None when neither does:
-    ``rule``, the solve's logged record (``season_moves.reserve_payload``); ``worth``, what the
-    move's bid scales by; ``week`` and ``left``, the week its add counts in and the adds that
-    week has left before it."""
+    ``rule``, the solve's logged record (``season_moves.reserve_payload``); ``adds``, what the
+    move adds on the queue's score as the solve computed it (its set's logged ``reserve``), else
+    ``worth``, what its bid scales by (an entry logged without it); ``week`` and ``left``, the
+    week its add counts in and the adds that week has left before it."""
     if rule is None:
         return None
     price = float(rule.get("price") or 0.0)
-    cheap = (worth or 0.0) <= price + mv.EPS
+    value = worth if adds is None else adds
+    cheap = (value or 0.0) <= price + mv.EPS
     if not cheap:
         return None
     recent = rule.get("recent") or {}
