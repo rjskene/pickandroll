@@ -613,7 +613,7 @@ def test_the_counts_carry_the_new_keys_only_on_the_seats_a_run_counts():
         "guard": ("sets_past_guard",),
         "stake": ("stake_mean", "stake_weeks_above_half"),
     }
-    tally = ct.Tally(setup, {1: ("guard", "stake"), 2: ("stake",), 3: ()})
+    tally = ct.Tally(setup, counted={1: ("guard", "stake"), 2: ("stake",), 3: ()})
     past = policy.Decision(past_guard=True)
     for week, levels in ((1, {1: 0.2, 2: 0.6}), (2, {1: 0.9, 2: 0.5}), (3, {1: 1.0, 2: 0.0})):
         for _ in range(2):  # two days a week: the week's stake is kept once
@@ -630,7 +630,7 @@ def test_the_counts_carry_the_new_keys_only_on_the_seats_a_run_counts():
     assert ct.metrics_in([rows[1], rows[4]])[-3:] == SEASON_KEYS
     assert ct.metrics_in([rows[4]]) == ct.metrics_in([ct.Tally(setup).rows(state)[1]])
     # A league whose bracket is not read holds no stake: the keys are there, with no figure.
-    bare = ct.Tally(setup, {1: ("stake",)})
+    bare = ct.Tally(setup, counted={1: ("stake",)})
     bare.day(1, state)
     assert bare.rows(state)[1]["stake_mean"] is None
     assert bare.rows(state)[1]["stake_weeks_above_half"] is None
@@ -649,13 +649,14 @@ def test_a_run_counts_what_any_of_its_arms_names_on_its_arms_seats():
         1: ("guard",),
         2: ("guard",),
     }
-    assert ss.counts_note("none") is ss.COUNTS_NOTE and ss.counts_note("none", ()) is ss.COUNTS_NOTE
-    both = ss.counts_note("faab", ("guard", "stake"))
+    assert ss.counts_note("none") is ss.COUNTS_NOTE
+    assert ss.counts_note("none", counted=()) is ss.COUNTS_NOTE
+    both = ss.counts_note("faab", counted=("guard", "stake"))
     assert list(both)[-3:] == list(SEASON_KEYS)
     # The record says what the guard's count is not: how often the block would bind.
     assert "a lower bound on how often the block would have turned" in both["sets_past_guard"]
     assert {k: v for k, v in both.items() if k not in SEASON_KEYS} == ss.counts_note("faab")
-    assert list(ss.counts_note("none", ("stake",)))[-2:] == list(ct.SEASON["stake"])
+    assert list(ss.counts_note("none", counted=("stake",)))[-2:] == list(ct.SEASON["stake"])
 
 
 # --------------------------------------------------------------------------- the record's pieces

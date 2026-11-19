@@ -12,7 +12,9 @@ lost: a waiver run's only, so a run without waivers counts as before. In a FAAB 
 also the dollars spent and left at the end, the claims won at $0, lost to a higher bid, lost on a
 tie and won with no other claim on the player, and the dollars won claims paid above the next
 bid that could have been taken and lost claims fell short of the winning bid by: a FAAB run's
-only, the world's knowledge of every bid, which no decision reads. The landing and claim
+only, the world's knowledge of every bid, which no decision reads. In a run where an arm names a
+stash threshold (PR G) also the returning players the seat dropped: such a run's only, so a run
+that names none counts as before. The landing and claim
 counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
 ``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
 and the day's lines once they are scored. In a run where an arm names its guard or its stake (the
@@ -70,7 +72,16 @@ BIDS: dict[str, str | None] = {
 }
 
 
-#: The guard's and the stake's counts (the guard PR), after :data:`BIDS`, by the season field
+#: The stash count (PR G), after :data:`BIDS`, only in a run where an arm names a stash
+#: threshold: the players who left the seat's roster (a move's drop, a churn's held drop, a drop
+#: a returning held player forced) whom the engine read as returning on the seat's problem the
+#: day before (``moves.returning_net`` not None, ``policy.returning_of``); a claim's drop, who
+#: is off the seat's problem while the claim is open, as he was read the day the claim was
+#: placed (:meth:`Tally.reading`). None for a seat that builds no problem (a market or a static
+#: rival): nothing reads its players.
+STASH = ("returning_dropped",)
+
+#: The guard's and the stake's counts (the guard PR), after :data:`STASH`, by the season field
 #: (``policy.SEASON_FIELDS``) whose naming brings them: in a run where an arm names ``guard``,
 #: the sets its arms' seats decided that the season guard would have refused (none under the
 #: block, by construction; under ``off`` a lower bound on how often the block would have turned
@@ -85,10 +96,22 @@ SEASON: dict[str, tuple[str, ...]] = {
 
 
 class Tally:
-    """One variant's counts as its season is played. ``counted``, by team, names the season
-    fields (:data:`SEASON`'s keys) the run counts on that seat; none by default."""
+    """One variant's counts as its season is played. ``stash``: the run names a stash threshold,
+    and the returning players each seat drops are counted (:data:`STASH`). ``counted``, by team,
+    names the season fields (:data:`SEASON`'s keys) the run counts on that seat; none by
+    default."""
 
-    def __init__(self, setup: Setup, counted: Mapping[int, Sequence[str]] | None = None) -> None:
+    def __init__(
+        self,
+        setup: Setup,
+        stash: bool = False,
+        counted: Mapping[int, Sequence[str]] | None = None,
+    ) -> None:
+        self.stash = stash
+        #: Each seat's players its last decision read as returning (with the drops of its open
+        #: claims as read the day each was placed), and those of them it dropped.
+        self._returning: dict[int, frozenset[int]] = {}
+        self.returning_dropped: dict[int, int] = {}
         self.teams = tuple(setup.teams)
         self.limit = setup.max_weekly_adds
         self.waiting = setup.waiting
@@ -119,6 +142,29 @@ class Tally:
             n = int(after.get(t, 0)) - int(before.get(t, 0))
             if n:
                 self.adds[t][week] = self.adds[t].get(week, 0) + n
+
+    def reading(self, team: int, returning: frozenset[int], state: SimState) -> None:
+        """``team``'s seat decided today, on ``state``, on a problem whose returning players are
+        ``returning``. The problem is the roster as the seat's open claims will leave it
+        (``moves.with_pending``): a claim's drop is off it from the day after the claim is
+        placed, though he is on the team's roster until the claim is won. So the drop of a claim
+        still open today stays in the reading as he was read the day it was placed, until the
+        claim is decided: a claim that waits two mornings or more counts like any other move."""
+        claimed = {c.move.drop for c in state.claims.get(team, ())}
+        waiting = self._returning.get(team, frozenset()) & claimed
+        self._returning[team] = returning | waiting
+        self.returning_dropped.setdefault(team, 0)
+
+    def left(self, before: SimState, after: SimState) -> None:
+        """A morning, from the state before anything landed to the one after: each player who
+        left a seat's roster and whom its last reading (:meth:`reading`) holds as returning is
+        counted."""
+        for t, returning in self._returning.items():
+            if not returning:
+                continue
+            still = {k for k, _ in after.rosters.get(t, ())}
+            gone = {k for k, _ in before.rosters.get(t, ())} - still
+            self.returning_dropped[t] += len(gone & returning)
 
     def decided(self, team: int, decision: Any) -> None:
         """``team``'s decision of the day (a ``policy.Decision``): a set decided past the guard
@@ -182,6 +228,9 @@ class Tally:
                     m: float(dollars[m] if key is None else bids.get(key, 0))
                     for m, key in BIDS.items()
                 }
+            if self.stash:
+                n = self.returning_dropped.get(t)
+                out[t]["returning_dropped"] = None if n is None else float(n)
             names = self.counted.get(t, ())
             if "guard" in names:
                 out[t]["sets_past_guard"] = float(self.past[t])
@@ -196,9 +245,10 @@ class Tally:
 
 def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
-    when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the guard's
-    and the stake's (a run that names them)."""
-    extra = (*CLAIMS, *BIDS, *(m for group in SEASON.values() for m in group))
+    when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the stash
+    count (a run's that names a stash threshold, PR G), then the guard's and the stake's (a run
+    that names them)."""
+    extra = (*CLAIMS, *BIDS, *STASH, *(m for group in SEASON.values() for m in group))
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))
 
 
@@ -217,4 +267,15 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
     return pooled(rows) if rows else None
 
 
-__all__ = ["BIDS", "CLAIMS", "HALF", "METRICS", "SEASON", "Tally", "metrics_in", "pooled", "row_of"]
+__all__ = [
+    "BIDS",
+    "CLAIMS",
+    "HALF",
+    "METRICS",
+    "SEASON",
+    "STASH",
+    "Tally",
+    "metrics_in",
+    "pooled",
+    "row_of",
+]

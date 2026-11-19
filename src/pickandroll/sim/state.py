@@ -272,6 +272,11 @@ class SimState:
     dollars: Mapping[int, int] = field(default_factory=dict)
     recent: Mapping[int, tuple[tuple[date, float], ...]] = field(default_factory=dict)
     market_recent: tuple[tuple[date, float], ...] = ()
+    #: Whom each team's returning held players send (PR G), by team: (the held player, the
+    #: active player its seat's plan drops for him), as the seat's decision named them today
+    #: (``policy.sends_of``); tomorrow morning's alone (``policy.arrive`` spends them). Empty for
+    #: a seat that names none. No decision reads it, so it is no part of :meth:`key`.
+    sends: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
     #: The week's stake ``L`` (#172, the guard PR, ``sim/stake.py``) of each seat that reads or
     #: counts one, by team: set by the runner on each week's first simulated day from the weeks
     #: finished before it, and the same all week. Empty when no arm of the run names a stake.
