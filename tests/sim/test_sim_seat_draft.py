@@ -1,9 +1,10 @@
 """The arm's seat's draft under a table (#172, the draft PR; the user's ruling of 2026-11-18):
 under ``--seat-draft market``, the default, the seat drafts as the rival in its seat on that path
 would, less the players its own forecaster cannot value; a pair's two arms share one league
-wherever their two drafts come out the same; ``own`` is the rule before it. The boards and the leagues here, on a made-up season and a made-up table, and a path of
-every kind of league under the rule; the command's record and the no-peek check under the rule
-are in ``test_sim_market.py``."""
+wherever their two drafts come out the same; a ``yahoo`` or ``blend`` seat passes by its rostered
+side; ``own`` is the rule before it. The boards and the leagues here, on a made-up season and a
+made-up table, and a path of every kind of league under the rule; the command's record and the
+no-peek check under the rule are in ``test_sim_market.py``."""
 
 from __future__ import annotations
 
@@ -75,10 +76,21 @@ SAME = {"a": SimpleNamespace(forecaster=None), "b": SimpleNamespace(forecaster=N
 IDS = shapes.FIXED.ids
 
 
-def leagues(season, rule, path=0, turn=None, arms=ARMS, rules=shapes.PLAIN, other=None):
+def leagues(
+    season,
+    rule,
+    path=0,
+    turn=None,
+    arms=ARMS,
+    rules=shapes.PLAIN,
+    other=None,
+    forecasts=None,
+    split=None,
+):
     """The pair's leagues on one path under ``rule``, by arm, and every call of
     ``run.draft_boards`` made for them: its arguments and the boards it gave. ``other`` is arm
-    B's forecaster's projection (the mirrored one by default)."""
+    B's forecaster's projection (the mirrored one by default); ``forecasts`` names every
+    label's table instead, and ``split`` the split labels' rostered sides."""
     lines, members, scheduled, projection, table, mirrored = season
     calls: list[tuple[tuple, dict]] = []
     real = rn.draft_boards
@@ -100,12 +112,13 @@ def leagues(season, rule, path=0, turn=None, arms=ARMS, rules=shapes.PLAIN, othe
             arms,
             ss.PAIR,
             "prior",
-            {"other": mirrored if other is None else other},
+            forecasts or {"other": mirrored if other is None else other},
             SEED,
             path,
             shapes.FIXED,
             turn,
             rules,
+            split,
         )
     return setups, calls
 
@@ -269,6 +282,95 @@ def test_a_room_s_seats_each_draft_as_a_rival_less_whom_their_own_arm_cannot_val
     assert setup.rosters != apart.rosters and setup.rosters != rivals.rosters
 
 
+#: A ``yahoo`` seat's label on two made-up stand-ins, and its rostered side's (the first's).
+SPLIT = "yahoo(second else first)"
+SPLITS = {SPLIT: "first"}
+#: A ``bbm`` arm and a ``yahoo`` arm on them.
+SYSTEMS = {"a": SimpleNamespace(forecaster="first"), "b": SimpleNamespace(forecaster=SPLIT)}
+
+
+def test_the_table_a_seat_passes_by_is_its_rostered_side_s_under_the_market_rule():
+    assert ss.passing_label(adp.MARKET_DRAFT, SPLIT, SPLITS) == "first"
+    assert ss.passing_label(adp.OWN_DRAFT, SPLIT, SPLITS) == SPLIT
+    assert ss.passing_label(None, SPLIT, SPLITS) == SPLIT
+    # A label that is no split, and the run's own (None), are named with their own table.
+    assert ss.passing_label(adp.MARKET_DRAFT, "first", SPLITS) == "first"
+    assert ss.passing_label(adp.MARKET_DRAFT, None, SPLITS) is None
+    assert ss.passing_label(adp.MARKET_DRAFT, SPLIT, None) == SPLIT
+
+
+def test_under_the_market_rule_a_split_seat_passes_on_a_player_only_the_second_projects(season):
+    """A ``yahoo`` seat on two stand-ins of which the second projects a player the first does
+    not (#172, the draft PR's review): its available side's table has a line for him, its
+    rostered side's has none, and once drafted he would read the rostered side. Under
+    ``market`` the seat passes by its rostered side: it does not draft him, it holds nobody
+    the first stand-in cannot value, and with a ``bbm`` arm it is one draft and one league.
+    Passing by the available side (no split named: the code before the review) it drafts him
+    and the pair parts."""
+    projection = season[3]
+    me = seat_of(1)
+    whole = {"first": projection, SPLIT: projection}
+    same, calls = leagues(season, adp.MARKET_DRAFT, 1, arms=SYSTEMS, forecasts=whole, split=SPLITS)
+    assert same["a"] is same["b"] and len(calls) == 1
+    # The player the seat drafts first: only the second stand-in projects him from here on.
+    lone = same["a"].rosters[me][0][0]
+    first = {k: v for k, v in projection.items() if k != lone}
+    tables = {"first": first, SPLIT: projection}
+    got, calls = leagues(season, adp.MARKET_DRAFT, 1, arms=SYSTEMS, forecasts=tables, split=SPLITS)
+    assert got["a"] is got["b"] and len(calls) == 1
+    ((args, boards),) = calls
+    assert args[0].seats[me] is first and lone not in boards[me]
+    assert all(k in first for k, _ in got["a"].rosters[me])
+    assert any(k == lone for t in IDS if t != me for k, _ in got["a"].rosters[t])  # a rival's
+    # Not vacuous: by the available side the split seat drafts him, first, and the pair parts.
+    apart, calls = leagues(season, adp.MARKET_DRAFT, 1, arms=SYSTEMS, forecasts=tables)
+    assert apart["a"] is not apart["b"] and len(calls) == 2
+    assert apart["b"].rosters[me][0][0] == lone and lone not in first
+    assert apart["a"].rosters == got["a"].rosters
+
+
+def test_under_the_own_rule_a_split_seat_drafts_on_its_available_side_as_before(season):
+    """``own`` does not read the split (Rule 1): a ``yahoo`` seat's board is its available
+    side's table, so it drafts a player only the second stand-in projects, whom its rostered
+    side then has no line for (the limit the README names), and the pair with a ``bbm`` arm
+    drafts apart."""
+    projection = season[3]
+    me = seat_of(1)
+    whole = {"first": projection, SPLIT: projection}
+    same, _ = leagues(season, adp.OWN_DRAFT, 1, arms=SYSTEMS, forecasts=whole, split=SPLITS)
+    lone = same["b"].rosters[me][0][0]
+    first = {k: v for k, v in projection.items() if k != lone}
+    tables = {"first": first, SPLIT: projection}
+    got, calls = leagues(season, adp.OWN_DRAFT, 1, arms=SYSTEMS, forecasts=tables, split=SPLITS)
+    assert got["a"] is not got["b"] and len(calls) == 2
+    assert got["b"].rosters[me][0][0] == lone
+    assert all(k != lone for k, _ in got["a"].rosters[me])
+    (args_a, _), (args_b, _) = calls
+    assert args_a[0].seats[me] is first and args_b[0].seats[me] is projection
+    assert args_a[0].rule == args_b[0].rule == adp.OWN_DRAFT
+    # Naming the split or not changes nothing under ``own``.
+    plain, _ = leagues(season, adp.OWN_DRAFT, 1, arms=SYSTEMS, forecasts=tables)
+    assert {k: v.rosters for k, v in plain.items()} == {k: v.rosters for k, v in got.items()}
+
+
+def test_a_room_s_split_seats_pass_by_their_rostered_side_under_the_market_rule(season):
+    """A room of a ``bbm`` arm and a ``yahoo`` arm: under ``market`` every seat is named with
+    the first stand-in's table, under ``own`` the split arm's seats with its available
+    side's."""
+    projection, table = season[3], season[4]
+    first = dict(projection)
+    forecasts = {"first": first, SPLIT: projection}
+    args = (SYSTEMS, ("a", "b"), "prior", projection, forecasts, SEED, 2, shapes.FIXED, None)
+    market = ss.room_draft((table.picks, SPREAD, adp.MARKET_DRAFT), *args, SPLITS)
+    own = ss.room_draft((table.picks, SPREAD, adp.OWN_DRAFT), *args, SPLITS)
+    held = rn.rotate(("a", "b"), IDS, 2)
+    assert {held[t] for t in IDS} == {"a", "b"}
+    assert all(market.seats[t] is first for t in IDS)
+    assert all(own.seats[t] is (first if held[t] == "a" else projection) for t in IDS)
+    loose = ss.room_draft((table.picks, SPREAD, adp.MARKET_DRAFT), *args)
+    assert all(loose.seats[t] is forecasts[SYSTEMS[held[t]].forecaster] for t in IDS)
+
+
 def test_the_rules_are_two_and_the_market_s_is_the_default():
     assert adp.SEAT_DRAFTS == ("market", "own")
     table = SimpleNamespace(adp="espn", seat_draft=None)
@@ -334,4 +436,6 @@ def test_a_surrogate_seat_moves_and_plays_clean_under_the_market_rule(data):
     minute."""
     code, out, counts = dry(data, "U", *KINDS["faab-continuous-each"])
     assert code == 0 and "AUDIT" not in out, out
+    assert "less the players they cannot value (--seat-draft market)" in out
+    assert "draft market, the first task: 1 draft(s)" in out
     assert counts["landed"] >= 1 and counts["claims_won"] == counts["landed"], out

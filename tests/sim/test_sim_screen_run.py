@@ -413,6 +413,28 @@ def test_a_screen_is_resumed_only_on_the_spec_it_was_started_with(data: Path, wh
     assert record(data, "whole") == whole[0]
 
 
+def test_a_screen_under_a_table_is_held_to_the_seat_s_draft_rule_in_force(data: Path, whole):
+    """The spec holds the seat's draft rule in force, not the flag as typed (#172, the draft
+    PR): a screen started under a table with no rule named is the market's, so it is taken up
+    by the same command naming ``--seat-draft market`` and refused by one naming ``own``, by
+    name. Without a table no rule is in force and the spec says none."""
+    assert whole[0]["spec"]["world"]["seat_draft"] is None
+    table = ("--adp", "espn", "--adp-spread", "2,0.1")
+    kw = {"levers": ("surrogate_days",), "name": "table"}
+    code, out = screen(data, *table, **kw)
+    assert code == 0, out
+    rec = record(data, "table")
+    assert rec["spec"]["world"]["seat_draft"] == "market"
+    assert set(rec["spec"]["world"]) == set(ss.SCREEN_WORLD)
+    code, out = screen(data, *table, "--seat-draft", "market", **kw)
+    assert code == 0 and "0 pair(s) to play" in out and "refused" not in out, out
+    assert record(data, "table") == rec
+    code, out = screen(data, *table, "--seat-draft", "own", **kw)
+    assert code == 2, out
+    assert "started with another spec (seat_draft: started with 'market', now 'own'" in out
+    assert "to play" not in out and record(data, "table") == rec
+
+
 def test_a_screen_on_the_price_book_is_held_to_the_book(data: Path, whole):
     """``--rival-bids book`` (PR Fd): the screen's spec and its record name the book the rivals
     bid on, as each pair's record does, and a piece under a newer book is refused: a newer book
