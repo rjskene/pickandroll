@@ -3,9 +3,11 @@ D4c), a block naming every key plays clean in every league kind (the lesson of F
 the walls on a claim decided after the day its bid is sealed, and Rule 1's default member.
 Made-up leagues of six weeks, fixed seeds, the rivals PR Fd's (market rivals that follow the
 season and pick among their best three) at a high rate. A test whose seat weighs runs in both
-head-to-head formats, or says why it names one. No test here pins a figure of a season: each
-compares two arms, or two worlds, of one season. Rule 1's pins of main's seasons are main's own
-tests (``test_sim_continuous.season_digest`` sets this PR's three count keys aside)."""
+head-to-head formats, or says why it names one. One test here pins a season's outcome: Rule
+1's two digests of a one-win FAAB season with no ``bid`` named, as main gives them (main's own
+tests hold the two of a league that counts every category;
+``test_sim_continuous.season_digest`` sets this PR's three count keys aside). Every other
+compares two arms, or two worlds, of one season."""
 
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, TYPICAL_MIN, typical_
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import LOST, WON
 from tests.sim.sim_league import KNOBS, arm, make_setup, of_format, recorded_lines
-from tests.sim.test_sim_continuous import league
+from tests.sim.test_sim_continuous import league, season_digest
 
 DAY = timedelta(1)
 FORMATS = (ONE_WIN, EACH_CATEGORY)
@@ -513,6 +515,28 @@ def test_a_bid_that_reads_the_lines_of_the_morning_it_is_decided_is_caught(monke
 
 
 # --------------------------------------------------------------------------- Rule 1
+#: Rule 1's pins of a one-win FAAB season with no ``bid`` named
+#: (``test_sim_continuous.season_digest``, seed 1, path 0), under the dropped rule and under
+#: continuous waivers, as main ``88af1de`` gives them
+#: (``~/sim-notes/vm/scratch/f2/rule1/rule1_pins.py``: the same digests, run on main and on this
+#: PR). The two of a league that counts every category are main's own tests, not edited here:
+#: ``test_sim_continuous.BEFORE_FAAB`` and ``test_sim_rivals.FC_FAAB_CONTINUOUS``.
+MAIN_ONE_WIN_FAAB = {
+    DROPPED: "0abd89d5d7f9860bc2cb455611ea330f43a9baecf21ef0cca6358bf9874ca882",
+    CONTINUOUS: "be80ced3d8fff6a0f037c1c630bf9e93701cfd30baa1cd76b2fb8239612092fc",
+}
+
+
+@pytest.mark.parametrize("rule", [DROPPED, CONTINUOUS])
+def test_rule_1_with_no_bid_named_a_one_win_faab_season_plays_as_main_s(rule):
+    """With no ``bid`` named a FAAB season is main's, figure for figure, in the one-win format
+    under both waiver rules (the format main's own two FAAB pins do not play). One format by
+    design: the other is main's tests'."""
+    base = make_setup(teams=4, pool=12)
+    setup = of_format(replace(base, waivers="faab", waiver_days=2, waiver_rule=rule), ONE_WIN)
+    assert season_digest(setup) == MAIN_ONE_WIN_FAAB[rule]
+
+
 @pytest.mark.parametrize("h2h", FORMATS)
 @pytest.mark.parametrize("rule", [DROPPED, CONTINUOUS])
 def test_rule_1_an_empty_bid_plays_the_season_of_no_bid(rule, h2h):
