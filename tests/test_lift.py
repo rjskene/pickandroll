@@ -21,6 +21,7 @@ from pickandroll.season import flags as fl
 from pickandroll.season import lift as lf
 from pickandroll.season import moves as mv
 from pickandroll.season import progress as pg
+from pickandroll.season import reserve as rs
 
 from .test_moves import build, player, rates, schedule
 from .test_season import LEAGUE, client, fixture_names, projection_csv  # noqa: F401
@@ -203,6 +204,9 @@ def bump(client) -> None:  # noqa: F811
 
 
 def test_every_lift_knob_at_zero_gives_todays_moves_byte_for_byte(client, monkeypatch):  # noqa: F811
+    # The add reserve (#436) exempts a must-add's add, so flagging every candidate changes its
+    # record: off here, the lift alone on test (its own zero test is in test_reserve).
+    monkeypatch.setattr(rs, "DEFAULTS", dict(rs.OFF))
     projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     flagged: dict[int, fl.Flag] = {}

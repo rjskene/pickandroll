@@ -210,6 +210,9 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
         "scorer": built.scorer,
         # The breakout lift in force (#435): only when a candidate is lifted.
         **({"lift": lift} if (lift := season_moves.lift_payload(built)) is not None else {}),
+        # The add reserve and the re-cut rule in force (#436): only when one applies. The queue
+        # reads it (``autopilot.reserve_reason``).
+        **({"reserve": r} if (r := season_moves.reserve_payload(built)) is not None else {}),
     }
 
 
@@ -232,6 +235,8 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "gain": rec["gain"],
                 "week": _week(ev, _moves_of(moves)),
                 "season_guard": guard_record(rec.get("season_guard")),
+                # The set the add reserve held back (#436): only when it held one back.
+                **({"reserve": r} if (r := rec.get("reserve") or {}).get("held_back") else {}),
             }
         )
     plan = payload.get("plan")
