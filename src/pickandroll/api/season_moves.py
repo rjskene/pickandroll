@@ -59,6 +59,7 @@ from ..season import autopilot as qa
 from ..season import decisions as dl
 from ..season import moves as mv
 from ..season import plans as pl
+from ..season import pool as sp
 from ..season import progress as pg
 from ..season import stream as st
 from ..season import weekly as wk
@@ -74,7 +75,7 @@ WEEKS_AHEAD = 4
 POOL = 30
 #: The adds the season guard admits that join that pool (#424): the best this many by their best
 #: single move the guard admits, appended to the ``POOL`` without repeating one
-#: (:func:`pool_for`).
+#: (``season.pool.pool_for``, #430).
 GUARD_POOL = 30
 #: A move must add at least this many expected categories to be recommended.
 MIN_GAIN = 0.01
@@ -607,76 +608,6 @@ def decided_by(pm: mv.PricedMove, key: str, season: mv.Season | None) -> str:
     return dl.SEASON if season is not None and tied else key
 
 
-@dataclass(frozen=True)
-class Pool:
-    """A horizon's search pool (#424): ``players`` in order, the first ``size`` the best by
-    single-move gain (the pool before #424), then ``admitted`` more from the guard's list
-    (:func:`admitted_swaps`)."""
-
-    players: tuple[int, ...]
-    size: int
-    admitted: int
-
-    def counts(self) -> dict[str, int]:
-        return {"size": self.size, "admitted": self.admitted}
-
-
-def ranked_of(swaps: Mapping[int, Sequence[mv.SwapGain]]) -> list[int]:
-    """The candidates whose best single move gains more than ``MIN_GAIN``, best first."""
-    return sorted(
-        (c for c, g in swaps.items() if g and g[0].gain > MIN_GAIN),
-        key=lambda c: -swaps[c][0].gain,
-    )
-
-
-def admitted_swaps(
-    swaps: Mapping[int, Sequence[mv.SwapGain]],
-    allowed: mv.Allowed | None,
-    size: int | None = None,
-) -> list[tuple[int, mv.SwapGain]]:
-    """The guard's list (#424): the best ``size`` (``GUARD_POOL``) adds by their best single
-    move that ``allowed`` admits and that gains more than ``MIN_GAIN``, each with that move's
-    drop and gain, best first; empty without a guard. ``swaps`` is a horizon's
-    ``moves.single_swaps``: every drop each add can come with, best first."""
-    if allowed is None:
-        return []
-    size = GUARD_POOL if size is None else size
-    pairs = sorted(
-        ((c, g) for c, gains in swaps.items() for g in gains if g.gain > MIN_GAIN),
-        key=lambda cg: (-cg[1].gain, cg[0]),
-    )
-    out: list[tuple[int, mv.SwapGain]] = []
-    seen: set[int] = set()
-    for c, g in pairs:
-        if len(out) >= size:
-            break
-        if c in seen or not allowed((mv.Move(c, g.drop),)):
-            continue
-        seen.add(c)
-        out.append((c, g))
-    return out
-
-
-def joined(head: Sequence[int], extra: Iterable[int]) -> Pool:
-    """``head`` and then each of ``extra`` not already in it."""
-    seen = set(head)
-    more = [c for c in extra if not (c in seen or seen.add(c))]
-    return Pool((*head, *more), len(head), len(more))
-
-
-def pool_for(
-    swaps: Mapping[int, Sequence[mv.SwapGain]], allowed: mv.Allowed | None
-) -> tuple[Pool, list[tuple[int, mv.SwapGain]]]:
-    """A horizon's search pool (#424) and the guard's list it took from: the best ``POOL`` by
-    single-move gain (:func:`ranked_of`, in that order), then the guard's list
-    (:func:`admitted_swaps`) without repeating an add. The best ``POOL`` stay, though the guard
-    may refuse each one's best move: one may come with another drop, or join a set the guard
-    admits as a whole. An add below them whose move the guard admits would otherwise never be
-    searched. Without a guard, the ``POOL`` alone."""
-    guarded = admitted_swaps(swaps, allowed)
-    return joined(ranked_of(swaps)[:POOL], (c for c, _ in guarded)), guarded
-
-
 class Watched:
     """A guard that counts the sets it refused: a solve it never refused is the unguarded
     one's."""
@@ -1140,12 +1071,12 @@ def _payload(built: Built) -> dict[str, Any]:
     ros = guard_ros(built)
     guard = None if ros is None else mv.season_guard(ros)
     season = season_of(ros)
-    pools: dict[str, Pool] = {}
+    pools: dict[str, sp.Pool] = {}
     guarded: dict[str, list[tuple[int, mv.SwapGain]]] = {}
     for key in HORIZONS:
         # The pool takes the adds the guard admits beside the best by single move (#424): the
         # guarded solve and the unguarded one behind held_back search the same adds.
-        pools[key], guarded[key] = pool_for(swaps[key], guard)
+        pools[key], guarded[key] = sp.pool_for(swaps[key], guard, POOL, GUARD_POOL, MIN_GAIN)
         pool = pools[key]
         watched = None if guard is None else Watched(guard)
         rec = mv.recommend(

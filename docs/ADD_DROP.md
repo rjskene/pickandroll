@@ -579,7 +579,7 @@ column shows, each move valued on its own from its day as the log values it
   search's stands (both options, A and B). The private league is guarded the same way: it is the
   same engine, and the user still makes every move there by hand.
 - **The pool (#424).** The search, its re-solves and the solve without the guard all search
-  one pool per horizon (`season_moves.pool_for`): the 30 candidates whose best single swap gains
+  one pool per horizon (`season.pool.pool_for`, pure since #430; the API passes `POOL`, `GUARD_POOL`, `MIN_GAIN`): the 30 candidates whose best single swap gains
   most (`POOL`, in that order), then the best 30 by their best single swap the guard admits
   (`GUARD_POOL`, above `MIN_GAIN`), each not already in. A pool cut before the guard ran left the
   search little or nothing when the guard refused most of the 30 (all 30 in 251146's three
