@@ -1374,8 +1374,11 @@ export interface QueueEntry {
   date: string;
   league: string;
   scoring: "categories" | "points";
-  /** The three weeks' set, or the day's week plan in its place (#221 part 2). */
-  set: "three" | "week_plan";
+  /** The three weeks' set, or the day's week plan in its place (#221 part 2), or the user's pick
+   * (#434), queued first. */
+  set: "three" | "week_plan" | "pick";
+  /** "pick" on the user's pick (#434); absent on any other entry. */
+  decided_by?: "pick";
   decision: string | null;
   add: number;
   drop: number | null;
@@ -1991,6 +1994,66 @@ export interface PriorityClaim {
   after: number;
 }
 
+/** A pick the solve made (#434): its move, what it adds to the picks on each horizon and to the
+ * queue's score, whether its drop is the one the user named, the user's bid and its expiry. */
+export interface PickMove extends MoveRef {
+  held?: HeldMove | null;
+  held_drop?: HeldMove | null;
+  decided_by: "pick";
+  named_drop: boolean;
+  marginal: Record<MoveHorizon, number>;
+  score: number;
+  ros?: MoveRos | null;
+  bid: number | null;
+  expires: string;
+  by: string;
+}
+
+/** A pick in force that the solve could not make, with why. */
+export interface PickSkipped {
+  player: number;
+  name: string | null;
+  reason: string;
+  expires: string;
+  by: string;
+}
+
+export interface MovesPicks {
+  moves: PickMove[];
+  skipped: PickSkipped[];
+}
+
+/** One of the user's picks (#434): its player, leagues (null: all), the drop to make where he is
+ * mine (null: the cheapest), the bid (null: the bid policy's), its last day, who set it and when,
+ * and the leagues it has left (its player on a team there). */
+export interface PlayerPick {
+  player: number;
+  name: string | null;
+  leagues: string[] | null;
+  drop: number | null;
+  bid: number | null;
+  expires: string;
+  by: string;
+  at: string;
+  left: Record<string, string>;
+  active: boolean;
+}
+
+export interface PicksPayload {
+  picks: PlayerPick[];
+  /** A pick's days when none are sent. */
+  days: number;
+}
+
+export interface PickBody {
+  player?: number;
+  name?: string;
+  leagues?: string[] | null;
+  drop?: number | null;
+  bid?: number | null;
+  days?: number;
+}
+
 export interface MovesPayload {
   system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
   /** What the values and gains are in (#397): a one-win league's matchup win odds, "points" or
@@ -2014,6 +2077,8 @@ export interface MovesPayload {
   week_plans?: WeekPlans | null;
   /** Available players without a line in the system (no move valued). */
   unprojected: number;
+  /** The user's picks in force in the league (#434); absent without one. */
+  picks?: MovesPicks;
   /** ``seconds``: the whole solve's (#221 part 2), absent before. The budget (#306): its
    * seconds, whether it ran out (``cut``), the searches finished of those begun, and ``note``
    * when it ran out; absent before. */
@@ -2963,6 +3028,12 @@ export const api = {
   /** The user's own click: the lineup executor's mode; live is refused until the dry run passes. */
   setLineupMode: (league: string, mode: LineupMode) =>
     request<AutopilotView>(`/leagues/${encodeURIComponent(league)}/lineups`, { method: "PUT", body: JSON.stringify({ mode }) }),
+  /** The user's picks (#434); reads only. */
+  playerPicks: () => request<PicksPayload>("/autopilot/picks"),
+  /** The user's own click: set one pick (#434), by Yahoo player id or by name. */
+  setPlayerPick: (body: PickBody) => request<PicksPayload>("/autopilot/picks", { method: "PUT", body: JSON.stringify(body) }),
+  /** The user's own click: remove a pick (#434). */
+  removePlayerPick: (player: number) => request<PicksPayload>(`/autopilot/picks/${player}`, { method: "DELETE" }),
   /** A day's queue of the moves executor (#171), today's by default; reads only. */
   queue: (date?: string) => request<QueuePayload>(`/autopilot/queue${date ? `?date=${date}` : ""}`),
   history: () => request<HistoryPayload>("/history"),
