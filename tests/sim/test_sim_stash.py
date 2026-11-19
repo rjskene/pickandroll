@@ -175,6 +175,25 @@ def test_the_ranking_tier_s_one_swap_is_not_held_to_the_threshold():
     )
 
 
+def test_two_arms_apart_only_in_the_threshold_are_two_seats_where_it_is_read():
+    """A replay refuses a pair that differs only in what neither arm reads. On the tiers that
+    search with the engine the threshold is read, with or without a held slot, so the pair runs;
+    on the ranking tier and for a static seat it is refused by name, with why and what reads it."""
+    shapes = [policy.Shape(), policy.Shape(held=True)]
+    for tier in SEARCH:
+        a = arm("A", tier)
+        assert rn.same_seat(a, replace(a, name="B", knobs=knobs_at(0.25)), shapes) is None
+    read_by = policy.WHEN_READ["stash_threshold"]
+    for tier, why in (("ranking", policy.RANKING_STASH), ("static", policy.STATIC)):
+        a = arm("A", tier)
+        refused = rn.same_seat(a, replace(a, name="B", knobs=knobs_at(0.25)), shapes)
+        assert refused == [f"stash_threshold ({why}; read by {read_by})"]
+    # Mirror rivals read nothing more of it: they keep None, so the two arms face one rival.
+    r = arm("A", "ranking", "mirror")
+    refused = rn.same_seat(r, replace(r, name="B", knobs=knobs_at(0.25)), shapes)
+    assert refused == [f"stash_threshold ({policy.RANKING_STASH}; read by {read_by})"]
+
+
 def test_a_mirror_rival_keeps_none():
     """The knob is the arm's own seat's: its mirror rivals are made without it, so two arms that
     differ only in it face one rival, and the rival decides as at None."""
