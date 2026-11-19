@@ -108,6 +108,7 @@ from .engine import (
     mv,
     refused,
     sg,
+    sp,
     st,
     typical_gain,
     wk,
@@ -361,6 +362,19 @@ class Basis:
 
 
 @dataclass(frozen=True)
+class PoolUnion:
+    """What the exact tier's union pool was on one day (#172, PR pool), kept for the counts and
+    read by no decision. ``admitted``: the adds the guard's list brought that the head did not
+    hold (``season.pool.Pool.admitted``). ``taken``: how many of those the decided set adds.
+    ``refused``: how many of the head's adds have a best single move that gains more than
+    ``min_gain`` on a horizon the pool was ranked on and that the season guard refuses."""
+
+    admitted: int
+    taken: int
+    refused: int
+
+
+@dataclass(frozen=True)
 class Decision:
     """What a tier decided for one team on one day."""
 
@@ -374,6 +388,9 @@ class Decision:
     #: What its claims bid on in a FAAB league (PR Fb); None elsewhere, and for a tier that
     #: holds no gain in the engine's units (ranking), whose claims bid $0.
     basis: Basis | None = None
+    #: The day's union pool (PR pool): only on the exact tier at a ``guard_pool`` above 0, None
+    #: everywhere else. A count, read by no decision.
+    union: PoolUnion | None = None
 
 
 NONE = Decision()
@@ -814,12 +831,65 @@ def _weight(knobs: Mapping[str, Any], weeks_left: int) -> float:
     raise KeyError(f"horizon weight {key!r} is not one of {sg.WEIGHT_KEYS}")
 
 
+Swaps = Mapping[int, Sequence[mv.SwapGain]]
+
+
+def _horizon_swaps(ev: mv.Evaluator) -> dict[str, dict[int, list[mv.SwapGain]]]:
+    """Every candidate's single swaps on each of the week and the three weeks."""
+    return {key: mv.single_swaps(ev, key) for key in HORIZONS}
+
+
+def _weighted_head(swaps: Mapping[str, Swaps], fields: Fields) -> list[int]:
+    """The best ``pool`` by single-swap gain on each horizon of ``swaps``, taken in turn
+    (``strategy.pool_of``)."""
+    gains = {key: {c: g[0].gain for c, g in swaps[key].items() if g} for key in HORIZONS}
+    return sg.pool_of(gains, fields.pool)
+
+
 def _weighted_pool(ev: mv.Evaluator, fields: Fields) -> list[int]:
     """The weighted search's candidates: the best ``pool`` by single-swap gain on each of the
     week and the three weeks, taken in turn (``strategy.pool_of``)."""
-    swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
-    gains = {key: {c: g[0].gain for c, g in swaps[key].items() if g} for key in HORIZONS}
-    return sg.pool_of(gains, fields.pool)
+    return _weighted_head(_horizon_swaps(ev), fields)
+
+
+def _weighted_union(swaps: Mapping[str, Swaps], allowed: mv.Allowed, fields: Fields) -> sp.Pool:
+    """The weighted search's candidates at a ``guard_pool`` above 0 (#172, PR pool), in the live
+    strategy run's form (``api.season_strategy``, read as the reference and put together again
+    here from the engine's own functions): the head as at 0 (:func:`_weighted_head`), then each
+    horizon's guard's list (``pool.admitted_swaps`` on that horizon's single swaps) taken in
+    turn by ``strategy.pool_of``, ``guard_pool`` in all, joined without repeating an add
+    (``pool.joined``)."""
+    listed = {
+        key: {
+            c: g.gain
+            for c, g in sp.admitted_swaps(swaps[key], allowed, fields.guard_pool, fields.min_gain)
+        }
+        for key in HORIZONS
+    }
+    return sp.joined(_weighted_head(swaps, fields), sg.pool_of(listed, fields.guard_pool))
+
+
+def _union_of(
+    pool: sp.Pool,
+    tables: Sequence[Swaps],
+    allowed: mv.Allowed,
+    min_gain: float,
+    moves: Iterable[mv.Move],
+) -> PoolUnion:
+    """What the day's union ``pool`` was, for the counts (:class:`PoolUnion`): the adds the
+    guard's list brought, how many of them the decided ``moves`` add, and how many of the head's
+    adds have, on one of ``tables`` (a horizon's single swaps each: the ones the pool was ranked
+    on), a best single move that gains more than ``min_gain`` and that ``allowed`` refuses. The
+    guard is asked about single moves only, as the list itself asks it."""
+    head, listed = pool.players[: pool.size], set(pool.players[pool.size :])
+
+    def refused(c: int) -> bool:
+        best = (t[c][0] for t in tables if t.get(c))
+        return any(g.gain > min_gain and not allowed((mv.Move(c, g.drop),)) for g in best)
+
+    return PoolUnion(
+        pool.admitted, sum(1 for m in moves if m.add in listed), sum(1 for c in head if refused(c))
+    )
 
 
 def _three_pool(swaps: Mapping[int, Sequence[mv.SwapGain]], fields: Fields) -> list[int]:
@@ -841,13 +911,32 @@ def exact(
     """The live moves route's set on ``QUEUE_SET`` (or the strategy route's weighted set), the
     season guard on every search, the streaming plan beside. With a ``season_weight`` the single
     swaps, the pool's ranking and the recommended set (or the weighted search) all take the
-    season term (:func:`seasoned`); the week's plan does not."""
+    season term (:func:`seasoned`); the week's plan does not.
+
+    The pool the set is searched among (#172, PR pool). At ``guard_pool`` 0, the default, it is
+    cut before the guard sees anything: the best ``pool`` by single-swap gain
+    (:func:`_three_pool`, :func:`_weighted_pool`), so when the guard refuses most of those the
+    search has little left. Above 0 it is the engine's union, as live searches since #424: the
+    same head, then the adds whose best single move the guard admits, ``guard_pool`` of them
+    (``pool.pool_for`` through the door on the single swaps the arm ranks today, the season
+    term on them; for the weighted search :func:`_weighted_union`). The guard is the one object
+    every search of the day is handed, so what it has worked out for the list is not worked out
+    again. The decision then says what the union was (:class:`PoolUnion`). The week plan's set
+    below is not part of it: it searches the first ``pool`` candidates in candidate order,
+    whatever the field."""
     p = built.problem
     ev = mv.Evaluator(p)
     allowed = guard_of(built)
     solves = 0
+    union: sp.Pool | None = None
+    tables: tuple[Swaps, ...] = ()
     if executes == WEIGHTED:
-        pool = _weighted_pool(ev, fields)
+        if fields.guard_pool > 0:
+            both = _horizon_swaps(ev)
+            union = _weighted_union(both, allowed, fields)
+            pool, tables = list(union.players), tuple(both.values())
+        else:
+            pool = _weighted_pool(ev, fields)
         w = seasoned(
             built,
             sg.Weighted(ev, _weight(built.knobs, built.weeks_left), built.weeks_left),
@@ -861,13 +950,12 @@ def exact(
     else:
         scored = seasoned(built, ev, QUEUE_SET)
         swaps = mv.single_swaps(scored, QUEUE_SET)
-        rec = mv.recommend(
-            scored,
-            QUEUE_SET,
-            _three_pool(swaps, fields),
-            min_gain=fields.min_gain,
-            allowed=allowed,
-        )
+        if fields.guard_pool > 0:
+            union, _ = sp.pool_for(swaps, allowed, fields.pool, fields.guard_pool, fields.min_gain)
+            pool, tables = list(union.players), (swaps,)
+        else:
+            pool = _three_pool(swaps, fields)
+        rec = mv.recommend(scored, QUEUE_SET, pool, min_gain=fields.min_gain, allowed=allowed)
         moves = tuple(pm.move for pm in rec.moves)
         held = tuple(rec.held)
         solves += 1
@@ -887,7 +975,8 @@ def exact(
             plan, taken = planned.steps, planned
         solves += 1
     basis = basis_of(built, ev, moves, taken)
-    return Decision(tuple(moves), held, plan, solves, "exact", basis)
+    made = None if union is None else _union_of(union, tables, allowed, fields.min_gain, moves)
+    return Decision(tuple(moves), held, plan, solves, "exact", basis, union=made)
 
 
 def _games(built: Built, member: mv.Member, from_day: date) -> int:
