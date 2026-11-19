@@ -938,6 +938,14 @@ def test_the_command_takes_a_threshold_from_a_seat_s_file_and_counts_it(tmp_path
     assert "returning_dropped" in counts["T"] and "returning_dropped" not in counts["S"]
 
 
+def test_the_replay_s_version_is_the_stash_threshold_s():
+    """The record's version and the first words of its reason (PR G): a payload read later says
+    which rule the morning of a comeback was played by."""
+    assert ss.REPLAY_VERSION == 15
+    assert ss.REPLAY_VERSION_WHY.startswith("15: the stash threshold: ")
+    assert "14: the arm's seat's draft under a table" in ss.REPLAY_VERSION_WHY
+
+
 # --------------------------------------------------------------------------- Rule 1
 def outcome_digest(setup, tier: str, opponents: str) -> str:
     """SHA-256 of a made-up season's outcome (seed 1, path 0): seat 1 on ``tier`` at the tests'

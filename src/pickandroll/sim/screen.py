@@ -31,9 +31,10 @@ from . import policy
 from . import run as rn
 from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 
-#: The screen's version in its record: 1, the list of PR H1. A change to the list, to a nudge or
-#: to a rule below is a new version, and a folder started under another is refused.
-SCREEN_VERSION = 1
+#: The screen's version in its record: 2 since the stash threshold's lever (PR G: two rows more),
+#: 1 the list of PR H1. A change to the list, to a nudge or to a rule below is a new version, and
+#: a folder started under another is refused.
+SCREEN_VERSION = 2
 #: What the Monday step multiplies a plan floor by (``season.hillclimb``'s plan rule, where the
 #: figure is written in the rule itself): the step up of the knob's own grid; the step down
 #: divides by it.

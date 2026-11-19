@@ -564,7 +564,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
   `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
-  the run's league rules ("The league shapes"). The payload (`replay_version` 13) keys by season what is one season's: the forecasters,
+  the run's league rules ("The league shapes"). The payload (`replay_version` 15) keys by season
+  what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
   the league was drafted on, and `league` the league shapes the paths played and the league rules.
@@ -715,7 +716,13 @@ head-to-head format (the format PR), its figures version 10's under `--h2h each_
 a run whose seats weigh nothing, while with nothing named a seat that weighs now weighs the
 matchup's odds; 12 since continuous waivers (PR Fc), its figures version 11's with the rule not
 named; 13 since the rivals' adds and bids (PR Fd), its figures version 12's with nothing new named
-(a FAAB run's league block now records `rival_bids`, `assumed` by default).
+(a FAAB run's league block now records `rival_bids`, `assumed` by default); 14 since the arm's
+seat's draft under a table (the draft PR), its figures version 13's with no table, or under one
+with `--seat-draft own` named; and 15 since the stash threshold (PR G), its figures version 14's
+in a league without held slots with no threshold named (one word of the record apart: the reads
+table's row for the knob), while a league with held slots may move at any threshold, None
+included, on the mornings a returning held player forces a drop (the seat's plan names who
+leaves).
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -1741,7 +1748,8 @@ over the paths, not over the season's own chance.
 - Each pair is its own unit. When it ends its record is written to
   `data/sim/screens/<name>/<lever>-<nudge>.json`: the pair's record as `replay` writes it, with
   one `screen` block (the screen's name and version, the row, and its result).
-- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 1, the
+- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 2 (1 before
+  the stash threshold's two rows joined the list), the
   code's commit, the fit's hash, the season scale, the measure and the rule, every row, the
   survivors and what is left. Everything that is a time sits under its `timing` (each pair's
   estimate, each piece's start and end), so a screen played in pieces records what one played
