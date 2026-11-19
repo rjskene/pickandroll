@@ -243,7 +243,7 @@ def test_two_arms_of_one_name_apart_in_their_rivals_each_decide_on_their_own_wee
     the final's pairs) differ. Before the key held the week's view the second variant was handed
     the first's decision on those days. A found path a format (seed 5): under one win a
     matchup the two variants meet again in the final with different totals so far; under every
-    category they meet on the final's first morning with different opponents. About 8 s each."""
+    category they meet on the final's first morning with different opponents. About 3 s each."""
     me, rival, first, second, apart = ONE_NAME[format_]
     setup = final_league(format_)
     base = initial(setup)
@@ -278,7 +278,7 @@ def test_two_arms_of_one_name_apart_in_execute_plan_each_decide_on_their_own_wee
     arm's seat meets its own. A found path (seed 9, seat 4). One format, every category, with
     the plan floor under zero: under one win a plan must beat its set by the engine's own floor
     in the matchup's odds, and in these made-up leagues none does (``test_sim_knobs.py``'s note
-    on its cases), so the two arms never part. About 4 s."""
+    on its cases), so the two arms never part. About 2 s."""
     me = 4
     setup = weakened(final_league("each_category"))
     knobs = {**KNOBS, "plan_floor_cats": -1.0}
@@ -356,7 +356,7 @@ def test_rule_1_a_season_whose_seats_search_no_week_is_the_blind_seasons(format_
     with every round seeded is the season with none, key for key: the same decisions, queues,
     lineups and states every day (the pairs a state holds apart), the same solves and shared
     solves, summaries, counts and final. The audit, with its rule read, finds nothing.
-    Two rounds, so a later round is seeded on standings a round has changed. About 10 s each."""
+    Two rounds, so a later round is seeded on standings a round has changed. About 3 s each."""
     setup = rounds_league(format_)
     w = replay_of(setup, 5, 0)
     variants = no_week_readers(setup)
@@ -387,7 +387,7 @@ def test_what_a_run_shares_and_solves_is_the_same_but_for_two_arms_of_one_name(m
     """The key's view moves no count where no two variants hold one seat on two views: a room,
     and a pair of two names, share and solve as they did under the old key; the same arm twice
     shares every decision, in the final too. One format: no decision is compared, only who is
-    asked to decide. About 10 s."""
+    asked to decide. About 8 s."""
     setup = final_league()
     w = replay_of(setup, 5, 0)
     a = rn.Arm("A", "exact", dict(KNOBS), {"kind": "mirror"}, policy.WEIGHTED)
@@ -416,7 +416,7 @@ def test_it_bites_a_finalist_that_weighs_the_week_queues_on_its_opponent_in_the_
     reads no opponent either way, and its whole season is the blind one's. A finalist reads the
     other finalist: in the final its problem's week has an opponent on every day, where the
     blind one has none, and (a found path, seed 5) at least one finalist queues differently
-    there. About 6 s each."""
+    there. About 5 s each."""
     setup = final_league(format_)
     w = replay_of(setup, 5, 0)
     final = setup.calendar.weeks[-1]
@@ -634,7 +634,7 @@ def test_a_points_league_reads_its_rounds_opponent_and_both_scores():
     season's audit finds nothing (nobody finds a move to make in this league: the test reads
     the problem, not a queue). The bracket is named: the replay's default, six teams, is one a
     league of two cannot play, and such a spec raises on the first bracket morning now, where
-    it raised at the season's end before. About 11 s."""
+    it raised at the season's end before. About 10 s."""
     _, setup = setup_of(scoring="points", points=TABLE, playoff_teams=2, playoff_weeks=1)
     assert setup.spec is not None and len(lg.round_weeks(setup.spec)) == 1
     lines, _, _ = made_up_season()
@@ -668,7 +668,7 @@ def test_a_pair_with_a_split_seat_plays_its_rounds_on_its_own_table():
     and a ``bbm`` arm, both weighing the week, in one seat through two rounds. Each variant
     seeds its own rounds, the audit finds nothing, and in a round the split seat's opponent is
     projected on the table the seat itself reads. One format (one win): the split is the
-    forecaster's, not the measure's. About 20 s."""
+    forecaster's, not the measure's. About 4 s."""
     setup, lines = two_rounds()
     first = {k: {s: v * 1.1 for s, v in r.items()} for k, r in setup.projection.items()}
     arms = {
@@ -707,7 +707,7 @@ def test_no_peek_in_a_round_with_a_seat_that_reads_the_week():
     1: with every line from that day on redrawn, no record changes up to and on that day (the
     round's pairs, the opponent's week so far and the decision read nothing ahead), and the
     records do change after it. One format: the check reads what is known, not the measure.
-    About 15 s."""
+    About 7 s."""
     setup, lines = two_rounds()
     day = setup.calendar.weeks[5].start + timedelta(2)
 
