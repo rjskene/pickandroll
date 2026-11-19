@@ -50,7 +50,10 @@ import type {
   StartActiveRunLog,
   OutlookSummary,
   OutlookWeek,
+  PickMove,
+  PickSkipped,
   PlanStep,
+  PlayerPick,
   PlayerFlag,
   PlayerRos,
   PassTally,
@@ -886,9 +889,12 @@ export function bidStrikable(e: Pick<QueueEntry, "availability" | "bid" | "bid_s
 
 /** "Brooks for Reed", "Brooks after Hurt to IL", "Brooks (free: open spot)": the move in words,
  * by its basis (#187). An entry logged before the basis with no drop says only that. */
-export function queueMoveText(e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move" | "held_drop" | "plan">, name: (id: number) => string): string {
+export function queueMoveText(
+  e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move" | "held_drop" | "plan"> & { set?: QueueEntry["set"] },
+  name: (id: number) => string,
+): string {
   const step = planStepTag(e);
-  const tail = step ? ` (${step} of the week plan)` : "";
+  const tail = e.set === "pick" ? " (your pick)" : step ? ` (${step} of the week plan)` : "";
   if (e.drop == null && e.basis == null) return `${name(e.add)} with no drop${tail}`;
   return `${name(e.add)} ${basisPhrase(addBasis({ drop: e.drop, held: e.held_move, held_drop: e.held_drop }, name))}${tail}`;
 }
@@ -2746,4 +2752,29 @@ export function realizedTitle(m: ScorecardMove, scoring: string | null | undefin
   if (x.scorer && !x.scorer.own) parts.push("valued with the nearest solve's scorer: realized only");
   if (x.lag_days) parts.push(`made ${n(x.lag_days, "day")} after the first day of the solve it matched`);
   return parts.join("; ");
+}
+
+/** A pick the solve made (#434), in words: the add, its drop (named by the user or the cheapest)
+ * and the bid. */
+export function pickMoveText(m: Pick<PickMove, "add" | "drop" | "held" | "held_drop" | "named_drop" | "bid">, name: (id: number) => string): string {
+  const basis = basisPhrase(addBasis({ drop: m.drop, held: m.held ?? null, held_drop: m.held_drop ?? null }, name));
+  const why = m.drop == null ? "" : m.named_drop ? " (the drop you named)" : " (the drop that costs least)";
+  const bid = m.bid == null ? "the bid policy's bid" : `your bid of $${m.bid}`;
+  return `${name(m.add)} ${basis}${why}: your pick, ${bid}`;
+}
+
+/** A pick the solve could not make (#434), with why. */
+export function pickSkipText(x: PickSkipped, name: (id: number) => string): string {
+  return `${x.name ?? name(x.player)}: ${x.reason}`;
+}
+
+/** One of the user's picks in the Queue screen's box (#434): where it applies, its drop and bid,
+ * its last day, who set it and the leagues it has left. */
+export function pickLine(p: PlayerPick, title: (league: string) => string): string {
+  const where = p.leagues == null ? "every league" : p.leagues.map(title).join(", ");
+  const drop = p.drop == null ? "the cheapest drop" : `drop player ${p.drop} where mine`;
+  const bid = p.bid == null ? "the bid policy's bid" : `$${p.bid}`;
+  const left = Object.keys(p.left);
+  const tail = left.length ? `; on a team in ${left.map(title).join(", ")}` : "";
+  return `${where} · ${drop} · ${bid} · until ${dayLabel(p.expires)}${p.active ? "" : " (expired)"} · set by ${p.by}${tail}`;
 }

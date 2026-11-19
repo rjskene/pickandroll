@@ -39,6 +39,13 @@ his slot (``held_drop``) beside the held-slot move that gives the add an active 
 and its basis is ``churn``. Ties on a horizon go to the season (the guard's own figure); each
 recommended move says which horizon decided it (``decided_by``): the season when keeping its
 drop re-solves to a set worth the same on the horizon.
+
+The user's picks (#434, ``season.picks``) are made before any search, on the roster the pending
+claims leave: each with the drop the user named or the one that costs least on the queue's score,
+the keep rule kept and the season guard not applied. They are folded into the problem like
+pending claims, so the sets are solved around them; the payload's ``picks`` (only with a pick in
+force) lists the moves made, valued on the problem before them (:func:`picked`), and the picks
+skipped with why.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ from ..season import Player, Season
 from ..season import autopilot as qa
 from ..season import decisions as dl
 from ..season import moves as mv
+from ..season import picks as pk
 from ..season import plans as pl
 from ..season import pool as sp
 from ..season import progress as pg
@@ -126,6 +134,13 @@ class Built:
     #: Yahoo's roster as read, the claims not made, its own keep rule's kept: the lineup and the
     #: views that show my roster (:attr:`as_read`); None when no claim is pending.
     real: mv.MoveProblem | None = None
+    #: The user's picks made in the solve (#434, ``season.picks.forced``), folded into ``problem``
+    #: like claims pending: the solver fills the adds left around them.
+    picks: tuple[pk.Forced, ...] = ()
+    #: The league's picks in force that the solve could not make, each with why.
+    skipped_picks: tuple[pk.Skipped, ...] = ()
+    #: The problem before the picks were made, what their moves are valued on; None without one.
+    unpicked: mv.MoveProblem | None = None
 
     @property
     def as_read(self) -> mv.MoveProblem:
@@ -261,13 +276,17 @@ def build(
     system: str,
     knobs: Mapping[str, Any] | None = None,
     open_claims: Iterable[Mapping[str, Any]] = (),
+    picks: Sequence[pk.Pick] = (),
 ) -> Built | None:
     """The move problem for my team, or None when the season lacks my team or its weeks; the
     solve runs on ``system`` with ``knobs``, the league's knobs as ``api.season_knobs`` reads
     them (the code's defaults when None), and Yahoo's can't-cut list as the executor last read
     it (``api.season_cantcut``, #220). ``open_claims`` are the queue's entries of the league in its
     open days: those still pending on this read (:func:`pending_claims`) are made in the problem
-    (#360), the lineup and the views keeping Yahoo's roster as read (``Built.real``)."""
+    (#360), the lineup and the views keeping Yahoo's roster as read (``Built.real``). ``picks``
+    are the user's picks in force in the league (#434): those the solve can make are made on that
+    roster first, each with the drop the user named or the one that costs least on the queue's
+    score (``season.picks.forced``), and the solve fills the adds left around them."""
     s = season.settings
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
@@ -427,7 +446,19 @@ def build(
     )
     base = problem
     problem, rule = fold(base, pending)
-    real = replace(base, kept=mv.keep_rule(base).kept) if pending else None
+    playoff = (opens := season.first_playoff_week) is not None and this.number >= opens
+    made: list[pk.Forced] = []
+    skipped: list[pk.Skipped] = []
+    unpicked = None
+    if picks:
+        weight = 0.0 if playoff else float(knobs.get("three_weight", pl.THREE_WEIGHT))
+        made, skipped = pk.forced(problem, picks, plan_value(weight, playoff))
+        if made:
+            unpicked = problem
+            problem = pk.fold(problem, made)
+            rule = mv.keep_rule(problem)
+            problem = replace(problem, kept=rule.kept | problem.pending)
+    real = replace(base, kept=mv.keep_rule(base).kept) if pending or made else None
     pool = max(1, s.num_teams * problem.spots)
     scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
     # Today's activations, a first choice on the three weeks before any search (#360): the solve
@@ -451,10 +482,13 @@ def build(
         knobs,
         file_system,
         priority,
-        (first := season.first_playoff_week) is not None and this.number >= first,
+        playoff,
         pending,
         base if pending else None,
         real,
+        tuple(made),
+        tuple(skipped),
+        unpicked,
     )
 
 
@@ -1117,6 +1151,7 @@ def _payload(built: Built) -> dict[str, Any]:
             "season_guard": held_back(built, ev, key, sets[key], ros, free),
         }
     stream = stream_of(built, ev, sets["week"], guard)
+    picks = picks_payload(built)
     # The week plans' pool takes the chain the three-week guard would refuse, the season guard
     # kept, unless the budget has run out (#306): the plans weigh the week first themselves.
     free = None if mv.budget_out() else stream_of(built, ev, sets["week"], guard, False)
@@ -1156,6 +1191,67 @@ def _payload(built: Built) -> dict[str, Any]:
             "min_gain": MIN_GAIN,
             "seconds": round(time.perf_counter() - began, 3),
         },
+        # The user's picks (#434): only in a league with one in force.
+        **({"picks": picks} if picks is not None else {}),
+    }
+
+
+def picked(built: Built) -> Built:
+    """``built`` on the problem before its picks were made (#434): what their moves are valued
+    on, as any set's moves are on the problem they change."""
+    return built if built.unpicked is None else replace(built, problem=built.unpicked)
+
+
+def pick_weight(built: Built) -> float:
+    """The three weeks' weight in the queue's score (``plan_value``): none in a playoff week."""
+    return 0.0 if built.playoff else float(built.knobs.get("three_weight", pl.THREE_WEIGHT))
+
+
+def picks_payload(built: Built) -> dict[str, Any] | None:
+    """The league's picks in force (#434), None without one: those the solve made (``moves``),
+    each with what it adds to the picks on each horizon and to the queue's score (``score``),
+    its held-slot move or held drop, its rest of the season, the drop named or chosen, the
+    user's bid and the pick's expiry; and those it could not make (``skipped``), each with why."""
+    if not built.picks and not built.skipped_picks:
+        return None
+    b = picked(built)
+    p = b.problem
+    moves = [f.move for f in built.picks]
+    ev = mv.Evaluator(p)
+    held = held_by_add(p, moves)
+    weight = pick_weight(built)
+    rows = []
+    for f in built.picks:
+        m = f.move
+        rest = [x for x in moves if x != m]
+        marginal = {h: ev.value(h, moves) - ev.value(h, rest) for h in HORIZONS}
+        rows.append(
+            {
+                **_move(m, p),
+                "held": held.get(m.add) if mv.needs_spot(p, m) else None,
+                "held_drop": held_drop(p, m),
+                "decided_by": pk.PICK,
+                "named_drop": f.pick.drop is not None and f.pick.drop == m.drop,
+                "marginal": {h: _r(v) for h, v in marginal.items()},
+                "score": _r(marginal["week"] + weight * marginal["three"]),
+                "ros": ros_move(b, m),
+                "bid": f.pick.bid,
+                "expires": f.pick.expires.isoformat(),
+                "by": f.pick.by,
+            }
+        )
+    return {
+        "moves": rows,
+        "skipped": [
+            {
+                "player": x.pick.player,
+                "name": x.pick.name,
+                "reason": x.reason,
+                "expires": x.pick.expires.isoformat(),
+                "by": x.pick.by,
+            }
+            for x in built.skipped_picks
+        ],
     }
 
 
