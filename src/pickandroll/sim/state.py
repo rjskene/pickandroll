@@ -6,7 +6,8 @@ the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
 tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
 (PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
-priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by; under
+priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by, and
+(PR F2) the season's winning bids; under
 continuous waivers (PR Fc) every add a claim among them. The world
 (``run.World``) is apart: lines, availability and the beliefs belong to the path, never to an
 arm, so two arms of a pair see one world. Pure: frozen dataclasses,
@@ -79,7 +80,9 @@ class Claim:
     plan's and the world's weeks agree; None outside the calendar), the held-slot moves it needs,
     made only if it is won, and whether its drop is a held player (a churn, #221), who leaves on
     his own the morning after the claim is placed. In a FAAB league (PR Fb) its sealed ``bid``,
-    whole dollars set when it is placed (0 by priority)."""
+    whole dollars set when it is placed (0 by priority), and its ``value`` in typicals when it
+    was placed (PR F2, ``bid_policy.value``: what the bid was sized on, for a seat that bids by
+    the live rule or the bid policy; 0 for any other), which only the counts read."""
 
     move: Move
     placed: date
@@ -88,6 +91,7 @@ class Claim:
     held: tuple[tuple[int, str], ...] = ()
     churn: bool = False
     bid: int = 0
+    value: float = 0.0
 
     @property
     def needs_spot(self) -> bool:
@@ -272,6 +276,18 @@ class SimState:
     dollars: Mapping[int, int] = field(default_factory=dict)
     recent: Mapping[int, tuple[tuple[date, float], ...]] = field(default_factory=dict)
     market_recent: tuple[tuple[date, float], ...] = ()
+    #: The bid policy's (PR F2; a FAAB league's, all empty otherwise). ``won_bids``: every claim
+    #: won this season, in the order decided, each with its morning, its team and its bid, as
+    #: the league's transactions page shows them (a seat's policy reads the other teams').
+    #: ``value_won``: the summed value in typicals of the claims each team won
+    #: (``Claim.value``), the counts' alone. ``recent_by``: as ``recent``, the fortnight's gains
+    #: on the other horizons a seat's bid policy weighs, by horizon (``bid_policy.WEEK``,
+    #: ``SEASON``) then team; a seat whose arm names no such weight keeps none.
+    won_bids: tuple[tuple[date, int, int], ...] = ()
+    value_won: Mapping[int, float] = field(default_factory=dict)
+    recent_by: Mapping[str, Mapping[int, tuple[tuple[date, float], ...]]] = field(
+        default_factory=dict
+    )
 
     @property
     def executed(self) -> int:

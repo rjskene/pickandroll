@@ -9,7 +9,8 @@ league it bids by an assumed form, ``policy.rival_bid``, or on the price book, `
 PR Fd). Its view is the draft day's all season, or the season's that morning (``view``), and it
 may pick among its best few (``among``), PR Fd.
 **Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
-whole: at the defaults nothing changes; in a FAAB league it bids by the live rule on them). **Seat** is the equal room's: a named arm in another
+whole: at the defaults nothing changes; in a FAAB league it bids by the live rule on them, or by
+the arm's ``bid`` policy when it names one, PR F2). **Seat** is the equal room's: a named arm in another
 seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
 draws (``run.World`` passes the day's generator), so two arms of a comparison see the same
 opponents while their states agree.
@@ -24,6 +25,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from . import bid_policy as bp
 from . import policy
 from .engine import mv, wk
 from .shapes import BOOK
@@ -193,11 +195,13 @@ _SEASON_VIEW = _LastView()
 
 @dataclass(frozen=True)
 class Mirror:
-    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's)."""
+    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's), and
+    in a FAAB league bidding by the arm's ``bid`` block when it names one (PR F2)."""
 
     knobs: Mapping[str, Any]
     fields: policy.Fields = policy.DEFAULT_FIELDS
     kind: str = "mirror"
+    bid: bp.BidPolicy | None = None
 
     def decide(
         self,
@@ -214,7 +218,8 @@ class Mirror:
         )
         if built is None:
             return policy.NONE
-        return policy.decide(built, "surrogate", fields=self.fields)
+        decision = policy.decide(built, "surrogate", fields=self.fields)
+        return policy.with_bid(built, decision, self.bid)
 
 
 @dataclass(frozen=True)
@@ -222,7 +227,9 @@ class Seat:
     """An arm in a seat: its tier, knobs, what it executes and its fields, and the forecaster it
     believes by (#172, PR D1): a label the world holds, None for the run's. Static, market and
     mirror seats hold the run's. The label is part of the seat, so of the runner's decision
-    cache's key: two seats on different forecasters share no decision."""
+    cache's key: two seats on different forecasters share no decision. ``bid`` is the arm's bid
+    policy when it names one (PR F2, ``bid_policy.BidPolicy``; None bids by the live rule
+    itself), part of the seat too."""
 
     name: str
     tier: str
@@ -232,6 +239,7 @@ class Seat:
     fields: policy.Fields = policy.DEFAULT_FIELDS
     forecaster: str | None = None
     kind: str = "seat"
+    bid: bp.BidPolicy | None = None
 
     def decide(
         self,
@@ -250,7 +258,8 @@ class Seat:
         )
         if built is None:
             return policy.NONE
-        return policy.decide(built, self.tier, self.executes, self.with_plan, self.fields)
+        decision = policy.decide(built, self.tier, self.executes, self.with_plan, self.fields)
+        return policy.with_bid(built, decision, self.bid)
 
 
 #: The keys of an arm's ``opponents`` block the simulator reads (:func:`of`); any other is
@@ -285,11 +294,12 @@ def of(
     knobs: Mapping[str, Any],
     market_rate: float,
     fields: policy.Fields = policy.DEFAULT_FIELDS,
+    bid: bp.BidPolicy | None = None,
 ) -> Strategy:
     """An opponent from an arm's ``opponents`` block: ``{"kind": "static"}``,
     ``{"kind": "market", "rate": 0.1}`` (the setup's ``market_rate`` when none is given; with
     ``view`` and ``among`` when named, PR Fd) or ``{"kind": "mirror"}`` (the arm's own knobs and
-    fields)."""
+    fields, and its ``bid`` policy when it names one, PR F2)."""
     kind = str(spec.get("kind", "static"))
     if kind == "static":
         return Static()
@@ -303,5 +313,5 @@ def of(
             1 if among is None else int(among),
         )
     if kind == "mirror":
-        return Mirror(dict(knobs), fields)
+        return Mirror(dict(knobs), fields, bid=bid)
     raise ValueError(f"unknown opponent kind {kind!r}: one of {KINDS[:3]}")

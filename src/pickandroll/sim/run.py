@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 
 from . import adp, audit, policy, shapes, world
+from . import bid_policy as bp
 from . import counts as ct
 from . import league as lg
 from . import opponents as op
@@ -100,6 +101,9 @@ class Arm:
     #: The forecaster the arm's seat believes by (#172, PR D1): a label the run's world holds,
     #: None for the run's own. A run sets it; a spec file does not name it.
     forecaster: str | None = None
+    #: The arm's bid policy (PR F2, ``bid_policy.of`` its spec's ``bid`` block); None when the
+    #: spec names none, and the seat bids by the live rule itself.
+    bid: bp.BidPolicy | None = None
 
     def seat(self) -> op.Seat:
         return op.Seat(
@@ -110,6 +114,7 @@ class Arm:
             self.with_plan,
             self.fields,
             self.forecaster,
+            bid=self.bid,
         )
 
 
@@ -124,6 +129,7 @@ SPEC_KEYS = (
     "with_plan",
     "execute_plan",
     *policy.FIELDS,
+    "bid",
     "fit_sha",
 )
 
@@ -131,10 +137,11 @@ SPEC_KEYS = (
 def arm_of(spec: Mapping[str, Any]) -> Arm:
     """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
     four fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
-    ``surrogate_days``; ``policy.fields_of``); a key the simulator does not read
+    ``surrogate_days``; ``policy.fields_of``) and its ``bid`` block (PR F2,
+    ``bid_policy.of``); a key the simulator does not read
     (:data:`SPEC_KEYS`, and ``opponents.SPEC_KEYS`` under ``opponents``), a knob missing,
-    unknown or out of the engine's bounds, a field out of its own or a tier unknown is refused
-    by name."""
+    unknown or out of the engine's bounds, a field out of its own, a ``bid`` key unknown or out
+    of its own or a tier unknown is refused by name."""
     unknown = [k for k in spec if k not in SPEC_KEYS]
     if unknown:
         raise ValueError(
@@ -158,6 +165,7 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
         bool(spec.get("with_plan", True)),
         bool(spec.get("execute_plan", False)),
         policy.fields_of(spec),
+        bid=bp.of(spec["bid"]) if "bid" in spec else None,
     )
 
 
@@ -175,7 +183,9 @@ def same_seat(
     play, as in a comparison, so a mirror reads), each such name with why it is not read and what
     would make it read: the two are then the same seat, and a run of them a no-op by
     construction. None when they differ in anything else, in a name one of them reads in some
-    shape, or in nothing at all (the same arm twice, a check that the difference is zero)."""
+    shape, or in nothing at all (the same arm twice, a check that the difference is zero). The
+    arms' ``bid`` blocks (PR F2) are one more such name, compared as the policy in force (an arm
+    that names none holds the default member) and read as ``policy.bid_reads`` says."""
 
     def identity(arm: Arm) -> tuple[Any, ...]:
         return (
@@ -192,7 +202,8 @@ def same_seat(
     names = [k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]] + [
         f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)
     ]
-    if not names:
+    bids = (a.bid or bp.DEFAULT) != (b.bid or bp.DEFAULT)
+    if not names and not bids:
         return None
     out = []
     for name in names:
@@ -211,6 +222,15 @@ def same_seat(
             + (f", and {also}" if also else "")
             + (f"; {only}" if only else "")
         )
+    if bids:
+        rows = [
+            policy.bid_reads(arm, shape, rivals and mirrored(arm))
+            for arm in (a, b)
+            for shape in shapes
+        ]
+        if policy.READ in rows:
+            return None
+        out.append(f"bid ({rows[0]}; read by {policy.BID_WHEN_READ})")
     return out
 
 
@@ -856,7 +876,7 @@ def _metrics(summary: Mapping[str, Any] | None) -> dict[str, float | None]:
 
 
 def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
-    other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields)
+    other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields, arm.bid)
     return {t: other for t in setup.teams if t != me}
 
 
