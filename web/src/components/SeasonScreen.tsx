@@ -24,6 +24,8 @@ import {
 } from "../api";
 import {
   addsNote,
+  LIFT_TITLE,
+  liftText,
   ageLabel,
   availabilityLabel,
   claimLine,
@@ -62,6 +64,8 @@ import {
   keepPhrase,
   keepRuleNote,
   keptPlayers,
+  pickMoveText,
+  pickSkipText,
   keptWhy,
   MOVE_HORIZON,
   NO_FILTER,
@@ -1029,6 +1033,7 @@ function Moves({
           {cap(r)}.
         </p>
       ))}
+      <PicksBlock m={m} s={s} name={name} />
       {(["three", "week"] as const).map((h) => (
         <Recommended key={h} h={h} m={m} s={s} name={name} onPick={onPick} />
       ))}
@@ -1051,6 +1056,57 @@ function Moves({
         {searchPoolText(m.search)} Each move&apos;s prices are re-solves: the set without its add, and the set keeping its drop.
       </p>
     </>
+  );
+}
+
+/** The user's picks in force here (#434): those the solve made, each "your pick", with what it
+ * adds on each horizon and its rest of the season; those it could not make, with why. The sets
+ * below are solved on the roster with the picks made. */
+function PicksBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer }) {
+  const picks = m.picks;
+  if (!picks) return null;
+  return (
+    <div className="block">
+      <span className="k" title="the players you named on the Queue screen: made before the search, which fills the adds left around them">
+        Your picks
+      </span>
+      {picks.moves.length > 0 && (
+        <table className="season-table">
+          <thead>
+            <tr>
+              <th>Move</th>
+              <th className="num" title={`what the pick adds over ${horizonName(m, "week")}`}>
+                {GAIN_SHORT.week}
+              </th>
+              <th className="num" title={`what the pick adds over ${horizonName(m, "three")}`}>
+                {GAIN_SHORT.three}
+              </th>
+              <th className="num" title={rosHeadTitle(s.scoring)}>
+                ROS
+              </th>
+              <th title="the day the player plays from: a waiver claim's clear date">From</th>
+            </tr>
+          </thead>
+          <tbody>
+            {picks.moves.map((x) => (
+              <tr key={x.add}>
+                <td>{pickMoveText(x, name)}</td>
+                <td className="num">{moveGain(x.marginal.week, m.measure)}</td>
+                <td className="num">{moveGain(x.marginal.three, m.measure)}</td>
+                <td className={`num ${rosTone(x.ros, s.scoring)}`}>{rosLabel(x.ros, s.scoring)}</td>
+                <td>{dayLabel(x.from)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {picks.skipped.map((x) => (
+        <p key={x.player} className="muted small">
+          {pickSkipText(x, name)}.
+        </p>
+      ))}
+      <p className="dim small">Neither the season guard nor the floor holds a pick back; the keep rule still protects its drop. The sets below are solved with the picks made.</p>
+    </div>
   );
 }
 
@@ -1131,6 +1187,12 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
               <tr key={x.add} className="pick" onClick={() => onPick(x)}>
                 <td className="strong">
                   {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
+                  {x.lift && (
+                    <span className="muted small" title={LIFT_TITLE}>
+                      {" "}
+                      {liftText(x.lift)}
+                    </span>
+                  )}
                 </td>
                 <BasisCell x={x} name={name} />
                 <td className="dim">{dayLabel(x.from)}</td>

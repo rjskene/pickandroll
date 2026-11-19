@@ -13,6 +13,7 @@ import pytest
 from pickandroll.api import season_moves as sm
 from pickandroll.api import season_strategy as ss
 from pickandroll.season import moves as mv
+from pickandroll.season import pool as sp
 
 from .test_moves import WEEKS, build, player, rates, schedule
 from .test_season_guard import blocking_league, built_of, resting_league
@@ -61,7 +62,7 @@ def test_the_pool_is_the_best_by_single_move_then_the_adds_the_guard_admits():
     def allowed(moves):
         return all(not (m.add <= 30 and m.drop == 100) for m in moves)
 
-    pool, guarded = sm.pool_for(swaps, allowed)
+    pool, guarded = sp.pool_for(swaps, allowed, sm.POOL, sm.GUARD_POOL, sm.MIN_GAIN)
     # Today's 30 first, in their order; then the ten below them the guard admits.
     assert pool.players == tuple(range(1, 41))
     assert (pool.size, pool.admitted) == (30, 10)
@@ -76,17 +77,40 @@ def test_the_pool_is_the_best_by_single_move_then_the_adds_the_guard_admits():
 
 def test_without_a_guard_the_pool_is_todays_thirty_exactly():
     swaps = _swaps({c: [(100, 1.0 - 0.01 * c)] for c in range(1, 41)})
-    pool, guarded = sm.pool_for(swaps, None)
-    assert pool.players == tuple(sm.ranked_of(swaps)[: sm.POOL]) == tuple(range(1, 31))
+    pool, guarded = sp.pool_for(swaps, None, sm.POOL, sm.GUARD_POOL, sm.MIN_GAIN)
+    assert pool.players == tuple(sp.ranked_of(swaps, sm.MIN_GAIN)[: sm.POOL]) == tuple(range(1, 31))
     assert (pool.size, pool.admitted, guarded) == (30, 0, [])
 
 
 def test_the_guards_list_never_repeats_an_add_already_in_the_pool():
     swaps = _swaps({c: [(100, 1.0 - 0.01 * c)] for c in range(1, 41)})
-    pool, guarded = sm.pool_for(swaps, lambda moves: True)
+    pool, guarded = sp.pool_for(swaps, lambda moves: True, sm.POOL, sm.GUARD_POOL, sm.MIN_GAIN)
     # The guard admits every move: its list is the pool's own top 30, and nothing is added.
     assert [c for c, _ in guarded] == list(range(1, 31))
     assert (pool.players, pool.admitted) == (tuple(range(1, 31)), 0)
+
+
+def test_the_pure_module_takes_its_sizes_and_floor_as_arguments():
+    """#430: ``season.pool`` reads nothing from the API; the sizes and the gain floor are its
+    arguments."""
+    swaps = _swaps({c: [(100, 1.0 - 0.1 * c), (101, 0.6 - 0.1 * c)] for c in range(1, 7)})
+
+    def allowed(moves):
+        return all(m.drop == 101 or m.add >= 5 for m in moves)
+
+    pool, guarded = sp.pool_for(swaps, allowed, 2, 3, 0.25)
+    # Above the floor of 0.25: 1-6 on drop 100 (0.9 down to 0.4); 1-3 on drop 101 (0.5-0.3).
+    assert sp.ranked_of(swaps, 0.25) == [1, 2, 3, 4, 5, 6]
+    # The guard admits drop 101 and adds 5 and 6. Its list, best first and ties by id, three in
+    # all: 1 on 101 and 5 on 100 (0.5 each), then 2 on 101 ahead of 6 on 100 (0.4 each).
+    assert [(c, g.drop) for c, g in guarded] == [(1, 101), (5, 100), (2, 101)]
+    # The first two by single move, then the one the list adds that is not already in.
+    assert pool == sp.Pool((1, 2, 5), 2, 1)
+    # A guard list of none adds nothing; a higher floor shortens both lists.
+    assert sp.pool_for(swaps, allowed, 2, 0, 0.25)[0] == sp.Pool((1, 2), 2, 0)
+    above = sp.admitted_swaps(swaps, allowed, 3, 0.45)
+    assert [(c, g.drop) for c, g in above] == [(1, 101), (5, 100)]
+    assert sp.pool_for(swaps, None, 4, 3, 0.65) == (sp.Pool((1, 2, 3), 3, 0), [])
 
 
 # --------------------------------------------------------------------------- the payload
@@ -95,7 +119,7 @@ def test_an_add_below_the_pool_the_guard_admits_is_recommended_when_it_refuses_t
     built = built_of(p)
     ev = mv.Evaluator(p)
     swaps = mv.single_swaps(ev, "week")
-    ranked = sm.ranked_of(swaps)
+    ranked = sp.ranked_of(swaps, sm.MIN_GAIN)
     # The holder ranks below the pool, and the guard refuses every move of the 30 above him.
     assert ranked.index(11) >= sm.POOL and set(ranked[: sm.POOL]) == set(STREAMERS)
     allowed = mv.season_guard(sm.guard_ros(built))
@@ -144,8 +168,8 @@ def test_the_union_is_never_worse_than_todays_pool_under_the_guard(monkeypatch, 
     allowed = mv.season_guard(sm.guard_ros(built))
     for key in sm.HORIZONS:
         swaps = mv.single_swaps(ev, key)
-        today = sm.ranked_of(swaps)[:size]
-        pool, _ = sm.pool_for(swaps, allowed)
+        today = sp.ranked_of(swaps, sm.MIN_GAIN)[:size]
+        pool, _ = sp.pool_for(swaps, allowed, size, sm.GUARD_POOL, sm.MIN_GAIN)
         assert pool.players[: pool.size] == tuple(today)
         old = mv.recommend(ev, key, today, min_gain=sm.MIN_GAIN, allowed=allowed)
         new = mv.recommend(ev, key, list(pool.players), min_gain=sm.MIN_GAIN, allowed=allowed)
