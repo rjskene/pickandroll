@@ -232,19 +232,23 @@ def bid_of(
     flag: str | None,
     sizing: float | None,
     availability: str | None,
+    *,
+    lifted: bool = False,
 ) -> Bid:
     """A claim's bid (section 5, the ruling's point 3): ``round(gain / typical)`` typicals (the
     base), doubled for a breakout flag and tripled for a strong one, times the FAAB sizing knob
     (1.0 while unhooked), clamped to the budget left and nothing else. A routine stream, a base of
     1 or less with no breakout flag, bids $0 (user, 2026-11-15, #391); a flagged claim's base is
-    at least 1, as before. A free agent is added for $0."""
+    at least 1, as before. A free agent is added for $0. A ``lifted`` move (#435: its gain was
+    valued on the add's line lifted by the flag) bids as a flagged claim, its base at least 1,
+    with no flag factor: the flag counts once, in the gain (the master's ruling, 2026-11-19)."""
     size = 1.0 if sizing is None else float(sizing)
     if availability == FREE_AGENT:
         return Bid(0, "$0: a free agent is added at once", 0, 1, size)
     value, source = typical
     base = _half_up(gain / value) if value > 0 else 1
-    factor = FLAG_FACTOR.get(flag or "", 1)
-    if base <= 1 and factor == 1:
+    factor = 1 if lifted else FLAG_FACTOR.get(flag or "", 1)
+    if base <= 1 and factor == 1 and not lifted:
         return Bid(0, f"$0: {ROUTINE}", base, factor, size)
     # A flagged claim bids as before the ruling: at least one typical, so never below its factor.
     base = max(1, base)
@@ -254,6 +258,8 @@ def bid_of(
     if left is not None:
         amount = min(amount, left)
     why = f"gain {base}x the typical ({source})"
+    if lifted:
+        why += ", on a line lifted by a breakout flag"
     if factor > 1:
         why += f", x{factor} for a {'strong ' if factor == 3 else ''}breakout flag"
     if size != 1.0:
@@ -402,7 +408,15 @@ def queue_of(
             bid = user_bid(int(m["bid"]), lg.budget, kind)
         else:
             worth = score if score is not None else gain
-            bid = bid_of(worth or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
+            bid = bid_of(
+                worth or 0.0,
+                typical,
+                lg.budget,
+                lg.flags.get(add),
+                sizing,
+                kind,
+                lifted=m.get("lift") is not None,
+            )
         out.append(
             {
                 "id": pid,
@@ -500,10 +514,19 @@ def queue_of(
         standard = lg.uses_faab is False
         # A step's bid scales on its score (the ruling): its week gain alone when none was logged.
         worth = m.get("score") if plan is not None and m.get("score") is not None else gain
+        # A lifted move (#435) bids with no flag factor: its gain already took the flag.
         bid = (
             None
             if standard
-            else bid_of(worth or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
+            else bid_of(
+                worth or 0.0,
+                typical,
+                lg.budget,
+                lg.flags.get(add),
+                sizing,
+                kind,
+                lifted=m.get("lift") is not None,
+            )
         )
         out.append(
             {
@@ -536,6 +559,8 @@ def queue_of(
                 "plan": m.get("plan"),
                 "after": [ids[j] for j in after if j not in placed],
                 "flag": lg.flags.get(add),
+                # A lifted move's lift (#435): only on one.
+                **({"lift": m["lift"]} if m.get("lift") is not None else {}),
                 "floor": {**floor.to_dict(), "below": below},
                 "bid": None
                 if bid is None

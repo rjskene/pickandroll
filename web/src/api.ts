@@ -1746,6 +1746,24 @@ export interface CandidateGain {
   next_price: number | null;
   /** This move to the season's end (#151). */
   ros?: MoveRos | null;
+  /** A lifted move (#435): the factor its add's line was valued on. */
+  lift?: MoveLift;
+}
+
+/** A flagged add's lift (#435): the factor on the player's line, the flag's level and its signals'
+ * scores. On a move that drops a marginal player or nobody. */
+export interface MoveLift {
+  factor: number;
+  level: string;
+  signals: Record<string, number>;
+}
+
+/** The breakout lift in force in a league (#435): its knobs, my marginal players and each lifted
+ * candidate's lift. Absent with no lifted candidate. */
+export interface MovesLift {
+  knobs: Record<string, number>;
+  marginal: number[];
+  lifted: Record<string, MoveLift>;
 }
 
 export interface MoveCandidate {
@@ -1773,6 +1791,8 @@ export interface RecommendedMove extends MoveRef {
   price_keep: number | null;
   instead_without: HeldRef[];
   instead_keep: HeldRef[] | null;
+  /** A lifted move (#435). */
+  lift?: MoveLift;
 }
 
 /** A move of a re-solve's set, naming the held-slot move an add without a drop needs (#124). */
@@ -2079,6 +2099,8 @@ export interface MovesPayload {
   unprojected: number;
   /** The user's picks in force in the league (#434); absent without one. */
   picks?: MovesPicks;
+  /** The breakout lift in force (#435); absent with no lifted candidate. */
+  lift?: MovesLift;
   /** ``seconds``: the whole solve's (#221 part 2), absent before. The budget (#306): its
    * seconds, whether it ran out (``cut``), the searches finished of those begun, and ``note``
    * when it ran out; absent before. */

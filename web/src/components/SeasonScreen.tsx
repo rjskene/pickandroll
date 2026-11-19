@@ -24,6 +24,8 @@ import {
 } from "../api";
 import {
   addsNote,
+  LIFT_TITLE,
+  liftText,
   ageLabel,
   availabilityLabel,
   claimLine,
@@ -1185,6 +1187,12 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
               <tr key={x.add} className="pick" onClick={() => onPick(x)}>
                 <td className="strong">
                   {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
+                  {x.lift && (
+                    <span className="muted small" title={LIFT_TITLE}>
+                      {" "}
+                      {liftText(x.lift)}
+                    </span>
+                  )}
                 </td>
                 <BasisCell x={x} name={name} />
                 <td className="dim">{dayLabel(x.from)}</td>

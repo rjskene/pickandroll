@@ -16,6 +16,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
+from . import lift
 from .moves import PROTECTION_FLOOR
 from .plans import THREE_WEIGHT
 from .stream import DAILY_CAP, PLAN_FLOOR_CATS, PLAN_FLOOR_POINTS
@@ -37,6 +38,11 @@ KNOBS = (
 #: simulator is on hold (the user, 2026-11-05), so a knob it does not know stays out of that list:
 #: ``three_weight`` (#332) weighs the three weeks in a week plan's score.
 LIVE_KNOBS = (*KNOBS, "three_weight")
+#: Every name the knob file takes per league or in force: the live knobs, then the breakout lift's
+#: (#435, ``season.lift.KNOBS``). The lift's stay out of :data:`LIVE_KNOBS` and :data:`DEFAULTS`
+#: (the simulator's arms name every live knob; the lift's are tuned there later, #172): the solve
+#: reads each from the file or else ``season.lift.DEFAULTS``, and the Monday step never steps them.
+FILE_KNOBS = (*LIVE_KNOBS, *lift.KNOBS)
 #: The lowest value a knob may take, from section 6's table (#150): the protection floor never
 #: below its default, so no setting lets the engine drop a player worth more than the best add
 #: over the rest of the season; the blend weight and the daily move cap at their bounds' low end.
@@ -160,6 +166,8 @@ def refused(knob: str, value: Any) -> str | None:
     None when it may, an unset value among them."""
     if value is None:
         return None
+    if knob in lift.KNOBS:
+        return lift.refused(knob, value)
     if knob in CHOICES and value not in CHOICES[knob]:
         return f"{knob} {value!r} is not one of {', '.join(CHOICES[knob])}"
     if knob in NUMBERS and (isinstance(value, bool) or not isinstance(value, int | float)):
@@ -194,7 +202,7 @@ def _known(where: str, raw: Any, problems: list[str]) -> dict[str, Any]:
         return {}
     out = {}
     for k, v in raw.items():
-        if k not in LIVE_KNOBS:
+        if k not in FILE_KNOBS:
             problems.append(f"{where}: {k} is not a knob")
         elif why := refused(k, v):
             # Left out, so the default (or the value before it) stays in force.
