@@ -1,7 +1,8 @@
 """The tune's rules (#172, PR H2, ``sim/tune.py``): the order from a screen's record, a lever's
 values and each nudge again, what a played value says over the run's cells, the step's choice, the
-confirmation's finish, the verdict and its words, and the ledger's count. No season is played
-here: the command is ``test_sim_tune_run.py``'s."""
+confirmation's finish, the verdict and its words, and the ledger's count; and the tune's folder
+and the ledger's reader (``sim/readers.py``). No season is played here: the command is
+``test_sim_tune_run.py``'s."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 
 from pickandroll.sim import policy
+from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim import tune as tn
@@ -596,3 +598,56 @@ def test_a_look_is_counted_by_league_kind_and_a_tune_s_own_line_is_found_again()
     # Another spec under the same name, or the same spec under another, is another tune.
     assert tn.own_look(lines, "t1", "s2") is None and tn.own_look(lines, "t3", "s1") is None
     assert tn.own_look(lines, "a-replay", "s1") is None
+
+
+# --------------------------------------------------------------------------- the folder, the ledger
+def test_a_tune_s_folder_keeps_its_record_and_a_file_a_pair(tmp_path):
+    assert reader.read_tune(tmp_path, "t") is None
+    assert reader.read_tune_pair(tmp_path, "t", "p1-pool-45") is None
+    rec = {"fit_sha": "f", "hold_out": 2025, "name": "t"}
+    path = reader.write_tune(tmp_path, "t", rec)
+    assert (
+        path
+        == tmp_path / reader.TUNES_DIR / "t" / reader.TUNE_FILE
+        == tmp_path / "sim/tunes/t/tune.json"
+    )
+    assert reader.read_tune(tmp_path, "t") == rec
+    pair = reader.write_tune_pair(tmp_path, "t", "p1-pool-45", {**rec, "name": "t-p1-pool-45"})
+    assert (
+        pair
+        == reader.tune_pair_path(tmp_path, "t", "p1-pool-45")
+        == path.parent / "p1-pool-45.json"
+    )
+    assert reader.read_tune_pair(tmp_path, "t", "p1-pool-45")["name"] == "t-p1-pool-45"
+    # As every run's: the fit's hash and the hold-out are in what is written.
+    with pytest.raises(ValueError, match="a tune's record names fit_sha"):
+        reader.write_tune(tmp_path, "t", {"hold_out": 2025})
+    with pytest.raises(ValueError, match="a run payload names hold_out"):
+        reader.write_tune_pair(tmp_path, "t", "p1-pool-45", {"fit_sha": "f"})
+    with pytest.raises(ValueError, match="a pair named 'tune' would be the tune's own record"):
+        reader.tune_pair_path(tmp_path, "t", "tune")
+    # A name is made safe as a run's is, and a tune's folder is not a screen's.
+    assert reader.tune_dir(tmp_path, "a/b c").name == "a-b-c"
+    assert reader.tune_dir(tmp_path, "t") != reader.screen_dir(tmp_path, "t")
+    path.write_text("{")
+    with pytest.raises(reader.SimReadError, match="is not JSON"):
+        reader.read_tune(tmp_path, "t")
+
+
+def test_the_ledger_is_read_line_by_line_and_a_broken_line_is_refused(tmp_path):
+    assert reader.read_looks(tmp_path) == []
+    reader.append_look(tmp_path, {"name": "a-replay", "design": "paired"})
+    reader.append_look(tmp_path, {"name": "t", "design": "tune", "league_kind_sha": "k"})
+    lines = reader.read_looks(tmp_path)
+    assert lines == [
+        {"look": 1, "name": "a-replay", "design": "paired"},
+        {"look": 2, "name": "t", "design": "tune", "league_kind_sha": "k"},
+    ]
+    assert tn.look_of_kind(lines, "k") == 2
+    path = tmp_path / reader.LEDGER
+    path.write_text(path.read_text() + "\n[1]\n")
+    with pytest.raises(reader.SimReadError, match="line 4, is not a record"):
+        reader.read_looks(tmp_path)
+    path.write_text("not json\n")
+    with pytest.raises(reader.SimReadError, match="line 1, is not JSON"):
+        reader.read_looks(tmp_path)
