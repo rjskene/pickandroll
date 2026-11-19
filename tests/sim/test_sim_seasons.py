@@ -100,7 +100,7 @@ def test_one_season_gives_what_the_commit_before_gave(data: Path):
     code, out = replay(data, "--seasons", "2024", "--forecasters", "prior", "--paths", "2")
     assert code == 0, out
     p = written(out)
-    assert p["seasons"] == [2024] and p["name"] == "replay-2024" and p["replay_version"] == 13
+    assert p["seasons"] == [2024] and p["name"] == "replay-2024" and p["replay_version"] == 14
     b = season_block(p, "2024")
     assert figures_digest(b["results"]["prior"], b["counts"]["prior"], b["scale"]) == BEFORE
 

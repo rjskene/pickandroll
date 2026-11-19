@@ -1353,7 +1353,9 @@ export type QueueReason =
   | "a later step of the week plan: queued at its day's build"
   | "an earlier step of the week plan is not queued"
   | "its drop is on a claim already placed"
-  | "a claim on the add is already placed";
+  | "a claim on the add is already placed"
+  | "held for the week's reserve"
+  | "added within the re-cut days";
 
 /** An execute pass's outcome for one entry: ``gone`` when another team had the add first. */
 export type MoveOutcome = "would_claim" | "claimed" | "added" | "skipped" | "failed" | "gone";
@@ -1374,8 +1376,11 @@ export interface QueueEntry {
   date: string;
   league: string;
   scoring: "categories" | "points";
-  /** The three weeks' set, or the day's week plan in its place (#221 part 2). */
-  set: "three" | "week_plan";
+  /** The three weeks' set, or the day's week plan in its place (#221 part 2), or the user's pick
+   * (#434), queued first. */
+  set: "three" | "week_plan" | "pick";
+  /** "pick" on the user's pick (#434); absent on any other entry. */
+  decided_by?: "pick";
   decision: string | null;
   add: number;
   drop: number | null;
@@ -1407,6 +1412,9 @@ export interface QueueEntry {
   waits?: QueueWait | null;
   flag: FlagLevel | null;
   floor: QueueFloor & { below: "plan" | "scored" | null };
+  /** What the add reserve or the re-cut rule held back (#436): what the move's bid scales by,
+   * the price it did not clear and the re-cut days; only on such a move. */
+  reserve?: { worth: number | null; price: number; days: number | null };
   /** Null in a standard-waivers league (#261): a claim goes by waiver priority, no bid. */
   bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string } | null;
   /** "priority" for a standard league's waiver claim; absent from a server before #261. */
@@ -1743,6 +1751,37 @@ export interface CandidateGain {
   next_price: number | null;
   /** This move to the season's end (#151). */
   ros?: MoveRos | null;
+  /** A lifted move (#435): the factor its add's line was valued on. */
+  lift?: MoveLift;
+}
+
+/** A flagged add's lift (#435): the factor on the player's line, the flag's level and its signals'
+ * scores. On a move that drops a marginal player or nobody. */
+export interface MoveLift {
+  factor: number;
+  level: string;
+  signals: Record<string, number>;
+}
+
+/** The breakout lift in force in a league (#435): its knobs, my marginal players and each lifted
+ * candidate's lift. Absent with no lifted candidate. */
+export interface MovesLift {
+  knobs: Record<string, number>;
+  marginal: number[];
+  lifted: Record<string, MoveLift>;
+}
+
+/** The add reserve and the re-cut rule in force (#436): the week whose last adds are held and
+ * how many, the price, the adds that may use them whatever they gain, my players added within
+ * the re-cut days (by player, the day added) and those of them out. Absent when neither applies. */
+export interface MovesReserve {
+  knobs: { reserve_adds: number; reserve_release: string; reserve_price: number | null; recut_days: number };
+  week: { start: string; end: string; adds: number | null } | null;
+  reserved: number;
+  price: number;
+  exempt: number[];
+  recent: Record<string, string>;
+  out: number[];
 }
 
 export interface MoveCandidate {
@@ -1770,6 +1809,8 @@ export interface RecommendedMove extends MoveRef {
   price_keep: number | null;
   instead_without: HeldRef[];
   instead_keep: HeldRef[] | null;
+  /** A lifted move (#435). */
+  lift?: MoveLift;
 }
 
 /** A move of a re-solve's set, naming the held-slot move an add without a drop needs (#124). */
@@ -1814,6 +1855,20 @@ export interface RecommendedSet {
   ros?: RosTotal | null;
   /** The season guard on the set (#164); null where none ran (no scorer or season end). */
   season_guard?: SeasonGuard | null;
+  /** The add reserve and the re-cut rule on the set (#436); absent where neither applies. */
+  reserve?: ReserveHeld;
+}
+
+/** What the add reserve or the re-cut rule held back from a set (#436): the set without them,
+ * what it gains and what this one forgoes, the rule and the move that refused it, the price. */
+export interface ReserveHeld {
+  held_back: boolean;
+  moves?: RecommendedMove[];
+  gain?: Record<MoveHorizon, number>;
+  forgone?: Record<MoveHorizon, number>;
+  rule?: "reserve" | "recut" | null;
+  refused?: { add: number; drop: number | null; adds: number } | null;
+  price?: number;
 }
 
 /** A streamer valued to the season's end as kept there: the later step that drops him (#151). */
@@ -1859,8 +1914,9 @@ export interface StreamPlan {
   floor: number;
   /** Why it is not recommended: under the floor, or the plan with the best week would clear it
    * but costs the three weeks after, which the planner never trades (``guard``), or the season
-   * (``season``, the season guard, #164). */
-  reason: "short" | "guard" | "season" | null;
+   * (``season``, the season guard, #164), or the add reserve or the re-cut rule (``reserve``,
+   * #436). */
+  reason: "short" | "guard" | "season" | "reserve" | null;
   guard: PlanGuard | null;
 }
 
@@ -1991,6 +2047,66 @@ export interface PriorityClaim {
   after: number;
 }
 
+/** A pick the solve made (#434): its move, what it adds to the picks on each horizon and to the
+ * queue's score, whether its drop is the one the user named, the user's bid and its expiry. */
+export interface PickMove extends MoveRef {
+  held?: HeldMove | null;
+  held_drop?: HeldMove | null;
+  decided_by: "pick";
+  named_drop: boolean;
+  marginal: Record<MoveHorizon, number>;
+  score: number;
+  ros?: MoveRos | null;
+  bid: number | null;
+  expires: string;
+  by: string;
+}
+
+/** A pick in force that the solve could not make, with why. */
+export interface PickSkipped {
+  player: number;
+  name: string | null;
+  reason: string;
+  expires: string;
+  by: string;
+}
+
+export interface MovesPicks {
+  moves: PickMove[];
+  skipped: PickSkipped[];
+}
+
+/** One of the user's picks (#434): its player, leagues (null: all), the drop to make where that
+ * player is mine (null: the cheapest), the bid (null: the bid policy's), its last day, who set it and when,
+ * and the leagues it has left (its player on a team there). */
+export interface PlayerPick {
+  player: number;
+  name: string | null;
+  leagues: string[] | null;
+  drop: number | null;
+  bid: number | null;
+  expires: string;
+  by: string;
+  at: string;
+  left: Record<string, string>;
+  active: boolean;
+}
+
+export interface PicksPayload {
+  picks: PlayerPick[];
+  /** A pick's days when none are sent. */
+  days: number;
+}
+
+export interface PickBody {
+  player?: number;
+  name?: string;
+  leagues?: string[] | null;
+  drop?: number | null;
+  bid?: number | null;
+  days?: number;
+}
+
 export interface MovesPayload {
   system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
   /** What the values and gains are in (#397): a one-win league's matchup win odds, "points" or
@@ -2014,6 +2130,12 @@ export interface MovesPayload {
   week_plans?: WeekPlans | null;
   /** Available players without a line in the system (no move valued). */
   unprojected: number;
+  /** The user's picks in force in the league (#434); absent without one. */
+  picks?: MovesPicks;
+  /** The breakout lift in force (#435); absent with no lifted candidate. */
+  lift?: MovesLift;
+  /** The add reserve and the re-cut rule in force (#436); absent when neither applies. */
+  reserve?: MovesReserve;
   /** ``seconds``: the whole solve's (#221 part 2), absent before. The budget (#306): its
    * seconds, whether it ran out (``cut``), the searches finished of those begun, and ``note``
    * when it ran out; absent before. */
@@ -2963,6 +3085,12 @@ export const api = {
   /** The user's own click: the lineup executor's mode; live is refused until the dry run passes. */
   setLineupMode: (league: string, mode: LineupMode) =>
     request<AutopilotView>(`/leagues/${encodeURIComponent(league)}/lineups`, { method: "PUT", body: JSON.stringify({ mode }) }),
+  /** The user's picks (#434); reads only. */
+  playerPicks: () => request<PicksPayload>("/autopilot/picks"),
+  /** The user's own click: set one pick (#434), by Yahoo player id or by name. */
+  setPlayerPick: (body: PickBody) => request<PicksPayload>("/autopilot/picks", { method: "PUT", body: JSON.stringify(body) }),
+  /** The user's own click: remove a pick (#434). */
+  removePlayerPick: (player: number) => request<PicksPayload>(`/autopilot/picks/${player}`, { method: "DELETE" }),
   /** A day's queue of the moves executor (#171), today's by default; reads only. */
   queue: (date?: string) => request<QueuePayload>(`/autopilot/queue${date ? `?date=${date}` : ""}`),
   history: () => request<HistoryPayload>("/history"),
