@@ -853,7 +853,8 @@ the snake, the best player left on its own board:
 - **Who can be drafted:** every member with a game in the season's first seven days who is
   projected by the run's forecaster or listed by the table. So a rival may draft a player the
   run's forecaster does not project (a rookie under `prior`), who is then valued at zero by the
-  seats on that forecaster until he plays. An arm's seat never does, under either rule.
+  seats on that forecaster until he plays. An arm's seat never drafts a player its own
+  forecaster does not project, under either rule.
 - **The spread is given, not fitted here.** `--adp espn` without `--adp-spread` is refused, and
   both figures are at least zero. No default sits in the code. No fitted spread is on the box:
   the only fits made so far were made elsewhere, on one private league's own drafts, and nothing
@@ -893,9 +894,10 @@ words (the seat's and the pair's by the rule in force), the limit of that rule i
 "Its limits" below), and per season the table in counts (the players the
 log lists, those listed, those at the ceiling, those with no figure), the log's hash, and the
 drafted players the run's forecaster does not project over the drafts of the paths that stand.
-A pair also says whether its two arms shared one draft or each drafted apart (under `market`,
-on which share of the paths: `drafts_per_path`). The figures stay in the log. A dry run prints
-each season's table in counts, the seat's rule and the first task's drafts.
+A pair also says whether its two arms shared one draft or each drafted apart, and
+`drafts_per_path` lists the counts its paths met: one, two, or under `market` both, when some
+paths shared a league and some did not. The figures stay in the log. A dry run prints each
+season's table in counts, the seat's rule and the first task's drafts.
 
 **The two rules.**
 
