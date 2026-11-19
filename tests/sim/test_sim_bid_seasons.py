@@ -35,8 +35,10 @@ FORMATS = (ONE_WIN, EACH_CATEGORY)
 SEED = 7
 #: PR Fd's rivals at a high rate: they follow the season and pick among their best three.
 RIVALS = op.Market(0.6, op.SEASON, 3)
-#: The world's seed and path every season here is played on: the first tried, and the only one
-#: (``~/sim-notes/vm/scratch/f2/explore/``; the handoff says what was tried for each test).
+#: The world's seed and path the seasons here are played on: the first tried
+#: (``~/sim-notes/vm/scratch/f2/explore/``; the handoff says what was tried for each test). Two
+#: tests also play a found world of their own and say so: the points league's season (a lost
+#: claim) and the one-win case of the screen's two weights (a dollar that parts).
 PATH = (1, 0)
 #: A block naming every key.
 EVERY_KEY = {
@@ -63,10 +65,17 @@ def seat(block=None, **knobs) -> rn.Arm:
 
 
 def seasons(setup, arms, rivals=RIVALS, world=None):
-    """One world, one season an arm in seat 1 among ``rivals``: each arm's result and its days."""
+    """One world, one season an arm in seat 1 among ``rivals`` (None: each arm's own, as its
+    ``opponents`` says, so a mirror takes its arm's settings): each arm's result and its days."""
     w = world or rn.replay_world(setup, recorded_lines(setup, 11), 1, *PATH)
     days: list[list[rn.DayRecord]] = [[] for _ in arms]
-    variants = [{**{t: rivals for t in setup.teams}, 1: a.seat()} for a in arms]
+
+    def others(a: rn.Arm):
+        return (
+            rn.opponents_of(setup, a, 1) if rivals is None else dict.fromkeys(setup.teams, rivals)
+        )
+
+    variants = [{**others(a), 1: a.seat()} for a in arms]
     results = rn.simulate(setup, w, variants, on_day=lambda r: days[r.variant].append(r))
     for result in results:
         assert result.breaches == ()
@@ -83,17 +92,18 @@ def dollars(days, team: int = 1):
     return [(day, player, bid) for day, player, bid, _ in placed(days, team)]
 
 
-def in_force(named, plain) -> bool:
-    """Whether a block is in force in a season: its seat's bids in dollars part from the same
-    seat's that names no ``bid``, on the same world (``named`` and ``plain`` the two seasons'
-    days). A block changes what a claim bids and nothing else, so until a claim is decided
-    apart the two seasons are one: the two seats place their first claims on one day, on the
-    same players. A season in which the block was dropped would be the no-bid arm's, bid for
-    bid."""
-    first = min(day for day, _, _ in (*dollars(named), *dollars(plain)))
-    one, two = ([player for day, player, _ in dollars(d) if day == first] for d in (named, plain))
+def in_force(named, plain, team: int = 1) -> bool:
+    """Whether a block is in force in a season: the bids in dollars of the seat that reads it
+    (``team``) part from the same seat's that names no ``bid``, on the same world (``named``
+    and ``plain`` the two seasons' days). A block changes what a claim bids and nothing else,
+    so until a claim is decided apart the two seasons are one: the two seats place their first
+    claims on one day, on the same players. A season in which the block was dropped would be
+    the no-bid arm's, bid for bid."""
+    a, b = dollars(named, team), dollars(plain, team)
+    first = min(day for day, _, _ in (*a, *b))
+    one, two = ([player for day, player, _ in x if day == first] for x in (a, b))
     assert one and one == two
-    return dollars(named) != dollars(plain)
+    return a != b
 
 
 def decided(days, outcome: str, team: int = 1):
@@ -535,6 +545,32 @@ def test_a_split_seat_bids_on_its_own_beliefs_and_plays_clean():
         assert result.counts[1]["dollars_spent"] == sum(b for _, _, b in decided(days, WON))
     assert in_force(ds, db)
     assert placed(ds) != placed(dr) and dollars(ds) != dollars(dr)
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_mirror_rivals_and_the_exact_tier_bid_by_the_block_in_a_season(h2h):
+    """The other seats that read a block, each in a season beside the same seats naming none,
+    on one world (every other season of this file plays a surrogate seat among market rivals):
+
+    - mirror rivals of the arm, which take its block as they take its knobs and fields: each
+      rival's bids part from its bids as the mirror of the no-bid arm, each keeps its own moves
+      on the horizons the block weighs, and each wins claims at a value;
+    - a seat on the exact tier: its bids part from the no-bid arm's.
+
+    The audit finds nothing in any of the four seasons."""
+    setup = public(h2h)
+    arms = [replace(seat(block), opponents={"kind": "mirror"}) for block in (EVERY_KEY, None)]
+    (named, dn), (_, dp) = seasons(setup, arms, rivals=None)
+    rivals = [t for t in setup.teams if t != 1]
+    assert all(in_force(dn, dp, t) for t in rivals)
+    assert {t for r in dn for by in r.state.recent_by.values() for t in by} == set(setup.teams)
+    assert all(r.state.recent_by == {} for r in dp)
+    assert all(named.counts[t]["value_won"] > 0 for t in rivals)
+    exact = arm("X", "exact", plan_floor_cats=0.1)
+    (named, dn), (plain, dp) = seasons(setup, [replace(exact, bid=bp.of(EVERY_KEY)), exact])
+    assert in_force(dn, dp)
+    assert named.counts[1]["claims_won"] >= 1
+    assert named.counts[1]["dollars_spent"] != plain.counts[1]["dollars_spent"]
 
 
 # --------------------------------------------------------------------------- the walls
