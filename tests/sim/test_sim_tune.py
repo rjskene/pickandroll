@@ -126,60 +126,78 @@ def test_every_lever_of_the_list_has_its_nudge_and_its_nudge_again_or_none():
     """The second step of every row of the list as it is on main, derived from the row: a step
     written from the arm's own value is taken again by the lever itself; a step to a fixed
     number goes on by the same difference; a switch, a choice and a list have none; the knob's
-    own bounds refuse a second step as they refuse a first."""
+    own bounds refuse a second step as they refuse a first. A row added to the list is added
+    here, so its second step is written before any result."""
+    pinned: set[str] = set()
+
+    def at(spec: dict[str, Any], lever: str, *where: Any) -> dict[str, Any]:
+        pinned.add(lever)
+        return to(spec, lever, *where)
+
     spec = base({"protection_floor": 0.05, "season_weight": 0.1})
-    assert to(spec, "protection_floor") == {
+    assert at(spec, "protection_floor") == {
         "protection_floor-down": 0.0,
         "protection_floor-down-again": "protection_floor -0.05 is below its minimum 0.0",
         "protection_floor-up": 0.1,
         "protection_floor-up-again": 0.15,
     }
-    assert to(spec, "daily_cap") == {
+    assert at(spec, "daily_cap") == {
         "daily_cap-minus": 1,
         "daily_cap-minus-again": "daily_cap 0 is below its minimum 1",
         "daily_cap-plus": 3,
         "daily_cap-plus-again": "daily_cap 4 is above its maximum 3",
     }
-    assert to(base({"daily_cap": 1}), "daily_cap") == {
+    assert at(base({"daily_cap": 1}), "daily_cap") == {
         "daily_cap-minus": "daily_cap 0 is below its minimum 1",
         "daily_cap-plus": 2,
         "daily_cap-plus-again": 3,
     }
-    assert to(spec, "plan_floor_cats") == {
+    assert at(spec, "plan_floor_cats") == {
         "plan_floor_cats-down": 0.0667,
         "plan_floor_cats-down-again": 0.0445,
         "plan_floor_cats-up": 0.15,
         "plan_floor_cats-up-again": 0.225,
     }
-    assert to(spec, "season_weight") == {
+    assert at(spec, "season_weight") == {
         "season_weight-quarter": 0.3,
         "season_weight-quarter-again": "the same value as season_weight-half",
         "season_weight-half": 0.5,
         "season_weight-half-again": 0.9,
     }
-    assert to(spec, "playoff_weight") == {
+    assert at(spec, "playoff_weight") == {
         "playoff_weight-1.5": 1.5,
         "playoff_weight-1.5-again": 2.0,
     }
-    assert to(spec, "pool") == {"pool-45": 45, "pool-45-again": 60}
-    assert to(spec, "min_gain") == {"min_gain-double": 0.02, "min_gain-double-again": 0.04}
-    assert to(spec, "weeks_ahead") == {"weeks_ahead-6": 6, "weeks_ahead-6-again": 8}
-    assert to(spec, "blend") == {
+    assert at(spec, "pool") == {"pool-45": 45, "pool-45-again": 60}
+    assert at(spec, "min_gain") == {"min_gain-double": 0.02, "min_gain-double-again": 0.04}
+    assert at(spec, "weeks_ahead") == {"weeks_ahead-6": 6, "weeks_ahead-6-again": 8}
+    assert at(spec, "blend") == {
         "blend-0.25": 0.25,
         "blend-0.25-again": "blend 0.0 is below its minimum 0.25",
         "blend-0.75": 0.75,
         "blend-0.75-again": "blend 1.0 is above its maximum 0.75",
     }
     # No second step: a list, a switch, a choice.
-    assert to(spec, "surrogate_days") == {"surrogate_days-monday": [0]}
+    assert at(spec, "surrogate_days") == {"surrogate_days-monday": [0]}
     exact = base(tier="exact")
-    assert to(exact, "executes") == {"executes-weighted": "weighted"}
-    assert to(exact, "execute_plan") == {"execute_plan-flipped": True}
-    assert to(spec, "system") == {"system-yahoo": "yahoo", "system-blend": "blend"}
-    assert to(spec, "horizon_weight") == {
+    assert at(exact, "executes") == {"executes-weighted": "weighted"}
+    assert at(exact, "execute_plan") == {"execute_plan-flipped": True}
+    assert at(spec, "system") == {"system-yahoo": "yahoo", "system-blend": "blend"}
+    assert at(spec, "horizon_weight") == {
         "horizon_weight-even": "even",
         "horizon_weight-season": "season",
     }
+    # Read only in a points league, and only where the plan is executed.
+    points = policy.Shape(scoring="points"), sc.Context("points", "none", 0.8, sc.NO_RATIO)
+    assert at(exact, "plan_floor_points", *points) == {
+        "plan_floor_points-down": 0.0067,
+        "plan_floor_points-down-again": 0.0045,
+        "plan_floor_points-up": 0.015,
+        "plan_floor_points-up-again": 0.0225,
+    }
+    assert at(base(tier="exact", execute_plan=True), "with_plan") == {"with_plan-flipped": False}
+    # Every row of the list: here, or in the table's test below (the sizing's two).
+    assert pinned | {"faab_sizing"} == set(sc.NAMES)
 
 
 def test_a_step_along_the_frontier_goes_on_to_the_next_neighbour():
