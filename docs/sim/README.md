@@ -450,8 +450,8 @@ worker counts, except at an exact tie: there an order-dependent sum in the engin
 fall either way with the process's hash seed (a week plan whose gap over its set is 0.0 in one
 process and 1e-16 in another, against a plan floor of exactly 0, is taken in one and not the
 other). A real run sets `PYTHONHASHSEED=0`. The run record keeps the value (`hash_seed`, `"random"`
-when it is unset), and replay and validate print one line on stderr when it is unset and the
-run is not a dry run.
+when it is unset), and replay, validate, screen and tune print one line on stderr when it is
+unset and the run is not a dry run.
 
 ## The readers (`sim/readers.py`) and the runs (`sim/cli.py`)
 
@@ -1567,6 +1567,17 @@ word.
 - `--screen NAME` names a finished screen of the same baseline arm in the same league kind. The
   tune takes its survivors, **the strongest first** by the size of the difference over its SE (a
   lever's place is its strongest surviving row's; a tie goes in the list's order).
+  - **A screen that played the season the tune confirms on is refused by name.** Its survivors
+    and their order were chosen on that season, so the season would not be withheld from what
+    chose the levers. (A screen never plays the confirmation season itself; this is about
+    `--confirm` naming another one.)
+  - The league kind is read in force: the screen's shapes as its flags name them, whatever
+    order they were typed in, and its rules.
+  - A screen played under another `replay_version`, `screen_version`, fit, seed, paths or cells
+    than the tune's is **not refused: it is said**. The tune prints what differs and keeps it in
+    its record (`screen.differs`). The survivors and their order are taken as they stand, and
+    each step rests on the tune's own pairs. An early screen stays usable after a lever PR
+    lands; whether its order is still the right one to search in is the reader's call.
 - `--levers` names levers by hand. With a screen they take the screen's order, the ones it did
   not play after them; with none, the list's order.
 - `--seasons` names the search's seasons (default every season on file that is neither the
@@ -1577,6 +1588,17 @@ word.
 - `--confirm SEASON` (default the confirmation season, 2025-26): the season the final set is
   played on. `--confirm none` plays no confirmation: a look at the machinery, marked in the
   record and the output as "no confirmation, not a verdict".
+  - **Whether that season can be played in the tune's world is asked before the first pair**,
+    and in the dry run, not after the search. The check reads what is on file of the season
+    before it begins, and plans no pair of it: the ledger's own lines, the season's draft table
+    under `--adp`, the stand-ins' figures and each forecaster's. A refusal names the reason and
+    the way out (another `--confirm` season, or `--confirm none`).
+  - **Under a draft table the confirmation season is refused today**: its log carries one draft
+    position for every player ("The draft market"), so it has no table. A tune under a table
+    names another season to confirm on, which counts no look, or none.
+  - **A forecaster the search reads must serve the season confirmed on.** The verdict is stated
+    for every forecaster the search read, so a tune whose `prior` or `marcel` has no earlier
+    season there is refused by name before anything is played.
 
 **A tune is replays**, as a screen is. Every pair, the search's and the confirmation's, is
 planned, played, audited and recorded by the code `replay` plays a pair with. A `replay` run is
@@ -1617,10 +1639,11 @@ when its folder is started, and no flag lets a caller pick after seeing a figure
 - **The step.** A value is eligible when it counts and its mean is above one SE. The lever takes
   the eligible value with the largest mean (a tie to the first in the lever's order); with none
   eligible it stays. A noisy value does not block a sure one: a value with a larger mean that
-  is not above one SE is passed over, and the step says so in words. The step is lenient by
-  design, and the confirmation at the end is what guards it. The record keeps each value's
-  pair, its standing and the reason for the choice. A value whose two arms played one season on
-  every path "did nothing", as in a screen.
+  is not above one SE is passed over, and the step says so in words. A value with no SE at all
+  (fewer than two paths stand) is not "passed over": its standing says it has none. The step is
+  lenient by design, and the confirmation at the end is what guards it. The record keeps each
+  value's pair, its standing and the reason for the choice. A value whose two arms played one
+  season on every path "did nothing", as in a screen.
 - An oracle's cells and a season that fails `espn`'s freeze check are shown and not read, as in
   a replay's own verdict.
 - **What the current arm carries** is the lever's own value and nothing else. A value found on
@@ -1628,7 +1651,12 @@ when its folder is started, and no flag lets a caller pick after seeing a figure
   under; the final set says which of its values the final arm does not read, and a final arm
   that reads none of them is the baseline's seat and is not confirmed.
 - The season scale, where a lever waits on it, is the baseline's, measured once before the first
-  pair and kept in the record.
+  pair and kept in the record. Two figures within the rounding a measured figure is kept to
+  (four significant digits) are one value: a quarter of the scale taken twice is the half, and
+  is not played beside it.
+- **A later pass does not play a pair again.** A lever whose current arm no step has changed
+  since its last try would be the same two arms on the same paths. The step takes the earlier
+  pass's result, says so, and names that pair's file (`same_as`).
 
 **The confirmation, and why a season is withheld.** A search picks the values that did best on
 the seasons it played. Some of that is the values and some is those seasons' luck, and the search
@@ -1636,20 +1664,38 @@ cannot tell the two apart. So one season is kept out of every search and read on
 
 - **The hold-out (2024-25) is refused everywhere**, in the search and as `--confirm`, by name.
 - **The confirmation season (2025-26) is refused in the search** by name, as is whatever season
-  `--confirm` names.
+  `--confirm` names, in the search's seasons and in the seasons of the screen named.
 - When the search has ended, the final set (arm B) is played against the baseline (arm A) on
-  that season, once, for each forecaster, on the cheapest tier that reads every value that moved.
+  that season, once, for each forecaster that serves it, on the cheapest tier that reads every
+  value that moved. **Both arms are on that tier**, and the output says which it is, and which
+  the baseline's own is when the two differ (an exact baseline whose only moved lever is the
+  surrogate's is confirmed surrogate against surrogate).
+- A named forecaster with no cell on that season is listed in the record
+  (`confirmation.skipped`) and under the printed table, with `replay`'s reason. If the search
+  read it, there is **no verdict**: the rule does not rest on the forecasters left. (The check
+  before the first pair refuses such a tune, so this is met only when the files changed under a
+  tune in flight.)
 - **The rivals.** The pair is played against the run's rivals, and again against static ones
   when the baseline's rivals are not static. Both cells are in the record. An edge against one
   kind of rivals only is flagged: against rivals that never move it may be an edge over nobody,
   and against one model of rivals only it may be an edge over that model.
+- **A pair that is one seat is not planned.** Against static rivals the final arm can be the
+  baseline's seat: what moved is read there only through the run's rivals (a mirror reads the
+  surrogate's days on the exact tier). `replay` would refuse that pair, so the tune asks before
+  the look is counted, plays the pair against the run's rivals alone, records the other kind as
+  "the baseline's seat" (`confirmation.one_seat`, with each name the two arms differ in), and
+  flags an edge against the run's rivals as one kind's only.
+- **What only the pair's own plan finds** (a draft a named league shape cannot fill on that
+  season) is met at the end. The tune then ends refused, with the final set in its record and
+  `confirmation.status` saying why it was not played. No look is counted: the line is appended
+  after the pair is planned and before it is played.
 - **The verdict is stated on the finish**, the user's aim: playoff odds and final rank. A cell is
   ahead when its change in playoff odds is above zero, or its change in final rank below zero
   (a better finish), by more than one SE, and neither is the other way by more than one SE. The
   final set **holds** when every forecaster read is ahead against the run's rivals, is
   **against** when one is behind, and is **not shown** otherwise. The standings' measure is
-  printed beside and decides nothing here. A path the audit voided, or a cell with no SE, is no
-  verdict.
+  printed beside and decides nothing here. A path the audit voided, a forecaster the search
+  read with no cell, or a cell with no SE, is no verdict.
 
 **What a verdict means, and what it does not.**
 
@@ -1659,9 +1705,12 @@ cannot tell the two apart. So one season is kept out of every search and read on
   way. A verdict that holds is evidence, not proof.
 - It is one league kind's. The flags name the league (its shapes, its scoring and format, its
   held slots, its waivers and budget), a tune's search and confirmation are played in it, and
-  nothing is pooled across kinds.
-- It is the forecasters' named. A set ahead under one forecaster and not under another does not
-  hold.
+  nothing is pooled across kinds. The kind is the shapes as played and the rules, not the name
+  a flag gave them: one shape named with `--grid fixed` or with `--league` is one kind, and
+  its looks are counted together.
+- It is the forecasters' the search read, every one of them. A set ahead under one forecaster
+  and not under another does not hold, and a forecaster with no cell on the season is no
+  verdict.
 - A tune with `--confirm none`, or one whose search moved nothing, has no verdict. A search's
   set alone is no recommendation: it was chosen on the seasons it was searched on.
 
@@ -1678,6 +1727,13 @@ chosen to suit it. So every look is counted.
 - A second look is counted, never hidden and never refused.
 - A tune taken up again counts once. The same tune started again in a new folder reads the season
   again and is another look.
+- A piece learns whether it may play the confirmation's pair (the hour's rule, the routines'
+  window, `--max-minutes`) before the season is read, so a piece that is stopped there has not
+  opened it.
+- A finished tune whose line the ledger no longer holds (the file removed, the folder copied
+  without it) says which look it was from its confirmation pair's own record, says the ledger
+  lost it, and adds no line. A folder with pairs and no `tune.json` is refused by name: the
+  record says when the tune was started, which is how its look is found again.
 - A dry run writes no line. Neither does `--confirm none`, nor a tune confirmed on another
   season: the ledger's numbers are looks at the confirmation season.
 
@@ -1687,9 +1743,11 @@ chosen to suit it. So every look is counted.
   `p<pass>-<lever>-<nudge>.json`, the confirmation's as `confirm-run.json` and
   `confirm-static.json`. Each is the pair's record as `replay` writes it with one `tune` block.
 - `tune.json` is the tune's record: the spec, `tune_version` 1, the order and where each place
-  comes from, every step (each value's pair with its result, the choice and why), the final
-  set, the confirmation (each cell's differences, finish and mechanism counts, the look, the
-  verdict) and what is left. Everything that is a time sits under `timing`.
+  comes from, what the screen named was played under that the tune is not, every step (each
+  value's pair with its result, the choice and why), the final set, the confirmation (each
+  cell's differences, finish and mechanism counts, a forecaster with no cell, a kind of rivals
+  that is one seat, the look, the verdict) and what is left. Everything that is a time sits
+  under `timing`.
 - Running the same command again plays only what has no record yet. It first checks the spec
   against the one the folder was started with (a screen's spec, and the tune's own: the levers
   in their order, the passes, the season confirmed on, the screen named, `tune_version`).
@@ -1698,24 +1756,41 @@ chosen to suit it. So every look is counted.
 - **The estimate.** One task of each lever's first pair is timed before anything is played. The
   whole tune's estimate is every value of every lever, as the baseline lists them, for every
   pass, **and the confirmation's pairs**. `--dry-run` prints the order, the values, the
-  confirmation and the total, and writes nothing, the ledger included.
+  confirmation and the total, and writes nothing, the ledger included. The total is "about":
+  a later pass from a moved value can list more pairs, and a lever that has no pair from the
+  baseline (it is read only once another has moved) is timed inside the search, when it first
+  has one.
 - **The guard.** The rule for a run over an hour (`--announced`) reads the whole tune's estimate,
   the confirmation included, whatever a piece of it takes. The routines' window is read against
-  the piece.
+  the piece. Because a search can grow past its plan, **the hour's rule is read again before
+  every pair**: the pairs met so far, this one and the confirmation still ahead. A tune that
+  comes past the hour that way stops refused, its record written, until it is announced. A
+  tune that was announced, or whose estimate the caller gave (`--expected-hours`), is not asked
+  again. `--announced` is passed only on the user's word: it says the run was announced on the
+  tracker and that the user said to start it.
 
 **What a tune cannot say.** It searches one lever at a time, so it does not see two levers that
 only help together. It tries a few values a lever, so "the best of those tried" is all a step
 claims. The estimate lists the values from the baseline, and a later pass may play values it did
-not list.
+not list. The check before the first pair asks what a season's files say; what only a whole plan
+of the confirmation's pair finds is still met at the end.
 
 ## Runs
 
 Every command runs through the commands' guard: low priority, never when its span touches 04:45
 to 06:45 in the machine's local time, never while a draft room is open on the API, and a run
 expected over an hour is announced on the tracker and starts on the user's word (`--announced`
-says that has happened). The no-peek check runs two seasons before it can time one, so
-the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses it when that span
-touches the window.
+says that has happened, and is passed only then). The no-peek check runs two seasons before it
+can time one, so the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses
+it when that span touches the window.
+
+**A tune under a draft table names its `--confirm` season.** The default, the confirmation season
+(2025-26), cannot serve such a tune today: its log carries one draft position for every player,
+so it has no draft table ("The draft market"), and a league drafted on a table cannot be played
+on it. The tune is refused before its first pair, and in its dry run, until it names a season
+that has a table and that neither its search nor the screen it names played, or `--confirm none`.
+A confirmation on another season counts no look. Which season that is belongs to the run's plan,
+not to the command.
 
 ## What was removed and when
 
