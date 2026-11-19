@@ -9,6 +9,7 @@ and the record are the command's own. The list's own rules are ``test_sim_screen
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -122,6 +123,19 @@ def whole(data: Path) -> tuple[dict, str]:
 
 
 # --------------------------------------------------------------------------- the loop
+def test_every_flag_of_a_run_s_cells_and_world_is_a_key_of_the_screen_s_spec():
+    """A world's flag the spec did not keep would let a folder started under one value of it be
+    carried on under another (#172, the draft PR, whose ``--seat-draft`` is such a flag): every
+    flag ``_cell_args`` and ``_world_args`` give a parser is a key of ``SCREEN_WORLD``, and the
+    spec's other keys are the paths and the seed."""
+    p = argparse.ArgumentParser(add_help=False)
+    ss._cell_args(p, None)
+    ss._world_args(p)
+    flags = {a.dest for a in p._actions}
+    assert "seat_draft" in flags and flags <= set(ss.SCREEN_WORLD)
+    assert set(ss.SCREEN_WORLD) - flags == {"paths", "seed"}
+
+
 def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: Path, whole):
     rec, out = whole
     assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 1)
@@ -397,6 +411,28 @@ def test_a_screen_is_resumed_only_on_the_spec_it_was_started_with(data: Path, wh
         code, out = screen(data, name="whole")
     assert code == 2 and "replay_version: started with" in out, out
     assert record(data, "whole") == whole[0]
+
+
+def test_a_screen_under_a_table_is_held_to_the_seat_s_draft_rule_in_force(data: Path, whole):
+    """The spec holds the seat's draft rule in force, not the flag as typed (#172, the draft
+    PR): a screen started under a table with no rule named is the market's, so it is taken up
+    by the same command naming ``--seat-draft market`` and refused by one naming ``own``, by
+    name. Without a table no rule is in force and the spec says none."""
+    assert whole[0]["spec"]["world"]["seat_draft"] is None
+    table = ("--adp", "espn", "--adp-spread", "2,0.1")
+    kw = {"levers": ("surrogate_days",), "name": "table"}
+    code, out = screen(data, *table, **kw)
+    assert code == 0, out
+    rec = record(data, "table")
+    assert rec["spec"]["world"]["seat_draft"] == "market"
+    assert set(rec["spec"]["world"]) == set(ss.SCREEN_WORLD)
+    code, out = screen(data, *table, "--seat-draft", "market", **kw)
+    assert code == 0 and "0 pair(s) to play" in out and "refused" not in out, out
+    assert record(data, "table") == rec
+    code, out = screen(data, *table, "--seat-draft", "own", **kw)
+    assert code == 2, out
+    assert "started with another spec (seat_draft: started with 'market', now 'own'" in out
+    assert "to play" not in out and record(data, "table") == rec
 
 
 def test_a_screen_on_the_price_book_is_held_to_the_book(data: Path, whole):

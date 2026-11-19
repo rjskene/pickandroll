@@ -10,7 +10,7 @@ The league is the season tests' made-up one; nothing here is from Basketball Mon
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -123,6 +123,32 @@ def test_a_page_look_on_newer_inputs_answers_the_kept_one_stale_while_one_solve_
     client.get(MOVES)
     [e] = logged(client)
     assert e["built_at"] == at.isoformat() and len(made) == 2
+
+
+def test_a_stale_look_in_a_league_with_an_open_claim_answers_the_kept_one(client, monkeypatch):
+    """#438: the open claims' stamp entry is the claims, not a time; the page still gets the kept
+    answer marked stale, its inputs time the newest file's, never a 500."""
+    svc = client.app.state.seasons
+    claim = {"id": "c1", "add": 4242, "drop": None, "from": NOW.date().isoformat()}
+    monkeypatch.setattr(svc, "_league_claims", lambda league: [claim])
+    made = solves(monkeypatch)
+    later = Later()
+    svc.page_solves = later
+    client.get(MOVES, params=PAGE)
+    later.run()
+    first = client.get(MOVES, params=PAGE).json()
+    assert len(made) == 1
+    at = NOW + timedelta(minutes=5)
+    new_inputs(client, at)
+    stamp = svc._moves_stamp(LEAGUE)
+    assert stamp[-1][0] == "pending"
+    r = client.get(MOVES, params=PAGE)
+    assert r.status_code == 200, r.text
+    look = r.json()
+    stale = look.pop("stale")
+    assert look == first and stale["reason"] == seasons.STALE_REASON
+    newest = max(ns for _, ns in stamp[:-1])
+    assert stale["inputs_at"] == seasons._iso(datetime.fromtimestamp(newest / 1e9, UTC))
 
 
 def test_a_routine_call_on_newer_inputs_waits_for_its_solve_and_logs_it(client, monkeypatch):

@@ -4,7 +4,7 @@
 A run takes the league's move problem (``season_moves.build``) and the Moves panel's
 single-move gains (today's moves, solved first when they are not), ranks the pool from them
 (``strategy.pool_of``), appends the adds the season guard admits from the same answer's list
-(#424, ``season_moves.pool_for``), and for each weight of the frontier:
+(#424, ``season.pool.pool_for``), and for each weight of the frontier:
 
 1. runs the exact search on the weighted value, at once: the panel's first answer;
 2. starts the program in the background process pool (``optim.pool``) from the search's set, one
@@ -46,6 +46,7 @@ from typing import Any
 from ..optim import pool as pools
 from ..optim.pool import background_pool
 from ..season import moves as mv
+from ..season import pool as sp
 from ..season import strategy as st
 from . import season_moves
 
@@ -242,7 +243,7 @@ class Run:
         # The pool setting's candidates by single-move gain, then the adds the guard admits
         # (#424), the Moves panel's rule: taken in turn from each horizon's list, as many in all.
         listed = [] if guard is None else st.pool_of(guarded_of(answer), season_moves.GUARD_POOL)
-        joined = season_moves.joined(st.pool_of(gains, self.settings.pool), listed)
+        joined = sp.joined(st.pool_of(gains, self.settings.pool), listed)
         pool = list(joined.players)
         with self._lock:
             self.pool = pool

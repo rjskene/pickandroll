@@ -201,6 +201,8 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .qs-chip .mode-switch { align-items: flex-start; }
 .qs-chip .mode-switch .lv-note { text-align: left; }
 .qs-section { display: grid; gap: 8px; }
+.qs-picks ul { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 2px; }
+.qs-picks form { justify-content: flex-start; gap: 6px; margin-top: 4px; }
 .hs-filters { flex-wrap: wrap; gap: 6px 14px; }
 .hs-filters label { display: inline-flex; align-items: center; gap: 6px; }
 .hs-table tr.hs-row { cursor: pointer; }

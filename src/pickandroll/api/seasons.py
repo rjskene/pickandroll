@@ -118,7 +118,7 @@ import math
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
@@ -129,6 +129,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi import Path as FastPath
 from pydantic import BaseModel, Field, ValidationError
 
+from ..projections.names import normalize_name
 from ..season import (
     EXTENSION,
     PUBLIC,
@@ -170,6 +171,7 @@ from . import (
     season_moves,
     season_outlook,
     season_passes,
+    season_picks,
     season_pretip,
     season_progress,
     season_queue,
@@ -525,6 +527,16 @@ def log_refresh(data_dir: Path, job: RefreshJob) -> None:
     )
 
 
+def _pairs(stamp: Any) -> Iterator[tuple[str, int]]:
+    """The (file name, time) pairs of a nested stamp (``season_flags.stamp``), the missing left
+    out: the moves stamp's own shape."""
+    if isinstance(stamp, tuple) and len(stamp) == 2 and isinstance(stamp[0], str):
+        yield stamp
+    elif isinstance(stamp, tuple):
+        for x in stamp:
+            yield from _pairs(x)
+
+
 def retry_after(seconds: float | None) -> dict[str, str]:
     """The ``Retry-After`` header of a 503 on Yahoo's rate limit (#180), the cool-off's length
     when Yahoo named none."""
@@ -840,10 +852,14 @@ class SeasonService:
             season_flags.injuries_path(self.data_dir),
             season_knobs.autopilot_dir(self.data_dir) / season_knobs.KNOBS_FILE,
             season_cantcut.path_of(self.data_dir, league),
+            # The user's picks (#434): a pick set or removed solves again.
+            season_picks.path_of(self.data_dir),
         ]
         for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
             files += sorted(self.data_dir.glob(pattern))
         stamp = tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
+        # The breakout flags' inputs (#435): a flag lifts a line in the solve.
+        stamp += tuple(_pairs(season_flags.stamp(self.data_dir, nba_today(self.clock()))))
         # The claims placed and open (#360) by their content, not the queue file's time: a queue
         # write that changes no claim never solves again.
         claims = tuple(
@@ -886,7 +902,20 @@ class SeasonService:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
             knobs = season_knobs.for_league(self.data_dir, league)
             claims = self._league_claims(league)
-            return season_moves.build(season, today, self.data_dir, system, knobs, claims)
+            # A pick leaves the league once its player is on a team there (#434).
+            rostered = [sp.player.yahoo_id for spots in season.rosters.values() for sp in spots]
+            picks = season_picks.mark_left(self.data_dir, league, rostered, today)
+            # The breakout flags lift a flagged add's line (#435).
+            try:
+                _, flags, _ = self._flags(league)
+            except Exception as exc:  # noqa: BLE001 - the moves solve without the lift
+                LOG.warning(
+                    "moves of league %s solve without the lift: its flags failed: %s", league, exc
+                )
+                flags = {}
+            return season_moves.build(
+                season, today, self.data_dir, system, knobs, claims, picks, flags
+            )
 
         built = self.moves_cache.get(key, make)
         if built is None:
@@ -939,7 +968,9 @@ class SeasonService:
             if older is None or older[0][3] != today:
                 budget = season_queue.moves_budget_s(self.data_dir)
                 return {"solving": {"reason": SOLVING_REASON, "budget_s": budget}}
-            inputs = max((ns for _, ns in stamp), default=None)
+            # The newest input file's time: the stamp's file entries only, never the open claims'
+            # entry (#360), whose second half is the claims, not a time (#438).
+            inputs = max((ns for _, ns in stamp if isinstance(ns, int)), default=None)
             stale = {
                 "built_at": _iso(self._moves_at.get(older[0])),
                 "inputs_at": None
@@ -1386,6 +1417,72 @@ class SeasonService:
                 continue
             out |= {str(k): players[k].name for k in sorted(ids) if k in players}
         return out
+
+    def picks(self) -> dict[str, Any]:
+        """The user's picks (#434); reads only."""
+        try:
+            return season_picks.payload(self.data_dir, nba_today(self.clock()))
+        except season_picks.PicksError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def _find_player(self, player: int | None, name: str | None) -> tuple[int, str | None]:
+        """The pick's player by Yahoo id or by name, as the first league that lists him (its
+        rosters or its available players) names him; 422 when none does, or a name is two
+        players."""
+        want = None if name is None else normalize_name(name)
+        found: dict[int, str] = {}
+        for league in leagues.leagues(self.data_dir):
+            try:
+                base, _ = base_settings(self.data_dir, league)
+                season = Season.from_parts(base, load_parts(self.data_dir, league))
+            except Exception:  # noqa: BLE001, S112 - a league that does not read names nobody
+                continue
+            listed = [
+                *(sp.player for spots in season.rosters.values() for sp in spots),
+                *(a.player for a in season.available),
+            ]
+            for p in listed:
+                if (player is not None and p.yahoo_id == player) or (
+                    want is not None and normalize_name(p.name) == want
+                ):
+                    found.setdefault(p.yahoo_id, p.name)
+            if player is not None and player in found:
+                break
+        if player is not None:
+            if player not in found:
+                raise HTTPException(422, f"no league lists player {player}")
+            return player, found[player]
+        if len(found) != 1:
+            why = "no league lists" if not found else "two or more players match"
+            raise HTTPException(422, f"{why} the name {name!r}: send the Yahoo player id")
+        return next(iter(found.items()))
+
+    def set_pick(self, body: PickBody) -> dict[str, Any]:
+        """Set one pick (#434), the dashboard's or a session's on the user's word."""
+        if body.player is None and not body.name:
+            raise HTTPException(422, "send the pick's player id or name")
+        player, name = self._find_player(body.player, body.name)
+        today = nba_today(self.clock())
+        expires = body.expires or season_picks.pk.expiry(today, body.days)
+        if expires < today:
+            raise HTTPException(422, "a pick's last day is today or later")
+        try:
+            season_picks.set_pick(
+                self.data_dir, player, name, body.leagues, body.drop, body.bid, expires, body.by
+            )
+        except season_picks.PicksError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return self.picks()
+
+    def remove_pick(self, player: int) -> dict[str, Any]:
+        """Remove a pick (#434)."""
+        try:
+            gone = season_picks.remove(self.data_dir, player)
+        except season_picks.PicksError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not gone:
+            raise HTTPException(404, f"no pick of player {player}")
+        return self.picks()
 
     def queue(self, day: date | None = None) -> dict[str, Any]:
         """A day's queue of the moves executor (#171), today's by default; reads only."""
@@ -3840,6 +3937,21 @@ class StrikeBody(BaseModel):
     undo: bool = False
 
 
+class PickBody(BaseModel):
+    """One pick (#434): its player by Yahoo id or by name; its leagues (null: all), the drop to
+    make for him where he is mine (null: the cheapest), the bid (null: the bid policy's), its
+    days from today (7 by default) or its last day, and who set it."""
+
+    player: int | None = Field(None, ge=1)
+    name: str | None = Field(None, min_length=2, max_length=80)
+    leagues: list[str] | None = Field(None, min_length=1)
+    drop: int | None = Field(None, ge=1)
+    bid: int | None = Field(None, ge=0, le=1000)
+    days: int | None = Field(None, ge=0, le=60)
+    expires: date | None = None
+    by: str = Field("dashboard", pattern=r"^[A-Za-z][A-Za-z -]{0,39}$")
+
+
 class QueueSettings(BaseModel):
     #: The day's execute time on the Central clock, and Sunday's own (#209): either may be sent
     #: alone; Sunday's sent null clears it.
@@ -3936,6 +4048,21 @@ def register(
     def put_queue_settings(body: QueueSettings) -> dict[str, Any]:
         """The execute times, the dashboard's own click (#171, Sunday's #209)."""
         return service.set_execute_time(body)
+
+    @app.get("/autopilot/picks")
+    def get_picks() -> dict[str, Any]:
+        """The user's picks (#434); reads only."""
+        return service.picks()
+
+    @app.put("/autopilot/picks")
+    async def put_pick(body: PickBody) -> dict[str, Any]:
+        """Set one pick (#434): the Queue screen's box, or a session on the user's word."""
+        return await asyncio.to_thread(service.set_pick, body)
+
+    @app.delete("/autopilot/picks/{player}")
+    def delete_pick(player: int) -> dict[str, Any]:
+        """Remove a pick (#434)."""
+        return service.remove_pick(player)
 
     @app.post("/autopilot/queue/{entry}/strike")
     def post_strike(entry: str, body: StrikeBody | None = None) -> dict[str, Any]:

@@ -50,6 +50,7 @@ from pickandroll.season import (
 )
 from pickandroll.season import flags as fl
 from pickandroll.season import moves as mv
+from pickandroll.season import pool as season_pool
 from pickandroll.season import strategy as st
 from pickandroll.season import weekly as wk
 from pickandroll.sources import schedule
@@ -1735,7 +1736,7 @@ def test_the_strategy_route_never_solves_on_a_get_and_a_post_fills_it(client):
     # then the adds the guard admits from its list (#424).
     head = st.pool_of(season_strategy.gains_of(m), 12)
     listed = st.pool_of(season_strategy.guarded_of(m), season_moves.GUARD_POOL)
-    assert s["pool"] == list(season_moves.joined(head, listed).players)
+    assert s["pool"] == list(season_pool.joined(head, listed).players)
     assert s["pool"][: len(head)] == head
     assert s["pool_counts"] == {"size": len(head), "admitted": len(s["pool"]) - len(head)}
     assert [pt["key"] for pt in s["points"]] == ["week", "natural"]
