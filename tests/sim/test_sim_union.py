@@ -23,17 +23,26 @@ import pytest
 
 from pickandroll.season import pool as season_pool
 from pickandroll.sim import cli as ss
+from pickandroll.sim import counts as ct
 from pickandroll.sim import engine, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, sg, wk
 from pickandroll.sim.state import Member, initial
-from tests.sim.sim_league import KNOBS, NINE, make_setup, of_format, rates
+from tests.sim.sim_league import KNOBS, NINE, make_setup, of_format, rates, replay_of
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
 FORMATS = (ONE_WIN, EACH_CATEGORY)
 #: The four fields an arm had before this one, in the payload's order.
 FOUR = ("pool", "min_gain", "weeks_ahead", "surrogate_days")
+#: The union's counts, in the payload's order.
+UNION_KEYS = (
+    "union_days",
+    "union_admitted",
+    "union_admitted_days",
+    "union_taken_days",
+    "union_head_refused_days",
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -535,3 +544,131 @@ def test_the_season_scale_is_the_same_figure_with_the_field_on(executes, h2h, mo
     off = policy.scale_of(built, "exact", executes, TWO)
     on = policy.scale_of(built, "exact", executes, replace(TWO, guard_pool=30))
     assert off is not None and off == on
+
+
+# --------------------------------------------------------------------------- the counts
+def test_the_counts_carry_the_union_s_keys_only_on_the_seats_a_run_counts():
+    setup = make_setup()
+    state = initial(setup)
+    assert ct.SEASON == {"guard_pool": UNION_KEYS}
+    assert not set(UNION_KEYS) & set(ct.Tally(setup).rows(state)[1])
+    tally = ct.Tally(setup, {1: ("guard_pool",), 2: ("guard_pool",), 3: ()})
+    days = (
+        policy.Decision(union=policy.PoolUnion(admitted=3, taken=1, refused=2)),
+        policy.Decision(union=policy.PoolUnion(admitted=0, taken=0, refused=1)),
+        policy.Decision(union=policy.PoolUnion(admitted=2, taken=0, refused=0)),
+        policy.NONE,  # a day with no union built (a day of an arm at 0)
+    )
+    before = ct.Tally(setup)
+    for decision in days:
+        for team in setup.teams:
+            # Seat 2 is counted and builds none (its arm is at 0); seats 3 and 4 are not counted.
+            tally.decided(team, policy.NONE if team == 2 else decision)
+            before.decided(team, decision)
+        tally.day(1, state)
+        before.day(1, state)
+    rows, plain = tally.rows(state), before.rows(state)
+    assert {k: rows[1][k] for k in UNION_KEYS} == {
+        "union_days": 3.0,
+        "union_admitted": 5.0,
+        "union_admitted_days": 2.0,
+        "union_taken_days": 1.0,
+        "union_head_refused_days": 2.0,
+    }
+    assert {k: rows[2][k] for k in UNION_KEYS} == dict.fromkeys(UNION_KEYS, 0.0)
+    assert not set(UNION_KEYS) & (set(rows[3]) | set(rows[4]))
+    assert ct.metrics_in([rows[1], rows[4]])[-5:] == UNION_KEYS
+    assert ct.metrics_in([rows[4]]) == ct.metrics_in([plain[1]])
+    # The counts a seat had are as they were: a tally that counts no field, on the same days.
+    assert not set(UNION_KEYS) & set(plain[1])
+    assert {k: v for k, v in rows[1].items() if k not in UNION_KEYS} == plain[1]
+    assert rows[3] == plain[3] and rows[4] == plain[4]
+
+
+def test_a_run_counts_the_union_when_an_arm_sets_the_field_on_its_arms_exact_seats():
+    plain, zero, on = armed("P"), armed("Z", guard_pool=0), armed("B", guard_pool=30)
+    surrogate = armed("S", "surrogate", guard_pool=30)
+    assert rn.counted_of([plain, zero]) == ()
+    assert rn.counted_of([plain, on]) == ("guard_pool",)
+    assert rn._counted([plain, zero], {1: plain, 2: zero}) == {}
+    # Both arms' seats on the tier that reads the field: the arm at 0 shows its zeros beside.
+    assert rn._counted([plain, on, surrogate], {1: plain, 2: on, 3: surrogate}) == {
+        1: ("guard_pool",),
+        2: ("guard_pool",),
+    }
+    # A surrogate arm that names it is refused as the same seat where it matters; alone it
+    # still names the field, and its own seat, which reads none, is not counted.
+    assert rn.counted_of([surrogate]) == ("guard_pool",)
+    assert rn._counted([surrogate], {1: surrogate}) == {}
+    assert ss.counts_note("none") is ss.COUNTS_NOTE and ss.counts_note("none", ()) is ss.COUNTS_NOTE
+    note = ss.counts_note("faab", ("guard_pool",))
+    assert tuple(note)[-5:] == UNION_KEYS == tuple(ss.SEASON_NOTE["guard_pool"])
+    assert {k: v for k, v in note.items() if k not in UNION_KEYS} == ss.counts_note("faab")
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("executes", policy.EXECUTES)
+def test_a_season_with_the_field_on_differs_from_the_one_at_zero_and_the_counts_say_so(
+    executes, h2h
+):
+    """The lever does something: in the league whose head the guard refuses, the arm at 0
+    queues nothing on day one and the arm with the list queues the admitted add; their seasons
+    part. The counts are the days' own (``Decision.union``), 0 for the arm at 0, and no
+    rival's."""
+    setup = refusing(h2h, now=True)
+    off = armed("A", pool=2, executes=executes)
+    on = armed("B", pool=2, executes=executes, guard_pool=30)
+    seen: dict[int, list[rn.DayRecord]] = {0: [], 1: []}
+    got = rn.paired(
+        setup, replay_of(setup, 2, 0), off, on, 1, on_day=lambda r: seen[r.variant].append(r)
+    )
+    assert got["breaches"] == []
+    first = [seen[v][0].decisions[1] for v in (0, 1)]
+    assert first[0].moves == () and adds(first[1]) == [STEADY]
+    assert first[0].union is None
+    assert first[1].union == policy.PoolUnion(admitted=1, taken=1, refused=2)
+    unions = [r.decisions[1].union for r in seen[1] if 1 in r.decisions]
+    assert all(r.decisions[1].union is None for r in seen[0] if 1 in r.decisions)
+    built = [u for u in unions if u is not None]
+    assert {k: got["counts"]["b"][k] for k in UNION_KEYS} == {
+        "union_days": float(len(built)),
+        "union_admitted": float(sum(u.admitted for u in built)),
+        "union_admitted_days": float(sum(1 for u in built if u.admitted)),
+        "union_taken_days": float(sum(1 for u in built if u.taken)),
+        "union_head_refused_days": float(sum(1 for u in built if u.refused)),
+    }
+    assert got["counts"]["b"]["union_days"] > 1 and got["counts"]["b"]["union_taken_days"] >= 1
+    assert got["counts"]["b"]["union_head_refused_days"] >= 1
+    assert {k: got["counts"]["a"][k] for k in UNION_KEYS} == dict.fromkeys(UNION_KEYS, 0.0)
+    assert not set(UNION_KEYS) & set(got["counts"]["rivals"])
+    # Another season: what the seat queued over it, and what landed.
+    queued = [[r.queued.get(1, ()) for r in seen[v]] for v in (0, 1)]
+    landed = [[r.landed.get(1, ()) for r in seen[v]] for v in (0, 1)]
+    assert queued[0] != queued[1] and landed[0] != landed[1]
+    # The season scale is each arm's own figure and does not read the field.
+    assert got["scale"]["a"] == got["scale"]["b"]
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_room_of_the_two_counts_both_arms_seats(h2h):
+    """A room of the arm at 0 and the arm with the list (every seat an arm's, no rival): both
+    arms' seats carry the counts, the arm at 0 its zeros."""
+    setup = refusing(h2h, now=True)
+    arms = {"A": armed("A", pool=2), "B": armed("B", pool=2, guard_pool=30)}
+    room = rn.room(setup, replay_of(setup, 2, 0), arms, ["A", "B"], 1)
+    assert room["seats"] == {"1": "B", "2": "A"} and room["breaches"] == []
+    assert room["counts"]["B"]["union_days"] > 1 and room["counts"]["B"]["union_taken_days"] >= 1
+    assert {k: room["counts"]["A"][k] for k in UNION_KEYS} == dict.fromkeys(UNION_KEYS, 0.0)
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_rule_1_a_run_of_arms_at_zero_has_no_new_key_and_guard_pool_zero_named_is_unnamed(h2h):
+    """Rule 1 in a season: two arms that leave the field off, one of them naming 0, play the
+    same season with the same counts, and the run holds no key of the union's."""
+    setup = of_format(make_setup(teams=4, pool=12), h2h)
+    plain, named = armed("A", opponents="market"), armed("B", opponents="market", guard_pool=0)
+    assert plain.fields == named.fields and repr(plain.seat().fields) == repr(named.seat().fields)
+    got = rn.paired(setup, replay_of(setup, 2, 0), plain, named, 1)
+    assert got["a"] == got["b"] and set(got["delta"].values()) == {0.0}
+    assert got["counts"]["a"] == got["counts"]["b"] and got["counts"]["a"]["landed"] > 0
+    assert not set(UNION_KEYS) & (set(got["counts"]["a"]) | set(got["counts"]["rivals"]))

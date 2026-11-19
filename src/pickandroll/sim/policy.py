@@ -235,6 +235,8 @@ def check_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
 FIELDS = ("pool", "min_gain", "weeks_ahead", "surrogate_days", "guard_pool")
 #: ``guard_pool`` off: the default, and the exact tier's pools as they were before the field.
 NO_GUARD_POOL = 0
+#: The tiers whose searches take a union pool at a ``guard_pool`` above 0: the exact tier's.
+UNION_TIERS = ("exact",)
 
 
 @dataclass(frozen=True)
@@ -1364,7 +1366,7 @@ def field_reads(arm: Configured, mirrored: bool = False) -> dict[str, str]:
         out["surrogate_days"] = f"the {arm.tier} tier decides every day"
     else:
         out["surrogate_days"] = STATIC
-    if arm.tier == "exact":
+    if arm.tier in UNION_TIERS:
         out["guard_pool"] = READ
     elif arm.tier == "surrogate":
         out["guard_pool"] = NO_SWAPS

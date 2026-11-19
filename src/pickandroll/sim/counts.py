@@ -15,7 +15,11 @@ bid that could have been taken and lost claims fell short of the winning bid by:
 only, the world's knowledge of every bid, which no decision reads. The landing and claim
 counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
 ``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
-and the day's lines once they are scored. Pure.
+and the day's lines once they are scored. In a run where an arm sets ``guard_pool`` above 0 (PR
+pool) also, on the run's arms' seats on the exact tier, the days a union pool was built, the adds
+the guard's list brought beyond the head and the days it brought any, the days the decided set
+took one of them, and the days the guard refused the best single move of an add of the head:
+such a run's only, so a run that leaves the field off counts as before. Pure.
 """
 
 from __future__ import annotations
@@ -64,10 +68,33 @@ BIDS: dict[str, str | None] = {
 }
 
 
-class Tally:
-    """One variant's counts as its season is played."""
+#: The union pool's counts (PR pool), after :data:`BIDS`, by the arm field whose setting brings
+#: them: in a run where an arm sets ``guard_pool`` above 0, over the decision days of each of
+#: the run's arms' seats on the exact tier, the days a union pool was built (``union_days``:
+#: every such day of an arm with the field on), the adds the guard's list brought that the head
+#: did not hold, summed (``union_admitted``: over ``union_days`` it is their mean) and the days
+#: it brought any (``union_admitted_days``), the days the decided set holds an add that came
+#: from the list and not from the head (``union_taken_days``: the pool changed what was
+#: searched and the search took it), and the days the season guard refused the best single
+#: move of an add of the head (``union_head_refused_days``: how often the cut before the guard
+#: costs the search an add). 0 for an arm at 0, by construction; never a rival's. A run that
+#: leaves the field off has none, so its counts are as before.
+SEASON: dict[str, tuple[str, ...]] = {
+    "guard_pool": (
+        "union_days",
+        "union_admitted",
+        "union_admitted_days",
+        "union_taken_days",
+        "union_head_refused_days",
+    ),
+}
 
-    def __init__(self, setup: Setup) -> None:
+
+class Tally:
+    """One variant's counts as its season is played. ``counted``, by team, names the fields
+    (:data:`SEASON`'s keys) the run counts on that seat; none by default."""
+
+    def __init__(self, setup: Setup, counted: Mapping[int, Sequence[str]] | None = None) -> None:
         self.teams = tuple(setup.teams)
         self.limit = setup.max_weekly_adds
         self.waiting = setup.waiting
@@ -86,6 +113,13 @@ class Tally:
         self.held_days = dict.fromkeys(self.teams, 0)
         self.games = dict.fromkeys(self.teams, 0)
         self._held: dict[int, set[int]] = {t: set() for t in self.teams}
+        self.counted = {t: tuple(names) for t, names in (counted or {}).items() if names}
+        #: A counted seat's union pools, summed over its decision days.
+        self.unions: dict[int, dict[str, int]] = {
+            t: dict.fromkeys(SEASON["guard_pool"], 0)
+            for t, names in self.counted.items()
+            if "guard_pool" in names
+        }
 
     def charge(self, week: int, before: Mapping[int, int], after: Mapping[int, int]) -> None:
         """The adds that landed this morning (``executed_by`` before and after the landing),
@@ -94,6 +128,19 @@ class Tally:
             n = int(after.get(t, 0)) - int(before.get(t, 0))
             if n:
                 self.adds[t][week] = self.adds[t].get(week, 0) + n
+
+    def decided(self, team: int, decision: Any) -> None:
+        """``team``'s decision of the day (a ``policy.Decision``): on a counted seat, the union
+        pool it was searched among (``Decision.union``), when one was built."""
+        row = self.unions.get(team)
+        union = decision.union
+        if row is None or union is None:
+            return
+        row["union_days"] += 1
+        row["union_admitted"] += union.admitted
+        row["union_admitted_days"] += union.admitted > 0
+        row["union_taken_days"] += union.taken > 0
+        row["union_head_refused_days"] += union.refused > 0
 
     def day(self, week: int, state: SimState) -> None:
         """A simulated day of ``week``: each held player's stint goes on or begins."""
@@ -146,13 +193,16 @@ class Tally:
                     m: float(dollars[m] if key is None else bids.get(key, 0))
                     for m, key in BIDS.items()
                 }
+            if t in self.unions:
+                out[t] |= {m: float(n) for m, n in self.unions[t].items()}
         return out
 
 
 def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
-    when a row has them (a waiver run's), then the bid counts (a FAAB run's)."""
-    extra = (*CLAIMS, *BIDS)
+    when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the union
+    pool's (a run in which an arm sets ``guard_pool``)."""
+    extra = (*CLAIMS, *BIDS, *(m for group in SEASON.values() for m in group))
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))
 
 
@@ -171,4 +221,4 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
     return pooled(rows) if rows else None
 
 
-__all__ = ["BIDS", "CLAIMS", "METRICS", "Tally", "metrics_in", "pooled", "row_of"]
+__all__ = ["BIDS", "CLAIMS", "METRICS", "SEASON", "Tally", "metrics_in", "pooled", "row_of"]

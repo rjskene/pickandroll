@@ -214,6 +214,13 @@ def same_seat(
     return out
 
 
+def counted_of(arms: Sequence[Arm]) -> tuple[str, ...]:
+    """The fields of ``arms`` whose counts a run of them carries on its arms' seats
+    (``counts.SEASON``): ``guard_pool`` when any of them sets it above 0 (#172, PR pool). None
+    set, nothing counted, and the run's counts are as before the field."""
+    return ("guard_pool",) if any(arm.fields.guard_pool > 0 for arm in arms) else ()
+
+
 def check_fit(spec: Mapping[str, Any], sha: str) -> None:
     """A spec names the frozen fit it was written for; another fit on disk refuses the run."""
     named = spec.get("fit_sha")
@@ -669,6 +676,7 @@ def simulate(
     execute_plan: Sequence[bool] | None = None,
     on_day: Callable[[DayRecord], None] | None = None,
     rules: Sequence[audit.Rule] | None = None,
+    counted: Sequence[Mapping[int, Sequence[str]]] | None = None,
 ) -> list[VariantResult]:
     """Every variant (a strategy by seat) through one world in lockstep. Each day, after the lineup
     is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or the setup's,
@@ -677,7 +685,11 @@ def simulate(
     (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
     forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
     reads its table on the rosters before the landing for the forced drops, and on the rosters after
-    it for the rest of the day. The world's draws are common to all of them."""
+    it for the rest of the day. The world's draws are common to all of them.
+
+    ``counted``, by variant, names for a seat the fields its run counts (:func:`counted_of`;
+    ``counts.SEASON``, PR pool): each of that seat's decisions is handed to the variant's tally.
+    None by default, and the counts are as before."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -686,7 +698,8 @@ def simulate(
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
     spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
     auditor = audit.Auditor(setup, rules, w.path)
-    tallies = [ct.Tally(setup) for _ in range(n)]
+    counted = list(counted or [{}] * n)
+    tallies = [ct.Tally(setup, counted[vi]) for vi in range(n)]
     holds = [holds_of(w, v) for v in variants]
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
@@ -768,6 +781,7 @@ def simulate(
                     cache[key] = decision
                     solves[vi] += decision.solves
                 decided[team] = decision
+                tallies[vi].decided(team, decision)
                 state = policy.queue(
                     state,
                     team,
@@ -855,6 +869,17 @@ def _metrics(summary: Mapping[str, Any] | None) -> dict[str, float | None]:
     }
 
 
+def _counted(arms: Sequence[Arm], seated: Mapping[int, Arm]) -> dict[int, tuple[str, ...]]:
+    """What a run of ``arms`` counts on the seats ``seated`` (an arm by team): the fields any of
+    the run's arms sets (:func:`counted_of`), on each seat whose arm is on a tier that builds a
+    union pool (``policy.UNION_TIERS``), so the arm at 0 shows its zeros beside the other's;
+    empty when none is set. A rival's seat counts none."""
+    names = counted_of(arms)
+    if not names:
+        return {}
+    return {t: names for t, arm in seated.items() if arm.tier in policy.UNION_TIERS}
+
+
 def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
     other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields)
     return {t: other for t in setup.teams if t != me}
@@ -929,7 +954,10 @@ def paired(
     va = {**opponents_of(setup, a, me), me: a.seat()}
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
-    ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan], on_day=on_day)
+    counted = _counted([a, b], {me: a}), _counted([a, b], {me: b})
+    ra, rb = simulate(
+        setup, w, [va, vb], [a.execute_plan, b.execute_plan], on_day=on_day, counted=counted
+    )
     return _pair_result(setup, ra, rb, me, scale)
 
 
@@ -951,9 +979,10 @@ def paired_apart(
     va = {**opponents_of(setup_a, a, me), me: a.seat()}
     vb = {**opponents_of(setup_b, b, me), me: b.seat()}
     scale = {"a": scale_on(setup_a, w_a, a, me), "b": scale_on(setup_b, w_b, b, me)}
-    (ra,) = simulate(setup_a, w_a, [va], [a.execute_plan], on_day=on_day)
+    counted = _counted([a, b], {me: a}), _counted([a, b], {me: b})
+    (ra,) = simulate(setup_a, w_a, [va], [a.execute_plan], on_day=on_day, counted=counted[:1])
     second = None if on_day is None else (lambda r: on_day(replace(r, variant=1)))
-    (rb,) = simulate(setup_b, w_b, [vb], [b.execute_plan], on_day=second)
+    (rb,) = simulate(setup_b, w_b, [vb], [b.execute_plan], on_day=second, counted=counted[1:])
     rb = replace(rb, breaches=tuple(replace(x, variant=1) for x in rb.breaches))
     return _pair_result(setup_a, ra, rb, me, scale)
 
@@ -1014,7 +1043,17 @@ def room(
         name: min(t for t, n in assigned.items() if n == name) for name in set(assigned.values())
     }
     scale = {name: scale_on(setup, w, arms[name], t) for name, t in sorted(first.items())}
-    (r,) = simulate(setup, w, [variant], [any(arms[n].execute_plan for n in seats)], on_day=on_day)
+    counted = _counted(
+        [arms[name] for name in dict.fromkeys(seats)], {t: arms[n] for t, n in assigned.items()}
+    )
+    (r,) = simulate(
+        setup,
+        w,
+        [variant],
+        [any(arms[n].execute_plan for n in seats)],
+        on_day=on_day,
+        counted=[counted],
+    )
     by_arm: dict[str, list[dict[str, float | None]]] = {}
     seats_of: dict[str, list[int]] = {}
     for t, name in assigned.items():
@@ -1503,6 +1542,7 @@ __all__ = [
     "aggregate",
     "arm_of",
     "check_fit",
+    "counted_of",
     "draft_boards",
     "draftable_of",
     "drafted_unprojected",
