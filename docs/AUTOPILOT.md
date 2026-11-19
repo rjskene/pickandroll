@@ -1327,6 +1327,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 | the FAAB sizing | section 5 | the sizing rule only; no ceiling |
 | the daily move cap | section 2 | 1 to 3 |
 | `three_weight`, the three weeks' weight in a week plan's score, default 0.33 | section 2 (#332), logged with each decision | 0 to 1; no Monday rule moves it |
+| the breakout lift's weights, floors and marginal count (#435, `lift_*`), defaults 0.5/0.75/1.0, 0.10/0.15/0.25 and 3 | the moves solve (`docs/ADD_DROP.md`, "The lift"), logged with a decision only when a candidate is lifted | weights 0 to 1, floors 0 to 0.5, the count 0 to 10; read, never stepped; outside `LIVE_KNOBS` |
 
 **The protocol.** One knob changes per week, pooled across the armed leagues; where the leagues
 allow it, half of them take the change and half keep the setting (A/B), since nine to twelve

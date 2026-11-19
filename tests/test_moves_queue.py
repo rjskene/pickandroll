@@ -18,6 +18,7 @@ import pytest
 from pickandroll.api import leagues, season_cantcut, season_queue, season_scorecard
 from pickandroll.api import season_autopilot as ap
 from pickandroll.season import autopilot as qa
+from pickandroll.season import lift as lf
 from pickandroll.season.state import Player, Transaction
 from tests.test_season import LEAGUE, NOW, season_client, strategy_league, write_folder
 
@@ -31,7 +32,10 @@ TYPICAL = (0.1, "the plan floor until 10 moves")
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    # The queue's numbers here predate the breakout lift (#435): it is off, as at 0 in the knob
+    # file; tests/test_lift.py covers it.
+    monkeypatch.setattr(lf, "DEFAULTS", dict(lf.OFF))
     with season_client(tmp_path) as c:
         yield c
 

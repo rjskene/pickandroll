@@ -124,6 +124,9 @@ def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, An
     horizon as the solve priced it (None for a strategy move left unpriced) and its projection
     in value units (``decisions.move_projection``), for the scorecard (#126)."""
     out = {**{k: move[k] for k in ("add", "drop", "from")}, "bid": None}
+    if "lift" in move:
+        # A lifted move (#435): the factor its add's line was valued on.
+        out["lift"] = move["lift"]
     if built is not None:
         drop = None if move.get("drop") is None else int(move["drop"])
         day = None if move.get("from") is None else date.fromisoformat(move["from"])
@@ -205,6 +208,8 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
         "adds": built.adds,
         "horizons": {k: built.horizons[k]["label"] for k in season_moves.HORIZONS},
         "scorer": built.scorer,
+        # The breakout lift in force (#435): only when a candidate is lifted.
+        **({"lift": lift} if (lift := season_moves.lift_payload(built)) is not None else {}),
     }
 
 
