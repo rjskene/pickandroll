@@ -1408,6 +1408,13 @@ run.
     exact one: two different sets of the same worth serve a seat alike, and a seat whose
     surrogate found them failed. The count of days on which the two sets are equal stays in
     the row as information (`matched`); it no longer decides.
+  - On the real replay (the 2024 season drafted on `prior`, path 0; the look of 2026-11-19): the
+    gate passes in both head-to-head formats, each of the three seats in each. The rule it
+    replaced failed the same records in both: two of the three seats under one win per matchup,
+    and all three under every category, had fewer than four days of equal sets. One seat under
+    one win per matchup passes close to the bar, and by the sum: on two of its days the
+    surrogate keeps less than the share needed of that day's gain, and its other days make it
+    up. One season, one seed and one path: one replay's answer, not a general limit.
   - A row's `detail`: `matched` of the `of` days compared, the two gains (`gain`, `exact` and
     `surrogate`), the share kept (`kept`, the surrogate's gain over the exact search's; null
     where the exact gain is not above 0, which leaves no share to name) and the share needed
