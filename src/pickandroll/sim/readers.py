@@ -34,6 +34,10 @@ from .state import Member
 SIM_DIR = Path("sim")
 FIT_DIR = SIM_DIR / "fit"
 RUNS_DIR = SIM_DIR / "runs"
+#: The screens' folders (#172, PR H1): one a screen, a file a played pair and the screen's record.
+SCREENS_DIR = SIM_DIR / "screens"
+#: A screen's record in its folder.
+SCREEN_FILE = "screen.json"
 #: The confirmation season's ledger (#172, PR D2): one JSON line a written run that names it.
 LEDGER = SIM_DIR / "confirmation-looks.jsonl"
 LOGS_DIR = Path("external") / "espn" / "gamelogs"
@@ -426,6 +430,70 @@ def write_run(data_dir: Path, payload: Mapping[str, Any]) -> Path:
     return path
 
 
+def screen_dir(data_dir: Path, name: str) -> Path:
+    """A screen's folder under ``data/sim/screens/``, its name made safe as a run's is."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name)[:60] or "screen"
+    return data_dir / SCREENS_DIR / safe
+
+
+def _write_whole(path: Path, payload: Mapping[str, Any]) -> Path:
+    """``payload`` at ``path``, whole or not at all: written beside it and moved into place, so
+    a run stopped mid-write leaves no half file a later piece would read as a result."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(json.dumps(payload, indent=1, sort_keys=True, default=str))
+    partial.replace(path)
+    return path
+
+
+def _read_whole(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        got = json.loads(path.read_text())
+    except ValueError as e:
+        raise SimReadError(f"{path} is not JSON: {e}") from None
+    if not isinstance(got, dict):
+        raise SimReadError(f"{path} is not a record")
+    return got
+
+
+def read_screen(data_dir: Path, name: str) -> dict[str, Any] | None:
+    """A screen's record (:data:`SCREEN_FILE` in its folder); None when the screen has none yet."""
+    return _read_whole(screen_dir(data_dir, name) / SCREEN_FILE)
+
+
+def write_screen(data_dir: Path, name: str, record: Mapping[str, Any]) -> Path:
+    """A screen's record in its folder, replacing the one before; the fit's hash and the hold-out
+    must be in it, as in every run's."""
+    for key in ("fit_sha", "hold_out"):
+        if key not in record:
+            raise ValueError(f"a screen's record names {key}")
+    return _write_whole(screen_dir(data_dir, name) / SCREEN_FILE, record)
+
+
+def screen_pair_path(data_dir: Path, name: str, key: str) -> Path:
+    """Where a screen keeps the pair ``key``'s record (a lever's name and its nudge's)."""
+    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in key)
+    if safe + ".json" == SCREEN_FILE:
+        raise ValueError(f"a pair named {key!r} would be the screen's own record")
+    return screen_dir(data_dir, name) / f"{safe}.json"
+
+
+def read_screen_pair(data_dir: Path, name: str, key: str) -> dict[str, Any] | None:
+    """A played pair's record in a screen's folder; None when the pair has none (not played)."""
+    return _read_whole(screen_pair_path(data_dir, name, key))
+
+
+def write_screen_pair(data_dir: Path, name: str, key: str, payload: Mapping[str, Any]) -> Path:
+    """A played pair's record, as ``replay`` would write it (:func:`write_run`'s conditions), in
+    the screen's folder."""
+    for k in ("fit_sha", "hold_out"):
+        if k not in payload:
+            raise ValueError(f"a run payload names {k}")
+    return _write_whole(screen_pair_path(data_dir, name, key), payload)
+
+
 def append_look(data_dir: Path, record: Mapping[str, Any]) -> tuple[int, Path]:
     """One line for a written run that names the confirmation season, appended to the ledger
     (:data:`LEDGER`) as ``{"look": n, **record}``: ``n`` the line's number, and the ledger's
@@ -446,6 +514,8 @@ __all__ = [
     "PERIOD_ONE",
     "PERIOD_SOURCE",
     "RUNS_DIR",
+    "SCREENS_DIR",
+    "SCREEN_FILE",
     "SimReadError",
     "belief_weights",
     "code_sha",
@@ -456,8 +526,14 @@ __all__ = [
     "newest_fit",
     "period_date",
     "prior_rates",
+    "read_screen",
+    "read_screen_pair",
     "replay_lines",
     "run_path",
+    "screen_dir",
+    "screen_pair_path",
     "seasons_on_file",
     "write_run",
+    "write_screen",
+    "write_screen_pair",
 ]

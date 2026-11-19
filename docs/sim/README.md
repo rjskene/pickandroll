@@ -29,7 +29,7 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 `pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
-`shapes`, `bids`) for any way to a file, a process or the network: none of them imports
+`shapes`, `bids`, `screen`) for any way to a file, a process or the network: none of them imports
 `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`,
 `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only `run.py` uses `os`, for the
 worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -552,6 +552,10 @@ Each command runs as `python -m pickandroll.sim <command>`:
   confirmation season because a gate needs no look at it), drafted on the forecaster named
   (default `prior`); since the standalone cut it is the only gate (**The gates as they stand**).
   `--h2h one_win|each_category` names the format it plays (default `one_win`).
+- `screen --arm BASE.json [--levers NAME ...]`: each lever of a fixed list nudged once against
+  the baseline arm, every pair played as `replay --arms` plays one, and a table of what moved
+  (**The screen**). It takes `replay`'s flags for the cells and the world, `--max-minutes` to play
+  a piece of it, and writes a folder under `data/sim/screens/`.
 
 An arm's spec file names its tier, every one of the twelve knobs, its opponents and what it
 executes, may name its four fields (their defaults otherwise) and may name the fit it was written
@@ -1467,6 +1471,154 @@ run.
   are in its measure (the matchup's odds by default). Under `each_category` its answers are the
   ones before the format PR. The block's `rules` names the format; the record holds no
   `measure` (the format's words say it).
+
+## The screen (`sim/screen.py`, `cli.cmd_screen`, PR H1)
+
+A screen answers one question: **which levers move a season at all?** It nudges each lever once
+against a baseline arm, on the same paths, and lists what moved. It chooses no value, writes no
+knob file and reads no live league.
+
+    python -m pickandroll.sim screen --arm BASE.json [--levers NAME ...] [replay's flags]
+
+- `--arm` is the baseline. For each lever, arm A is the baseline on the cheapest tier that reads
+  the lever, set to whatever else makes it read, and arm B is A with the one nudge. The row and
+  the pair's record say what both arms were set to.
+- `--levers` names a subset; the default is the whole list. The rows always come in the list's
+  order.
+- The cells and the world are named with `replay`'s flags: `--seasons` (default the latest season
+  on file that is neither the hold-out nor the confirmation season), `--forecasters`, `--paths`
+  (default 48), `--seed`, `--workers`, the league's shape and rules, the table, the waivers,
+  `--rival-bids`, `--name`, `--dry-run`, `--announced`.
+- The hold-out is refused as everywhere. The confirmation season is refused too: a screen is a
+  search.
+
+**A screen is replays.** Each pair is planned, played, audited and recorded by the code `replay`
+plays a pair with (`cli.replay_plan`, `replay_tasks`, `replay_payload`, which `cmd_replay` now
+calls too): the same world, the same paired paths, the same audit, counts and record. `screen`
+adds the list, the loop and the table, and nothing to a season. A `replay` run is main's, key for
+key, and `replay_version` did not move.
+
+**The list** is a table in the code (`screen.LEVERS`), written before any result. A lever is
+added by the PR that builds it, and no flag invents a nudge.
+
+| lever | nudge | tier | both arms are set to |
+|---|---|---|---|
+| `protection_floor` | one step down and one step up | surrogate | |
+| `daily_cap` | minus 1 and plus 1 | surrogate | |
+| `plan_floor_cats`, `plan_floor_points` | one step each way | exact | the week plan drawn and executed |
+| `horizon_weight` | to each neighbour on the frontier | exact | `executes: weighted` |
+| `faab_sizing` | to 0.5 and to 2 | surrogate | |
+| `season_weight` | plus a quarter of the run's season scale, and plus a half | surrogate | |
+| `playoff_weight` | to 1.5 | surrogate | a season weight: the baseline's, or with none a quarter of the season scale |
+| `pool` | to 45 | surrogate | |
+| `min_gain` | twice the baseline's | surrogate | |
+| `weeks_ahead` | to 6 | surrogate | |
+| `surrogate_days` | Monday only | surrogate | |
+| `executes` | to `weighted` | exact | |
+| `with_plan`, `execute_plan` | each flipped | exact | |
+| `system` | to each other source; to the mix at 0.5 | surrogate | |
+| `blend` | to 0.25 and to 0.75 | surrogate | `system: blend` (the mix at 0.5 when the baseline names none) |
+
+The tier each lever is played on, in both arms, whatever tier the baseline names (the cheapest
+that reads the lever):
+
+- **the surrogate tier**, eleven levers: `protection_floor`, `daily_cap`, `faab_sizing`,
+  `season_weight`, `playoff_weight`, `pool`, `min_gain`, `weeks_ahead`, `surrogate_days`,
+  `system`, `blend`;
+- **the exact tier**, six levers: `plan_floor_cats`, `plan_floor_points`, `horizon_weight`,
+  `executes`, `with_plan`, `execute_plan`.
+
+No lever is played on the static or the ranking tier.
+
+- A lever with two nudges is two pairs.
+- A floor's step is the Monday step's own grid, read through `sim/engine.py` and never run: the
+  protection floor's step a game (0.05 in a categories league, 0.5 in a points league); a plan
+  floor times 1.5 up, never above four times its default, and divided by 1.5 down.
+- The frontier's order is the engine's (`week`, `even`, `natural`, `season`).
+- **The season scale** is measured once, before any pair: the mean, over the first cell's paths
+  that have one, of the baseline's scale on the surrogate tier on the path's first simulated day
+  (the ratio: the `season_weight` at which the season term is the week gain's size). No day is
+  played for it. The record keeps the figure, and a later piece uses the one on file.
+  - **A path can have no scale.** The scale is read from the seat's single swaps on that first
+    day. A path whose seat keeps its whole roster that day (the engine's keep rule protecting
+    every player it holds) has no swap to read, and so no ratio. The mean rests on the paths that
+    have one, and the record (`scale.paths` of `scale.of`) and the run's output say on how many
+    of how many, so a nudge sized on few paths is seen as one.
+  - A screen with no such path lists the season weight's nudges **not played**, and the playoff
+    weight's too when the baseline holds no season weight.
+  - Under a draft table this is common with `--seat-draft own`: the arm's seat drafts on
+    per-game value among rivals who draft from the board, so on the first day every player it
+    holds beats the best free agent. Under `market`, the default since the draft PR, the seat
+    drafts as the rival in its seat would, less the players it cannot value, and every path of
+    that PR's look had a scale ("The draft market", above). A seat that drafted as a rival in
+    full would not: a swap that drops a player with no season value has no season figure, and
+    such a seat held one on most paths.
+
+What a row can be:
+
+- **played**: the pair's figures (below).
+- **not read here**, with the reason: the run's league does not read the lever. A knob and a field
+  go by the reads table (`policy.reads`, `policy.field_reads`) on arm A as the pair would play
+  it. `executes` is read on the exact tier. A week plan that is only recorded changes no season,
+  so `with_plan` is read only by a baseline that executes the plan, and `execute_plan` only by
+  one that draws it.
+- **not played**, with the reason: the knob's own bounds refuse the nudge (the protection floor
+  below its minimum, a daily cap of 0 or 4, the `week` weight), the grid has no step (a plan
+  floor at its cap or at zero, twice a `min_gain` of 0), or no path has a season scale. The
+  lever's other nudge is still played.
+- **refused**: a nudge equal to the baseline's value (`pool` to 45 from 45) refuses the whole
+  screen by name, before any path. Leave the lever out with `--levers`, or screen another
+  baseline.
+- In a FAAB run a plan floor's row adds one sentence: a seat that bids also reads the floor as
+  its typical gain until ten moves, on the surrogate tier too, and that is not what the row
+  screens.
+
+**What a played row reports.** The paired difference B less A and its SE on every outcome the
+verdict knows (category wins, matchup wins, rank, playoff odds, title), by cell, and both arms'
+mechanism counts.
+
+- **A lever survives** when its difference clears one SE, either way, on the measure the league's
+  standings count: matchup wins in a one-win league and in a points league, category wins where
+  every category is a result. With more than one cell, clearing it in one is enough.
+- **Mechanism first.** A lever whose two arms' counts (the same adds, claims, bids and stints)
+  and outcomes are equal on every standing path is marked "did nothing" and does not survive:
+  the two arms played one season, and its difference is zero by construction. Both arms play
+  one world, so equal counts with an outcome that differs is a lever that changed which moves
+  were made, not how many; it did something, and the row keeps both facts (`counts_equal`,
+  `outcomes_equal`).
+- The table prints every row in the list's order, then the survivors.
+
+**What a screen cannot say.** One season, one forecaster and forty-eight paths by default, and a
+lenient bar by design. A survivor is a candidate for the tune, not a finding; a lever that does
+not survive one screen is not shown to be idle in another league, season or baseline. The SE is
+over the paths, not over the season's own chance.
+
+**It survives the quiet windows.** A long screen is hours, and no job crosses a window.
+
+- Each pair is its own unit. When it ends its record is written to
+  `data/sim/screens/<name>/<lever>-<nudge>.json`: the pair's record as `replay` writes it, with
+  one `screen` block (the screen's name and version, the row, and its result).
+- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 1, the
+  code's commit, the fit's hash, the season scale, the measure and the rule, every row, the
+  survivors and what is left. Everything that is a time sits under its `timing` (each pair's
+  estimate, each piece's start and end), so a screen played in pieces records what one played
+  unbroken does, apart from `timing`. It is written when a piece starts, after every pair and
+  when the piece ends.
+- Running the same command again plays only the pairs with no record yet. It first checks the
+  spec against the one the folder was started with: the baseline arm, the levers named, the
+  world's flags, `screen_version`, `replay_version`, the fit's hash and, when the rivals bid on
+  the price book (`--rival-bids book`), the book's. Another spec is refused by name. Each piece records the code's commit it ran on, and a piece on another commit than
+  the first says so. A run with nothing left to play is no piece: it writes the record again
+  from the pairs' files and prints the table.
+- `--max-minutes N` starts no pair whose estimate would pass N minutes from the start; the screen
+  stops cleanly and says what is left.
+- **The estimate.** Before any pair is played, one task of each pair still to play is timed, on
+  the run's workers (a pair timed by an earlier piece is not timed again; the task timed is the
+  pair's first, so it is not played twice). `--dry-run` prints the list as it would be played,
+  each pair's estimate and the total, audits the timed tasks and writes nothing.
+- **The guard.** The rule for a run over an hour (`--announced`) reads the whole screen's
+  estimate, pairs already played included, whatever a piece of it takes. The routines' window
+  is read against the piece: what is left, or `--max-minutes` when that is less.
 
 ## Runs
 
