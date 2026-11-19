@@ -352,6 +352,30 @@ def test_a_won_claim_joins_the_season_s_winning_bids_and_its_team_s_value_won():
     assert initial(setup).recent_by == {}
 
 
+def test_a_claim_s_value_is_no_part_of_the_key_two_seasons_share_a_decision_on():
+    """``SimState.key`` is what a decision depends on: two seasons of a pair with one key share
+    a rival's solve. A claim's value is what its bid was sized on, read by the counts alone, so
+    two states apart on an open claim's value only (one move, one bid, one clear date) are one
+    key, as on main, where a claim held no value: a pair that names no ``bid`` shares what it
+    shared. Every other part of a claim still parts the keys."""
+    _, state, x, drop = morning()
+    c = replace(claim(x, drop, state.day + 2 * DAY, 3), value=0.4)
+    one = replace(state, claims={2: (c,)})
+    two = replace(state, claims={2: (replace(c, value=0.6),)})
+    assert one != two and one.claims != two.claims
+    assert one.key() == two.key()
+    assert c.value == 0.4 and one.claims[2][0].value == 0.4  # the key changes no claim
+    for other in (
+        replace(c, bid=4),
+        replace(c, clears=c.clears + DAY),
+        replace(c, move=mv.Move(x, None)),
+        replace(c, week=2),
+        replace(c, churn=True),
+    ):
+        assert replace(state, claims={2: (other,)}).key() != one.key(), other
+    assert replace(state, claims={3: (c,)}).key() != one.key()
+
+
 # --------------------------------------------------------------------------- the decision
 @pytest.mark.parametrize("h2h", [ONE_WIN, EACH_CATEGORY])
 def test_a_decision_carries_the_gains_on_the_horizons_its_arm_s_bid_weighs(h2h):
@@ -483,7 +507,9 @@ def test_a_bid_that_weighs_the_season_reads_the_playoff_weight():
         assert policy.reads(named, flat) == policy.reads(bare, flat)
         for shape in (policy.Shape(), policy.Shape(waivers="priority")):
             assert policy.reads(named, shape) == policy.reads(bare, shape)
-        other = replace(bare, bid=bp.of({"week": 1, "routine": 1}))
+        # (A block that leaves the three weeks a weight: one that leaves them none moves the
+        # plan floor's row, the next test.)
+        other = replace(bare, bid=bp.of({"week": 0.75, "routine": 1}))
         assert policy.reads(other, faab) == before
     ranking = replace(rn.Arm("X", "ranking", KNOBS, {}), bid=weighs)
     assert policy.reads(ranking, faab)["playoff_weight"] != policy.READ
@@ -498,6 +524,87 @@ def test_a_bid_that_weighs_the_season_reads_the_playoff_weight():
         "a FAAB run by a seat that bids (the exact or the surrogate tier, a mirror rival) on an "
         "arm whose bid weighs the season (bid.season above 0), in a league whose bracket is read"
     )
+
+
+def test_a_bid_that_gives_the_three_weeks_no_weight_reads_no_plan_floor():
+    """The one row that loses a reader (found in review). In a FAAB league a seat that bids
+    reads its league's plan floor for one thing: its typical gain on the three weeks until ten
+    moves. An arm whose ``bid`` gives the week and the season the whole weight never reads that
+    typical for a move of its set, so no value of the floor can move a bid of a surrogate seat
+    or of a mirror rival: the row says so, and two arms apart only on the floor are one seat,
+    refused by name. An exact arm that draws and executes its week plan still reads the floor
+    (the plan's own, and a step's bid). No other row moves, and none at a weight above 0."""
+    every = policy.Shape(waivers="faab", h2h=EACH_CATEGORY)
+    points = policy.Shape(scoring="points", waivers="faab")
+    whole = bp.of({"week": 1})
+    assert whole.three == 0 and bp.of({"week": 0.5, "season": 0.5}).three == 0
+    for shape, name in ((every, "plan_floor_cats"), (points, "plan_floor_points")):
+        bare = rn.Arm("X", "surrogate", KNOBS, {})
+        named = replace(bare, bid=whole)
+        before, after = policy.reads(bare, shape), policy.reads(named, shape)
+        assert before[name] == policy.READ and after[name] == policy.NO_THREE
+        assert {k for k in policy.KNOBS if before[k] != after[k]} == {name}
+        halves = replace(bare, bid=bp.of({"week": 0.5, "season": 0.5}))
+        assert policy.reads(halves, shape)[name] == policy.NO_THREE
+        # A weight above 0 on the three weeks reads it, however small; so does an empty block.
+        for block in ({"week": 0.75}, {"week": 0.5, "season": 0.25}, {}):
+            assert policy.reads(replace(bare, bid=bp.of(block)), shape)[name] == policy.READ
+        # A mirror rival takes the arm's block, and reads no more than the arm's seat.
+        still = rn.Arm("X", "static", KNOBS, {})
+        assert policy.reads(still, shape, mirrored=True)[name] == policy.READ
+        assert policy.reads(replace(still, bid=whole), shape, True)[name] == policy.NO_THREE
+        # The exact tier: through its week plan when it draws and executes it, else not at all.
+        exact = rn.Arm("X", "exact", KNOBS, {}, bid=whole)
+        assert policy.reads(exact, shape)[name] == policy.NO_THREE
+        assert policy.reads(replace(exact, execute_plan=True), shape)[name] == policy.READ
+        assert policy.reads(replace(exact, bid=None), shape)[name] == policy.READ
+        # Outside a FAAB league the row is what it was, whatever the block.
+        flat = replace(shape, waivers="priority")
+        assert policy.reads(named, flat) == policy.reads(bare, flat)
+    # In a one-win league the floor is the engine's own for an arm that would read it; one that
+    # would not keeps its reason.
+    one = policy.Shape(waivers="faab")
+    surrogate = rn.Arm("X", "surrogate", KNOBS, {})
+    assert policy.reads(surrogate, one)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
+    assert policy.reads(replace(surrogate, bid=whole), one)["plan_floor_cats"] == policy.NO_THREE
+    # Two arms apart only on the floor: two seats with no bid named, one seat under the block.
+    a = rn.Arm("A", "surrogate", KNOBS, {})
+    b = replace(a, name="B", knobs={**KNOBS, "plan_floor_cats": 0.5})
+    assert rn.same_seat(a, b, [every], rivals=False) is None
+    (why,) = rn.same_seat(replace(a, bid=whole), replace(b, bid=whole), [every], rivals=False)
+    assert why.startswith(f"plan_floor_cats ({policy.NO_THREE}; read by ")
+    assert "bid.week and bid.season sum to 1" in policy.NO_THREE
+    # One of the two at a weight above 0 reads it: two seats.
+    part = replace(b, bid=bp.of({"week": 0.75}))
+    assert rn.same_seat(replace(a, bid=bp.of({"week": 0.75})), part, [every], False) is None
+
+
+def test_two_arms_apart_only_on_a_pace_at_k_0_are_the_same_seat_by_name():
+    """A pace at ``k`` 0 follows no path, whatever its ``shape`` and ``reserve``: such a block
+    bids as the block without the pace (found in review). Two arms apart only on that are one
+    seat in a FAAB league too, refused by name: two paces at ``k`` 0 on two paths, and one
+    against no ``bid`` at all. A pace that follows its path is read."""
+    faab = policy.Shape(waivers="faab")
+    a = rn.Arm("A", "surrogate", KNOBS, {})
+    still = replace(a, name="B", bid=bp.of({"pace": {"k": 0, "shape": 3, "reserve": 0.9}}))
+    other = replace(a, name="C", bid=bp.of({"pace": {"k": 0, "shape": 1, "reserve": 0.2}}))
+    words = [f"bid ({policy.PACE_AT_REST}; read by {policy.PACE_WHEN_READ})"]
+    for one, two in ((a, still), (still, other), (replace(a, bid=bp.DEFAULT), still)):
+        assert rn.same_seat(one, two, [faab], rivals=False) == words
+        assert rn.same_seat(two, one, [faab, policy.Shape()], rivals=False) == words
+    assert "k 0" in policy.PACE_AT_REST and "above 0" in policy.PACE_WHEN_READ
+    # With another key apart beside it the block is read, and so is a pace above k 0.
+    dollar = bp.of({"pace": {"k": 0, "shape": 3, "reserve": 0.9}, "routine": 1})
+    assert rn.same_seat(a, replace(a, name="D", bid=dollar), [faab], rivals=False) is None
+    paced = replace(a, name="E", bid=bp.of({"pace": {"k": 0.5, "shape": 3, "reserve": 0.9}}))
+    assert rn.same_seat(still, paced, [faab], rivals=False) is None
+    # Where nobody reads a bid at all, the league's reason is the one given, as for any block.
+    (why,) = rn.same_seat(a, still, [policy.Shape(waivers="priority")], rivals=False)
+    assert why == (
+        f"bid (waivers by priority carry no budget and no bid; read by {policy.BID_WHEN_READ})"
+    )
+    # Alike in the block as named: one arm twice, a check that the difference is zero.
+    assert rn.same_seat(still, replace(still, name="F"), [faab], rivals=False) is None
 
 
 def test_two_arms_apart_only_on_a_bid_nobody_reads_are_the_same_seat_by_name():

@@ -98,6 +98,10 @@ class Claim:
         """Whether its add takes an active spot of its own: no drop, or a churn's held drop."""
         return self.move.drop is None or self.churn
 
+    def keyed(self) -> Claim:
+        """The claim as a decision reads it (``SimState.key``): without its value."""
+        return replace(self, value=0.0) if self.value else self
+
 
 @dataclass(frozen=True)
 class Resolved:
@@ -314,7 +318,9 @@ class SimState:
     def key(self) -> tuple[Any, ...]:
         """What a decision depends on: two arms with the same key share one solve. In a waiver
         league also who is on waivers until when, the claims placed and the churns' held drops
-        due (#172, PR Fa); the priority is read by no decision."""
+        due (#172, PR Fa); the priority is read by no decision, and neither is a claim's value
+        (PR F2: what its bid was sized on, the counts' alone), so the key holds each claim
+        without it and two seasons apart on that only share what they shared before it."""
         base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),
@@ -328,7 +334,7 @@ class SimState:
         return (
             *base,
             tuple(sorted(self.waivers.items())),
-            tuple(sorted((t, c) for t, c in self.claims.items() if c)),
+            tuple(sorted((t, tuple(c.keyed() for c in cs)) for t, cs in self.claims.items() if cs)),
             tuple(sorted((t, d) for t, d in self.pending_drops.items() if d)),
         )
 

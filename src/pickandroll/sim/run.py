@@ -185,7 +185,9 @@ def same_seat(
     construction. None when they differ in anything else, in a name one of them reads in some
     shape, or in nothing at all (the same arm twice, a check that the difference is zero). The
     arms' ``bid`` blocks (PR F2) are one more such name, compared as the policy in force (an arm
-    that names none holds the default member) and read as ``policy.bid_reads`` says."""
+    that names none holds the default member) and read as ``policy.bid_reads`` says; where the
+    block is read, two blocks that bid alike on every claim (``BidPolicy.bids``: apart only on
+    a pace at ``k`` 0, which follows no path) are still one seat, by that reason."""
 
     def identity(arm: Arm) -> tuple[Any, ...]:
         return (
@@ -202,7 +204,8 @@ def same_seat(
     names = [k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]] + [
         f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)
     ]
-    bids = (a.bid or bp.DEFAULT) != (b.bid or bp.DEFAULT)
+    rule_a, rule_b = a.bid or bp.DEFAULT, b.bid or bp.DEFAULT
+    bids = rule_a != rule_b
     if not names and not bids:
         return None
     out = []
@@ -228,9 +231,12 @@ def same_seat(
             for arm in (a, b)
             for shape in shapes
         ]
-        if policy.READ in rows:
+        if policy.READ not in rows:
+            out.append(f"bid ({rows[0]}; read by {policy.BID_WHEN_READ})")
+        elif rule_a.bids() != rule_b.bids():
             return None
-        out.append(f"bid ({rows[0]}; read by {policy.BID_WHEN_READ})")
+        else:
+            out.append(f"bid ({policy.PACE_AT_REST}; read by {policy.PACE_WHEN_READ})")
     return out
 
 

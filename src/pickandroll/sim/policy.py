@@ -1240,6 +1240,20 @@ WHEN_READ_FAAB: Mapping[str, str] = {
 }
 #: What makes an arm's ``bid`` block read (PR F2), for the refusal's message.
 BID_WHEN_READ = "a seat that bids in a FAAB league: the exact or the surrogate tier, a mirror rival"
+#: Why two ``bid`` blocks apart only on a pace at ``k`` 0 are one seat where the block is read
+#: (``bid_policy.BidPolicy.bids``), and what would read the difference.
+PACE_AT_REST = (
+    "the two blocks are apart only on a pace at k 0, which follows no path: its shape and its "
+    "reserve move no bid, and it bids as no pace does"
+)
+PACE_WHEN_READ = "a pace whose k is above 0"
+#: Why a plan floor is not read in a FAAB run by a seat that bids on an arm whose ``bid`` gives
+#: the three weeks no weight (PR F2): the floor is that horizon's typical gain until ten moves,
+#: and the block never reads it for a move of the set.
+NO_THREE = (
+    "the arm's bid gives the three weeks no weight (bid.week and bid.season sum to 1), and a "
+    "seat that bids reads the floor only as its typical gain on the three weeks"
+)
 
 #: What else limits where a knob is read (the format PR), said in the refusal's message after
 #: :data:`WHEN_READ`'s words and :data:`WHEN_READ_FAAB`'s: the categories plan floor is read only
@@ -1312,12 +1326,14 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     # A seat bids by the live rule in a FAAB league on the exact or the surrogate tier, and so
     # does a mirror rival on the arm's knobs (PR Fb): its bid scales by the typical gain, which is
     # the plan floor until ten moves. The ranking tier holds no gain in the engine's units, so its
-    # claims bid $0 and it reads neither.
+    # claims bid $0 and it reads neither. That typical is the three weeks': an arm whose ``bid``
+    # gives the three weeks no weight (PR F2) never reads it for a move of its set, and then
+    # only the week plan's own route reads the floor (a step's bid with it).
     bids = shape.waivers == "faab" and odds
+    rule = getattr(arm, "bid", None)
+    three = rule is None or rule.three > 0
     for name, scoring in (("plan_floor_cats", "categories"), ("plan_floor_points", "points")):
-        if bids and shape.scoring == scoring:
-            why = READ
-        elif arm.tier != "exact":
+        if arm.tier != "exact":
             why = "only the exact tier draws a week plan"
         elif not arm.with_plan:
             why = "the arm draws no week plan"
@@ -1327,6 +1343,8 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
             why = f"a {shape.scoring} league"
         else:
             why = READ
+        if bids and shape.scoring == scoring and why != READ:
+            why = READ if three else NO_THREE
         # In a one-win league the engine's floor is its own and the knob reaches nothing (the
         # format PR); a seat that would not read it anyway keeps its reason.
         if why == READ and name == "plan_floor_cats" and shape.one_win:
@@ -1367,7 +1385,6 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
         out["playoff_weight"] = READ
     # PR F2: a bid that weighs the season reads the season term's figure, which counts a bracket
     # game ``playoff_weight`` times, whatever the arm's ``season_weight``.
-    rule = getattr(arm, "bid", None)
     if bids and rule is not None and rule.season > 0 and shape.bracket:
         out["playoff_weight"] = READ
     return {k: out[k] for k in KNOBS}
