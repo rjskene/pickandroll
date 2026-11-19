@@ -280,7 +280,9 @@ page, from PR 2:
   the keep rule protects (read from the engine, never re-solved, held players included, #221); a
   drop on a claim already placed and not yet processed (#332; a claim lost or lapsed frees him); a
   move flagged season-costly; an add the league dropped within the waiver days (or one the set
-  drops); below the noise floor; the week of its clear date's adds not fully read (the solve's
+  drops); below the noise floor; held for the week's reserve or added within the re-cut days
+  (#436, the solve's logged rules: docs/ADD_DROP.md, "The add reserve and the re-cut rule"); the
+  week of its clear date's adds not fully read (the solve's
   `adds.complete` false: the transactions reads, joined, do not reach the week's start, so the
   count is a floor and no add of the week is placed on it, #383); no adds left in the week of its
   clear date; over the day's cap.
@@ -1331,6 +1333,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 | the daily move cap | section 2 | 1 to 3 |
 | `three_weight`, the three weeks' weight in a week plan's score, default 0.33 | section 2 (#332), logged with each decision | 0 to 1; no Monday rule moves it |
 | the breakout lift's weights, floors and marginal count (#435, `lift_*`), defaults 0.5/0.75/1.0, 0.10/0.15/0.25 and 3 | the moves solve (`docs/ADD_DROP.md`, "The lift"), logged with a decision only when a candidate is lifted | weights 0 to 1, floors 0 to 0.5, the count 0 to 10; read, never stepped; outside `LIVE_KNOBS` |
+| the add reserve and the re-cut rule (#436, `reserve_adds`, `reserve_release`, `reserve_price`, `recut_days`), defaults 1, Friday, the typical gain and 3 | the moves solve and the queue (`docs/ADD_DROP.md`, "The add reserve and the re-cut rule"), logged with a decision only when a rule applies | adds 0 to 3, days 0 to 14 (whole numbers), the release a weekday, the price none or 0 and above; read, never stepped; outside `LIVE_KNOBS` |
 
 **The protocol.** One knob changes per week, pooled across the armed leagues; where the leagues
 allow it, half of them take the change and half keep the setting (A/B), since nine to twelve
