@@ -3136,9 +3136,9 @@ def main(argv: list[str] | None = None) -> int:
         "--seat-draft",
         choices=adp.SEAT_DRAFTS,
         default=None,
-        help="with --adp espn: how an arm's seat drafts: market, as a rival does, from the "
-        "market's board with a draw of its own (the default); own, on its own forecaster's "
-        "per-game value alone, the rule before 2026-11-18",
+        help="with --adp espn: how an arm's seat drafts: market, as the rival in its seat does, "
+        "less the players its own forecaster cannot value (the default); own, on its own "
+        "forecaster's per-game value alone, the rule before 2026-11-18",
     )
     re_.add_argument(
         "--grid",

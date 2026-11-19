@@ -923,13 +923,29 @@ never refreshed. The table pools drafts of every scoring (above), so it is not a
 league's. And the figure is the season's average as the log holds it, so the few drafts held after
 the season began are pooled in: it is not strictly a preseason figure.
 
-The arm's seat drafts on per-game value alone, with no regard for the games a player is expected to
-miss or for where the room would take him; a market prices both. On the logs on file the effect ran
-both ways by forecaster: under `espn` the seat's rosters held clearly more players who then barely
-played than a rival's, under `prior` it ran the other way or nearly even. So the seat can finish
-near the top or near the bottom of the room on every path. The paired change in playoff odds is
-then zero with no spread, and the advisory verdict cannot hold in that cell; rank and category wins
-still separate two arms. How the arm's seat should draft is open with the user.
+**The seat's draft, by rule.** Under `own` the arm's seat drafts on per-game value alone, with no
+regard for the games a player is expected to miss or for where the room would take him; a market
+prices both. On the logs on file the effect ran both ways by forecaster: under `espn` the seat's
+rosters held clearly more players who then barely played than a rival's, under `prior` it ran the
+other way or nearly even. So the seat can finish near the top or near the bottom of the room on
+every path. The paired change in playoff odds is then zero with no spread, and the advisory verdict
+cannot hold in that cell; rank and category wins still separate two arms. That is what the user
+ruled on (2026-11-18): under a table the arm's seat drafts as a rival does, `--seat-draft market`,
+the default.
+
+Under `market` the seat's roster is an average manager's on the table and not what its forecaster
+likes, so nothing a seat could gain at the draft is in a result. These limits stay:
+
+- **The seat never drafts a player its forecaster has no line for**: the season's rookies under
+  `prior` and `marcel`, a few rotation players under `espn`. The rivals do. So the season's best
+  newcomers always start on rivals' rosters, and the seat meets them only as adds.
+- **The rivals who draft such players value them at nothing until they have played**, on the
+  run's forecaster as the seat would. A rival on the season view drops some of them in the first
+  days; a static rival holds them.
+- **A starting belief taken from the market** for a player with no line (so that a seat could
+  hold a high pick it cannot project) is a possible later PR. It is not built.
+- The seat passes on any player its own forecaster cannot value, listed by the table or not. An
+  arm on a forecaster of its own therefore drafts a little apart from an arm on the run's.
 
 ## The league shapes (`sim/shapes.py`, PR D4b)
 
