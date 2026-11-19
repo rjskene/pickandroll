@@ -937,6 +937,16 @@ def own_projection(
     return projection if label is None or label == run_label else forecasts[label]
 
 
+def draft_of(market: Market, seed: int, path: int, own: Mapping[int, Any]) -> adp.Draft:
+    """A path's draft on a ``market`` with the arms' seats ``own`` (by team, each arm's
+    forecaster's projection), under the market's rule. ``adp.OWN_DRAFT`` is ``adp.Draft``'s own
+    default and names nothing more, as before the draft PR."""
+    assert market is not None
+    if market[2] == adp.OWN_DRAFT:
+        return adp.Draft(market[0], market[1], seed, path, own)
+    return adp.Draft(market[0], market[1], seed, path, own, rule=market[2])
+
+
 def room_draft(
     market: Market,
     arms: Mapping[str, rn.Arm],
@@ -949,22 +959,20 @@ def room_draft(
     league: shapes.LeagueShape = shapes.FIXED,
     turn: int | None = None,
 ) -> adp.Draft | None:
-    """A room's draft under a ``market`` on one path (#172, PR D4a). Every seat holds an arm:
-    under ``adp.MARKET_DRAFT`` (the draft PR, the default) each drafts as the rival in its seat
-    would, so the draft names no seat; under ``adp.OWN_DRAFT`` every seat drafts on its arm's
-    own board. None without a market. The seats are the path's league shape's and the arms are
-    rotated by its ``turn`` (#172, PR D4b; the path's on one shape); the rivals' draws stay on
-    the path."""
+    """A room's draft under a ``market`` on one path (#172, PR D4a). Every seat holds an arm
+    and is named with its arm's forecaster's projection: under ``adp.MARKET_DRAFT`` (the draft
+    PR, the default) each drafts as the rival in its seat would, less the players its own arm
+    cannot value; under ``adp.OWN_DRAFT`` every seat drafts on its arm's own board. None
+    without a market. The seats are the path's league shape's and the arms are rotated by its
+    ``turn`` (#172, PR D4b; the path's on one shape); the rivals' draws stay on the path."""
     if market is None:
         return None
-    if market[2] == adp.MARKET_DRAFT:
-        return adp.Draft(market[0], market[1], seed, path, {})
     rotation = path if turn is None else turn
     own = {
         t: own_projection(arms[name].forecaster, run_label, projection, forecasts)
         for t, name in rn.rotate(seats, league.ids, rotation).items()
     }
-    return adp.Draft(market[0], market[1], seed, path, own)
+    return draft_of(market, seed, path, own)
 
 
 def pair_setups(
@@ -986,18 +994,19 @@ def pair_setups(
 ) -> dict[str, Any]:
     """The pair's league on one path, by arm (#172, PR D4a), in the path's league shape (#172,
     PR D4b) under the run's league rules (PR D4c): one league drafted on the run's forecaster
-    without a ``market``. Under one whose arms' seats draft as rivals (``adp.MARKET_DRAFT``, the
-    draft PR, the default), every seat drafts on a rival's board, the arm's seat's on the draw
-    the rival in that seat on that path would take: the draft reads no arm, so the two arms
-    share one league whatever they believe. Under ``adp.OWN_DRAFT`` the
-    arm's seat drafts on the arm's own board and every other seat on a rival's board: arms whose
+    without a ``market``. Under one, the arm's seat drafts by the market's rule (the draft PR)
+    and every other seat on a rival's board: under ``adp.MARKET_DRAFT``, the default, as the
+    rival in its seat would, less the players the arm's forecaster cannot value; under
+    ``adp.OWN_DRAFT`` on the arm's own board. Arms whose
     draft-day beliefs are one label share one league (the same object), arms on two labels get
-    one each. The arm's seat is the shape's ``teams[turn mod n]`` (the path's turn; the path
-    itself on one shape)."""
-    if market is None or market[2] == adp.MARKET_DRAFT:
-        draft = None if market is None else adp.Draft(market[0], market[1], seed, path, {})
+    one each. Under ``adp.MARKET_DRAFT`` two arms on two labels share one league all the same
+    when their two drafts come out the same league (every roster equal: the two forecasters
+    pass on the same players, or on players the seat never reached): nothing else of a setup
+    reads the arm. The arm's seat is the shape's ``teams[turn mod n]`` (the path's turn; the
+    path itself on one shape)."""
+    if market is None:
         setup = replay_setup_of(
-            season, lines, members, scheduled, projection, draft, league, league_rules
+            season, lines, members, scheduled, projection, None, league, league_rules
         )
         return dict.fromkeys(pair, setup)
     me = league.ids[(path if turn is None else turn) % league.teams]
@@ -1009,10 +1018,19 @@ def pair_setups(
             setups[k] = same
             continue
         own = own_projection(labels[k], run_label, projection, forecasts)
-        draft = adp.Draft(market[0], market[1], seed, path, {me: own})
-        setups[k] = replay_setup_of(
-            season, lines, members, scheduled, projection, draft, league, league_rules
+        setup = replay_setup_of(
+            season,
+            lines,
+            members,
+            scheduled,
+            projection,
+            draft_of(market, seed, path, {me: own}),
+            league,
+            league_rules,
         )
+        if market[2] == adp.MARKET_DRAFT:
+            setup = next((x for x in setups.values() if x.rosters == setup.rosters), setup)
+        setups[k] = setup
     return setups
 
 
@@ -1037,8 +1055,8 @@ def task_replay(
     league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> dict[str, Any]:
     """One task of the room on a replay. Under a ``market`` (#172, PR D4a) every seat holds an
-    arm: each drafts as a rival would, or under ``adp.OWN_DRAFT`` on its arm's own board
-    (:func:`room_draft`). The path plays
+    arm: each drafts as the rival in its seat would less the players its arm cannot value, or
+    under ``adp.OWN_DRAFT`` on its arm's own board (:func:`room_draft`). The path plays
     its league shape on ``grid`` with the arms rotated by its turn (``shapes.visit``, #172, PR
     D4b), under the run's ``league_rules`` (PR D4c); the world's draws stay on ``(seed,
     path)``."""
@@ -1112,11 +1130,13 @@ def task_paired(
     second, through one world (``run.paired``); every other seat is each arm's rivals, on the
     run's forecaster. ``pair`` names the two arms' keys in ``arms`` (``a`` and ``b``).
 
-    Under a ``market`` (#172, PR D4a) the arm's seat drafts on the arm's own board and the other
-    seats on rivals' boards. When the two arms' draft-day beliefs are one label there is one
-    draft and one league, as before; when they differ each arm's season is its own league from
-    the draft on (``run.paired_apart``): two setups and two worlds on the same ``(seed, path)``,
-    so the world's draws and the rivals' boards stay common.
+    Under a ``market`` (#172, PR D4a) the arm's seat drafts by the market's rule (the draft PR:
+    as the rival in its seat less the players the arm cannot value, or on the arm's own board)
+    and the other seats on rivals' boards. When the two arms' draft-day beliefs are one label
+    there is one draft and one league, as before; when they differ, and the two drafts are not
+    the same league (:func:`pair_setups`), each arm's season is its own league from the draft
+    on (``run.paired_apart``): two setups and two worlds on the same ``(seed, path)``, so the
+    world's draws and the rivals' boards stay common.
 
     The path plays its league shape on ``grid``, and the seat is the shape's ``teams[turn mod
     n]`` (``shapes.visit``, #172, PR D4b): both arms hold one shape and one seat. Every path
@@ -1206,10 +1226,11 @@ REPLAY_VERSION_WHY = (
     "14: the arm's seat's draft under a table (--adp espn): it drafts as a rival does, from the "
     "market's board (the listed players by average pick plus a draw at the spread, the unlisted "
     "below by the run's forecaster's draft-day value) on the draw the rival in that seat on that "
-    "path would take, where it drafted on its own forecaster's per-game value alone (the user's "
-    "ruling of 2026-11-18); both arms of a pair then share one draft whatever they believe; "
-    "--seat-draft own names the earlier rule and gives version 13's figures under a table, and "
-    "the draft block names the rule (seat_draft); a run without a table is version 13's. "
+    "path would take, less the players its own forecaster has no value for, where it drafted on "
+    "its own forecaster's per-game value alone (the user's ruling of 2026-11-18); two arms of a "
+    "pair on two beliefs share one draft wherever their drafts come out the same; --seat-draft "
+    "own names the earlier rule and gives version 13's figures under a table, and the draft "
+    "block names the rule (seat_draft); a run without a table is version 13's. "
     "13: the rivals' adds and bids: a market rival's opponents block may name view (draft, the "
     "draft-day ranking all season, the default; or season, the run's forecaster's per-game value "
     "that morning, a player heard out never picked) and among (one of its best few worth more "
@@ -1244,9 +1265,10 @@ ADP_SEAT = {
     adp.MARKET_DRAFT: (
         "an arm's seat's board: a rival's (each listed player's average pick plus a normal draw "
         "at the spread, the unlisted below by the run's forecaster's draft-day value), on the "
-        "draw the rival in that seat on that path would take, whatever the arm believes; the "
-        "arm's own forecaster does not enter the draft and sets the seat's beliefs from the "
-        "season's first day (the user's ruling of 2026-11-18; --seat-draft market, the default)"
+        "draw the rival in that seat on that path would take, less the players the arm's own "
+        "forecaster has no value for on draft day (a system or blend seat's stand-in belief): "
+        "it drafts as a rival does and passes on a player it cannot value (the user's ruling of "
+        "2026-11-18; --seat-draft market, the default)"
     ),
     adp.OWN_DRAFT: (
         "an arm's seat's board: its own forecaster's per-game value on draft day (a system or "
@@ -1265,11 +1287,12 @@ ADP_POOL = (
 #: 2026-11-18 answered.
 ADP_LIMIT = {
     adp.MARKET_DRAFT: (
-        "the arm's seat drafts as a rival does, so its roster is the room's average manager's "
-        "on the table and not what its own forecaster likes: the paired difference is about the "
-        "season's play, and nothing a seat could gain at the draft is in it; like a rival, the "
-        "seat can draft a listed player the run's forecaster does not project, whom it values at "
-        "zero until he plays"
+        "the arm's seat drafts as a rival does, so its roster is an average manager's on the "
+        "table and not what its own forecaster likes: nothing a seat could gain at the draft is "
+        "in a result; it never drafts a player its forecaster has no line for (a rookie under a "
+        "forecaster built on earlier seasons), where a rival does, so the season's best "
+        "newcomers always start on rivals' rosters; a starting belief taken from the market for "
+        "such a player is not built"
     ),
     adp.OWN_DRAFT: (
         "the arm's seat drafts on per-game value alone, with no regard for the games a player "
@@ -1282,8 +1305,8 @@ ADP_LIMIT = {
 #: What a pair's draft is, when the two arms share it.
 ADP_SHARED = {
     adp.MARKET_DRAFT: (
-        "one draft and one league, shared by both arms: the arms' seat drafts as a rival does, "
-        "on the same draw for either arm, so no arm's belief enters the draft"
+        "one draft and one league, shared by both arms: the arms' seat drafts as a rival does on "
+        "the same draw for either arm, and the two arms' forecasters pass on the same players"
     ),
     adp.OWN_DRAFT: "one draft and one league, shared by both arms",
 }
@@ -1291,8 +1314,8 @@ ADP_SHARED = {
 ADP_DRAFT = {
     adp.MARKET_DRAFT: (
         "snake in which each seat takes the best player left on its own board (adp): every "
-        "seat's on the season's table with a draw of its own, an arm's seat's as the rival in "
-        "its seat would draft"
+        "seat's on the season's table with a draw of its own, an arm's seat's the rival's in "
+        "its seat less the players its own forecaster cannot value"
     ),
     adp.OWN_DRAFT: (
         "snake in which each seat takes the best player left on its own board (adp): the "
@@ -1302,6 +1325,14 @@ ADP_DRAFT = {
 ADP_APART = (
     "the two arms' draft-day beliefs differ, so each arm's season is a league of its own from "
     "the draft on, on the same (seed, path) and the same rivals' boards: the pair shares no draft"
+)
+#: The same under ``adp.MARKET_DRAFT``, where two beliefs part a pair only on the paths where
+#: they pass on different players.
+ADP_APART_MARKET = (
+    "on some path the two arms' forecasters pass on different players, so there each arm's "
+    "season is a league of its own from the draft on, on the same (seed, path) and the same "
+    "rivals' boards; where the two drafts come out the same league the pair shares it "
+    "(drafts_per_path)"
 )
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
@@ -1332,23 +1363,12 @@ UNPROJECTED_NOTE = (
 )
 
 
-#: What the note adds where the arms' seats draft as rivals (#172, the draft PR).
-UNPROJECTED_MARKET = (
-    ". Under a table whose arms' seats draft as rivals do (--seat-draft market) the run's own "
-    "label is not zero by construction: a seat can draft a listed player the run's forecaster "
-    "does not project"
-)
-
-
-def unprojected_note(grid: shapes.Grid, seat_draft: str | None = None) -> str:
+def unprojected_note(grid: shapes.Grid) -> str:
     """:data:`UNPROJECTED_NOTE`, word for word on the fixed shape; on a grid the whole room is
-    the path's league's seats, not twelve (#172, PR D4b). Under a table whose arms' seats draft
-    as rivals (``seat_draft`` ``adp.MARKET_DRAFT``, the draft PR) it adds
-    :data:`UNPROJECTED_MARKET`."""
-    note = UNPROJECTED_NOTE
-    if grid is not shapes.FIXED_GRID:
-        note = note.replace("on all twelve (all)", "on all the path's league's seats (all)")
-    return note + UNPROJECTED_MARKET if seat_draft == adp.MARKET_DRAFT else note
+    the path's league's seats, not twelve (#172, PR D4b)."""
+    if grid is shapes.FIXED_GRID:
+        return UNPROJECTED_NOTE
+    return UNPROJECTED_NOTE.replace("on all twelve (all)", "on all the path's league's seats (all)")
 
 
 #: The printed line when a seat can hold drafted players its belief does not project.
@@ -1967,7 +1987,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"{table.at_ceiling} at the ceiling, log {sha[:12]}; spread {spread.base:g},"
             f"{spread.growth:g} given; the arms' seats draft "
             + (
-                "as rivals do (--seat-draft market)"
+                "as rivals do, less the players they cannot value (--seat-draft market)"
                 if seat_draft == adp.MARKET_DRAFT
                 else "on their own forecasters (--seat-draft own)"
             )
@@ -2233,7 +2253,6 @@ def cmd_replay(args: argparse.Namespace) -> int:
             league_rules.scoring,
             league_rules.waivers,
             league_rules.h2h,
-            seat_draft,
         )
         payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
     else:
@@ -2245,7 +2264,6 @@ def cmd_replay(args: argparse.Namespace) -> int:
             league_rules.scoring,
             league_rules.waivers,
             league_rules.h2h,
-            seat_draft,
         )
         if sources is not None:
             payload["result_is"] = ROOM_RESULT
@@ -2466,7 +2484,8 @@ def adp_block(
     }
     if paired:
         apart = any(2 in v for v in drafts.values())
-        out["pair"] = ADP_APART if apart else ADP_SHARED[rule]
+        parted = ADP_APART if rule == adp.OWN_DRAFT else ADP_APART_MARKET
+        out["pair"] = parted if apart else ADP_SHARED[rule]
     return out
 
 
@@ -2478,7 +2497,6 @@ def room_blocks(
     scoring: str = "categories",
     waivers: str = "none",
     h2h: str = ONE_WIN,
-    seat_draft: str | None = None,
 ) -> dict[str, Any]:
     """A room's figures, keyed by season and then by forecaster: each arm's outcomes and counts
     pooled over its seats and the paths that stand (the counts' note the run's ``waivers``',
@@ -2525,7 +2543,7 @@ def room_blocks(
             },
         },
         "unprojected": {
-            "note": unprojected_note(grid, seat_draft),
+            "note": unprojected_note(grid),
             "by_season": {
                 t: {label: unprojected_of(rows) for label, rows in d.items()}
                 for t, d in unprojected.items()
@@ -2763,7 +2781,6 @@ def paired_blocks(
     scoring: str = "categories",
     waivers: str = "none",
     h2h: str = ONE_WIN,
-    seat_draft: str | None = None,
 ) -> dict[str, Any]:
     """The pair's figures, keyed by season and then by forecaster: each arm's outcomes, the
     difference (B less A) over the paths that stand with how many are distinct, the counts by arm
@@ -2826,7 +2843,7 @@ def paired_blocks(
             },
         },
         "unprojected": {
-            "note": unprojected_note(grid, seat_draft),
+            "note": unprojected_note(grid),
             "by_season": {
                 t: {
                     label: {

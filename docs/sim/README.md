@@ -836,10 +836,13 @@ the snake, the best player left on its own board:
   - `market`, the default. The user's ruling of 2026-11-18: under a table the arm's seat drafts
     as a rival does, from the market's board, with a draw of its own. Its board is a rival's
     board as above, on the draw the rival in that seat on that path would take
-    (`world.rng(seed, path, team, 0, draft)`), whatever the arm believes. The arm's own
-    forecaster does not enter the draft; it sets the seat's beliefs from the season's first day.
-    In the code a draft under this rule names no seat (`adp.Draft.seats` is empty), so every
-    seat is drafted by the one function a rival's is.
+    (`world.rng(seed, path, team, 0, draft)`), **less the players its own forecaster has no
+    value for on draft day**: it passes on a player it cannot value, as it never drafts him
+    under `own`. The draw is still taken over every listed player, so no draw moves with who is
+    passed. Why it passes: a seat values a player its forecaster has no line for at nothing
+    until he plays. Drafting as a rival in full, the seat took such players on most paths of a
+    real season (the season's best newcomers in the early rounds among them, under a forecaster
+    built on earlier seasons) and dropped them at its first move, most on the first day.
   - `own`, the rule before the ruling, kept so that a record made under it can be run again:
     the board is the arm's own forecaster's per-game value on draft day (the run's forecaster's
     when the arm names none, a `system` or `blend` seat's stand-in belief as the run builds it
@@ -850,8 +853,7 @@ the snake, the best player left on its own board:
 - **Who can be drafted:** every member with a game in the season's first seven days who is
   projected by the run's forecaster or listed by the table. So a rival may draft a player the
   run's forecaster does not project (a rookie under `prior`), who is then valued at zero by the
-  seats on that forecaster until he plays. Under `market` the arm's seat may too, as the rival
-  in its seat would.
+  seats on that forecaster until he plays. An arm's seat never does, under either rule.
 - **The spread is given, not fitted here.** `--adp espn` without `--adp-spread` is refused, and
   both figures are at least zero. No default sits in the code. No fitted spread is on the box:
   the only fits made so far were made elsewhere, on one private league's own drafts, and nothing
@@ -860,24 +862,26 @@ the snake, the best player left on its own board:
   listed player's view is the negative of his average pick, and an unlisted one sits below every
   listed one, by the run's forecaster's value. It is the preseason's and does not refresh through
   the season: a limit.
-- **The room** (`--seats`): every seat holds an arm. Under `market` every seat drafts as a rival,
-  each on its own draw, so the room's draft is the market's and the arms differ only in how
-  they play the season. Under `own` every seat drafts on its arm's own board and no board is a
-  rival's; the table then reaches the room only through the market's view.
-- **The pair** (`--arms`): under `market` there is one draft and one league on every path,
-  whatever the two arms believe: the seat's board is the path's and no arm's, so both arms
-  start the season with the same thirteen players among the same rivals, and the paired
-  difference is about the season's play alone. Under `own` the arm's seat drafts on the arm's
-  board and the other eleven on rivals' boards: when arm A's and arm B's draft-day beliefs are
-  one label, there is one draft and one league, and the pair shares what it always shared; when
-  they differ, each arm's season is its own league from the draft on: two setups and two worlds
-  on the same `(seed, path)`, so the world's draws and the rivals' boards stay common. The
-  world's newcomer prior reads who went undrafted, so one world cannot serve two drafts. The
-  seat still rotates with the path under either rule.
+- **The room** (`--seats`): every seat holds an arm. Under `market` every seat drafts as the
+  rival in its seat would, each on its own draw, less the players its own arm cannot value; so
+  the room's draft is the market's, and the arms differ in how they play the season. Under
+  `own` every seat drafts on its arm's own board and no board is a rival's; the table then
+  reaches the room only through the market's view.
+- **The pair** (`--arms`): the arm's seat drafts by the rule and the other eleven on rivals'
+  boards. When arm A's and arm B's draft-day beliefs are one label, there is one draft and one
+  league, and the pair shares what it always shared. When they differ, each arm's league is
+  drafted. Under `market` the two drafts are one league whenever the two forecasters pass on
+  the same players (or differ only on players the seat never reached): every roster is then
+  equal, and the pair shares that league, both arms starting the season with the same thirteen
+  players among the same rivals. Otherwise, and always under `own`, each arm's season is its
+  own league from the draft on: two setups and two worlds on the same `(seed, path)`, so the
+  world's draws and the rivals' boards stay common. The world's newcomer prior reads who went
+  undrafted, so one world cannot serve two drafts. The seat still rotates with the path under
+  either rule.
 - `--no-peek` under a table (PR D4a2) builds the league as the run's path 0 drafts it: the table,
-  the spread and the seats' boards by the run's rule; under `own` a pair whose arms draft apart
-  has its two leagues, both built before either world, and both leagues' seasons are compared
-  ("The no-peek check", above). Under `market` a pair is always one league.
+  the spread and the seats' boards by the run's rule; a pair whose arms draft apart has its two
+  leagues, both built before either world, and both leagues' seasons are compared ("The no-peek
+  check", above).
 
 `--adp none`, the default, is the draft as it was: a snake on the run's forecaster's values, the
 market's view the same values. It is there so that a run before PR D4a can be run again and
@@ -889,11 +893,9 @@ words (the seat's and the pair's by the rule in force), the limit of that rule i
 "Its limits" below), and per season the table in counts (the players the
 log lists, those listed, those at the ceiling, those with no figure), the log's hash, and the
 drafted players the run's forecaster does not project over the drafts of the paths that stand.
-A pair also says whether its two arms shared one draft or each drafted apart. The figures stay
-in the log. A dry run prints each season's table in counts, the seat's rule and the first task's
-drafts. Under `market` the note on unprojected players gains a sentence: the count for the run's
-own forecaster is no longer zero by construction, since a seat can draft a listed player that
-forecaster does not project.
+A pair also says whether its two arms shared one draft or each drafted apart (under `market`,
+on which share of the paths: `drafts_per_path`). The figures stay in the log. A dry run prints
+each season's table in counts, the seat's rule and the first task's drafts.
 
 **The two rules.**
 
@@ -911,7 +913,9 @@ before it apart from the version, its reason, the named rule (`adp.seat_draft`) 
 clause of the limit, which now says the ruling replaced the rule. What moved: a run under a
 table that names no rule drafts the ruling's way, and the version's reason says so
 (`replay_version` 14). The tests that pinned a draft or an outcome under a table name `own` and
-keep their pins; new tests hold `market` (`tests/sim/test_sim_seat_draft.py`).
+keep their pins; new tests hold `market` (`tests/sim/test_sim_seat_draft.py`). In the code a
+draft names its arms' seats under both rules and `adp.Draft.rule` says how they draft; a draft
+that names no rule is `own`'s.
 
 **Its limits.** The rivals' error is one spread for every rival, given and not fitted; nobody
 reaches for a position, a need or a run on a category. The market's view is the preseason's and

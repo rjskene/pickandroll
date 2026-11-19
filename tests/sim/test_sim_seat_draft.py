@@ -1,7 +1,7 @@
 """The arm's seat's draft under a table (#172, the draft PR; the user's ruling of 2026-11-18):
 under ``--seat-draft market``, the default, the seat drafts as the rival in its seat on that path
-would, so a pair's two arms share one league whatever they believe; ``own`` is the rule before
-it. The boards and the leagues here, on a made-up season and a made-up table, and a path of
+would, less the players its own forecaster cannot value; a pair's two arms share one league
+wherever their two drafts come out the same; ``own`` is the rule before it. The boards and the leagues here, on a made-up season and a made-up table, and a path of
 every kind of league under the rule; the command's record and the no-peek check under the rule
 are in ``test_sim_market.py``."""
 
@@ -72,12 +72,14 @@ def season(data):
 #: Two arms that believe apart: A the run's forecaster, B the made-up second one.
 ARMS = {"a": SimpleNamespace(forecaster=None), "b": SimpleNamespace(forecaster="other")}
 SAME = {"a": SimpleNamespace(forecaster=None), "b": SimpleNamespace(forecaster=None)}
+IDS = shapes.FIXED.ids
 
 
-def leagues(season, rule, path=0, turn=None, arms=ARMS, rules=shapes.PLAIN, mp=None):
+def leagues(season, rule, path=0, turn=None, arms=ARMS, rules=shapes.PLAIN, other=None):
     """The pair's leagues on one path under ``rule``, by arm, and every call of
-    ``run.draft_boards`` made for them: its arguments and the boards it gave."""
-    lines, members, scheduled, projection, table, other = season
+    ``run.draft_boards`` made for them: its arguments and the boards it gave. ``other`` is arm
+    B's forecaster's projection (the mirrored one by default)."""
+    lines, members, scheduled, projection, table, mirrored = season
     calls: list[tuple[tuple, dict]] = []
     real = rn.draft_boards
 
@@ -98,7 +100,7 @@ def leagues(season, rule, path=0, turn=None, arms=ARMS, rules=shapes.PLAIN, mp=N
             arms,
             ss.PAIR,
             "prior",
-            {"other": other},
+            {"other": mirrored if other is None else other},
             SEED,
             path,
             shapes.FIXED,
@@ -109,60 +111,109 @@ def leagues(season, rule, path=0, turn=None, arms=ARMS, rules=shapes.PLAIN, mp=N
 
 
 def seat_of(path: int, turn: int | None = None) -> int:
-    return shapes.FIXED.ids[(path if turn is None else turn) % shapes.FIXED.teams]
+    return IDS[(path if turn is None else turn) % shapes.FIXED.teams]
+
+
+def rival_boards(calls, path: int) -> dict[int, list[int]]:
+    """Every seat's board as a rival's on the path, from a draft's arguments."""
+    draft, draftable, value = calls[0][0][:3]
+    return {
+        t: adp.rival_board(
+            draft.picks,
+            draftable,
+            value,
+            draft.spread,
+            world.rng(SEED, path, t, 0, world.STREAMS["draft"]),
+        )
+        for t in IDS
+    }
 
 
 @pytest.mark.parametrize("rules", [shapes.PLAIN, POINTS], ids=["categories", "points"])
-def test_under_the_market_rule_the_seat_s_board_is_the_rival_s_in_its_seat(season, rules):
+def test_under_the_market_rule_the_seat_drafts_the_rival_s_board_less_whom_it_cannot_value(
+    season, rules
+):
     """The arm's seat's board is ``adp.rival_board`` for its team on the path's own draw
-    (``world.rng(seed, path, team, 0, draft)``), on the table, the spread and the run's
-    forecaster's values every rival reads: in a categories league and in a points league."""
-    table = season[4]
-    setups, calls = leagues(season, adp.MARKET_DRAFT, path=4, rules=rules)
+    (``world.rng(seed, path, team, 0, draft)``) less the players its own forecaster has no value
+    for, in the rival's order; every other seat's is the rival's board whole. In a categories
+    league and in a points league."""
+    projection, table = season[3], season[4]
+    setups, calls = leagues(season, adp.MARKET_DRAFT, path=4, rules=rules, arms=SAME)
     ((args, boards),) = calls  # one draft for the pair
-    draft, draftable, value = args[0], args[1], args[2]
-    assert (draft.picks, draft.spread, draft.seed, draft.path) == (table.picks, SPREAD, SEED, 4)
-    assert dict(draft.seats) == {}
+    draft, draftable, players, cats, points = args[0], args[1], args[4], args[5], args[6]
     me = seat_of(4)
-    for team in shapes.FIXED.ids:
-        g = world.rng(SEED, 4, team, 0, world.STREAMS["draft"])
-        assert boards[team] == adp.rival_board(table.picks, draftable, value, SPREAD, g)
-    # Not vacuous: the seat's own forecaster would rank the same players another way.
-    projection, players, cats, points = season[3], args[4], args[5], args[6]
+    assert (draft.picks, draft.spread, draft.seed, draft.path) == (table.picks, SPREAD, SEED, 4)
+    assert set(draft.seats) == {me} and draft.rule == adp.MARKET_DRAFT
     assert (points is not None) == (rules.scoring == "points") == (setups["a"].scoring == "points")
-    own = wk.per_game_values(
+    mine = wk.per_game_values(
         {k: projection[k] for k in projection if k in players}, tuple(cats), points
     )
-    assert boards[me] != adp.seat_board(own, draftable)
+    rival = rival_boards(calls, 4)
+    assert all(boards[t] == rival[t] for t in IDS if t != me)
+    assert boards[me] == [k for k in rival[me] if k in mine]
+    # Not vacuous: the table lists players the seat's forecaster has no line for, the seat's
+    # board is the rival's without them, and it is not the seat's own forecaster's order.
+    passed = [k for k in rival[me] if k not in mine]
+    assert passed and all(k in table.picks for k in passed)
+    assert boards[me] != adp.seat_board(mine, draftable)
+    # The seat holds nobody it cannot value; rivals on the same path do.
+    rosters = setups["a"].rosters
+    assert all(k in mine for k, _ in rosters[me])
+    assert any(k not in mine for t in IDS if t != me for k, _ in rosters[t])
 
 
-def test_under_the_market_rule_the_seat_s_board_follows_the_path_and_not_the_arm(season):
-    """The board is the path's, as a rival's is: another path gives another, another seed
-    another, and the seat the pair sits in changes no board (the draft names no seat)."""
-    _, one = leagues(season, adp.MARKET_DRAFT, path=2)
-    _, again = leagues(season, adp.MARKET_DRAFT, path=2)
-    _, moved = leagues(season, adp.MARKET_DRAFT, path=2, turn=7)
-    _, later = leagues(season, adp.MARKET_DRAFT, path=3)
-    me = seat_of(2)
-    assert one[0][1] == again[0][1] == moved[0][1]
+def test_the_draw_does_not_move_with_who_is_passed_and_the_board_follows_the_path(season):
+    """The seat's board is its seat's and the path's: the same path gives it again, another
+    path another, and a pair sitting in another seat (another turn) changes no rival's board:
+    the draw is taken over every listed player, passed or not."""
+    _, one = leagues(season, adp.MARKET_DRAFT, path=2, arms=SAME)
+    _, again = leagues(season, adp.MARKET_DRAFT, path=2, arms=SAME)
+    _, moved = leagues(season, adp.MARKET_DRAFT, path=2, turn=7, arms=SAME)
+    _, later = leagues(season, adp.MARKET_DRAFT, path=3, arms=SAME)
+    me, there = seat_of(2), seat_of(2, 7)
+    assert there != me and one[0][1] == again[0][1]
     assert one[0][1][me] != later[0][1][me]
-    assert seat_of(2, 7) != me
+    rival = rival_boards(one, 2)
+    assert all(moved[0][1][t] == rival[t] for t in IDS if t != there)
+    assert set(moved[0][1][there]) < set(rival[there])
 
 
-def test_both_arms_of_a_pair_draft_one_league_under_the_market_rule(season):
-    """Under ``market`` the two arms share one league, arms on two forecasters included: one
-    draft, the same object, the same rosters. Under ``own`` two arms on two forecasters draft
-    apart, as before, and on one forecaster they share a league under either rule."""
-    setups, calls = leagues(season, adp.MARKET_DRAFT, path=1)
-    assert setups["a"] is setups["b"] and len(calls) == 1
+def test_a_pair_on_two_beliefs_shares_a_league_where_the_two_drafts_come_out_the_same(season):
+    """Under ``market`` two arms on one forecaster share one league, as ever. Two arms on two
+    forecasters each draft: when both pass on the same players the two drafts are one league and
+    the pair shares it (the same object); when arm B's forecaster has no line for a player arm
+    A's seat drafted, the seat passes on him in B's league and the pair drafts apart, among the
+    same rivals' boards. Under ``own`` two forecasters always draft apart, as before."""
+    projection, mirrored = season[3], season[5]
     same, calls = leagues(season, adp.MARKET_DRAFT, path=1, arms=SAME)
     assert same["a"] is same["b"] and len(calls) == 1
-    # The arms' beliefs change nothing of the draft.
-    assert same["a"].rosters == setups["a"].rosters
-    apart, calls = leagues(season, adp.OWN_DRAFT, path=1)
+    # The mirrored forecaster values the same players another way: it passes on the same ones.
+    assert set(mirrored) == set(projection)
+    both, calls = leagues(season, adp.MARKET_DRAFT, path=1)
+    assert both["a"] is both["b"] and len(calls) == 2
+    assert both["a"].rosters == same["a"].rosters
     me = seat_of(1)
+    first = same["a"].rosters[me][0][0]
+    fewer = {k: v for k, v in mirrored.items() if k != first}
+    apart, calls = leagues(season, adp.MARKET_DRAFT, path=1, other=fewer)
     assert apart["a"] is not apart["b"] and len(calls) == 2
-    assert apart["a"].rosters[me] != apart["b"].rosters[me]
+    assert apart["a"].rosters == same["a"].rosters
+    assert all(k != first for k, _ in apart["b"].rosters[me])
+    (_, boards_a), (_, boards_b) = calls
+    assert all(boards_a[t] == boards_b[t] for t in IDS if t != me)
+    # A player the seat never reaches (the first pick of the draft, a rival's): arm B's
+    # forecaster has no line for him, its board differs, and the two drafts are one league.
+    assert me != IDS[0]
+    gone = same["a"].rosters[IDS[0]][0][0]
+    unreached, calls = leagues(
+        season, adp.MARKET_DRAFT, path=1, other={k: v for k, v in mirrored.items() if k != gone}
+    )
+    (_, boards_a), (_, boards_b) = calls
+    assert boards_a[me] != boards_b[me] and gone in boards_a[me] and gone not in boards_b[me]
+    assert unreached["a"] is unreached["b"] and unreached["a"].rosters == same["a"].rosters
+    own, calls = leagues(season, adp.OWN_DRAFT, path=1)
+    assert own["a"] is not own["b"] and len(calls) == 2
+    assert own["a"].rosters[me] != own["b"].rosters[me]
     own, calls = leagues(season, adp.OWN_DRAFT, path=1, arms=SAME)
     assert own["a"] is own["b"] and len(calls) == 1
 
@@ -170,7 +221,7 @@ def test_both_arms_of_a_pair_draft_one_league_under_the_market_rule(season):
 def test_the_rule_changes_whom_the_seat_drafts_and_no_rival_s_board(season):
     """The lever does something: on one path the seat's roster under ``market`` is not its
     roster under ``own``, while every rival drafts on the same board under both rules. Under
-    ``own`` the seat holds only players its forecaster ranks; under ``market`` it follows the
+    ``own`` the seat takes its own forecaster's best left; under ``market`` it follows the
     table, so its picks stand lower on its own forecaster's board."""
     projection = season[3]
     market, m_calls = leagues(season, adp.MARKET_DRAFT, path=5, arms=SAME)
@@ -178,32 +229,44 @@ def test_the_rule_changes_whom_the_seat_drafts_and_no_rival_s_board(season):
     me = seat_of(5)
     mine, theirs = market["a"].rosters[me], own["a"].rosters[me]
     assert {k for k, _ in mine} != {k for k, _ in theirs}
-    (_, m_boards), (o_args, o_boards) = m_calls[0], o_calls[0]
-    assert dict(o_args[0].seats).keys() == {me}
-    assert all(m_boards[t] == o_boards[t] for t in shapes.FIXED.ids if t != me)
-    assert m_boards[me] != o_boards[me]
+    (m_args, m_boards), (o_args, o_boards) = m_calls[0], o_calls[0]
+    assert set(m_args[0].seats) == set(o_args[0].seats) == {me}
+    assert (m_args[0].rule, o_args[0].rule) == (adp.MARKET_DRAFT, adp.OWN_DRAFT)
+    assert all(m_boards[t] == o_boards[t] for t in IDS if t != me)
+    assert m_boards[me] != o_boards[me] and set(m_boards[me]) == set(o_boards[me])
     # The seat's own forecaster's order: its own draft's picks stand higher on it.
     value = wk.per_game_values({k: projection[k] for k in projection}, market["a"].cats, None)
     rank = {k: i for i, k in enumerate(sorted(value, key=lambda k: (-value[k], k)))}
-    worst = len(rank)
-    assert sum(rank.get(k, worst) for k, _ in theirs) < sum(rank.get(k, worst) for k, _ in mine)
+    assert sum(rank[k] for k, _ in theirs) < sum(rank[k] for k, _ in mine)
 
 
-def test_a_room_s_seats_each_draft_as_a_rival_under_the_market_rule(season):
-    """A room: every seat holds an arm. Under ``market`` the draft names no seat, so each seat
-    drafts as a rival; under ``own`` every seat is named with its arm's forecaster's
-    projection."""
+def test_a_room_s_seats_each_draft_as_a_rival_less_whom_their_own_arm_cannot_value(season):
+    """A room: every seat holds an arm and is named with its arm's forecaster's projection,
+    under either rule. Under ``market`` each drafts the rival's board in its seat less the
+    players its own arm cannot value, so no roster holds a player without a line, where a room
+    of rivals on the same path holds some; under ``own`` each drafts on its arm's own board."""
     lines, members, scheduled, projection, table, other = season
     arms = {"R": SimpleNamespace(forecaster=None), "S": SimpleNamespace(forecaster="other")}
     args = (arms, ("R", "S"), "prior", projection, {"other": other}, SEED, 6)
     draft = ss.room_draft((table.picks, SPREAD, adp.MARKET_DRAFT), *args)
-    assert draft == adp.Draft(table.picks, SPREAD, SEED, 6, {})
     named = ss.room_draft((table.picks, SPREAD, adp.OWN_DRAFT), *args)
-    assert sorted(named.seats) == list(shapes.FIXED.ids) and named.path == 6
+    assert (draft.rule, named.rule) == (adp.MARKET_DRAFT, adp.OWN_DRAFT)
+    assert sorted(draft.seats) == sorted(named.seats) == list(IDS)
+    assert all(draft.seats[t] is named.seats[t] for t in IDS) and draft.path == named.path == 6
+    assert named == adp.Draft(table.picks, SPREAD, SEED, 6, named.seats)
     assert ss.room_draft(None, *args) is None
-    setup = ss.replay_setup_of(2024, lines, members, scheduled, projection, draft)
-    apart = ss.replay_setup_of(2024, lines, members, scheduled, projection, named)
-    assert setup.rosters != apart.rosters
+
+    def league(d):
+        return ss.replay_setup_of(2024, lines, members, scheduled, projection, d)
+
+    setup, apart, rivals = (
+        league(draft),
+        league(named),
+        league(adp.Draft(table.picks, SPREAD, SEED, 6)),
+    )
+    assert all(k in projection for r in setup.rosters.values() for k, _ in r)
+    assert any(k not in projection for r in rivals.rosters.values() for k, _ in r)
+    assert setup.rosters != apart.rosters and setup.rosters != rivals.rosters
 
 
 def test_the_rules_are_two_and_the_market_s_is_the_default():
@@ -214,6 +277,9 @@ def test_the_rules_are_two_and_the_market_s_is_the_default():
     assert ss.seat_draft_of(SimpleNamespace(adp="none", seat_draft=None)) is None
     for texts in (ss.ADP_SEAT, ss.ADP_LIMIT, ss.ADP_SHARED, ss.ADP_DRAFT):
         assert set(texts) == set(adp.SEAT_DRAFTS)
+    # A draft that names its seats and no rule is the rule before the PR.
+    assert adp.Draft({}, SPREAD, 1, 0, {1: {}}).rule == adp.OWN_DRAFT
+    assert adp.market_seat_board([5, 2, 9, 4], {4: 1.0, 5: 0.0}) == [5, 4]
 
 
 # --------------------------------------------------------------------------- every league kind
@@ -252,7 +318,7 @@ def test_a_path_of_every_kind_of_league_plays_clean_under_the_market_rule(data, 
     audit on nothing), and the audit finds no breach (a breach exits 3)."""
     code, out, counts = dry(data, "R", *KINDS[kind])
     assert code == 0 and "AUDIT" not in out, out
-    assert "the arms' seats draft as rivals do (--seat-draft market)" in out
+    assert "less the players they cannot value (--seat-draft market)" in out
     assert "draft market, the first task: 1 draft(s)" in out
     assert counts["landed"] >= 1, out
     if "continuous" in kind:

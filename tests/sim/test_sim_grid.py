@@ -180,9 +180,9 @@ SLOW_TURN = 1
 
 
 def _spies(monkeypatch) -> dict[str, list]:
-    """Record every rotation's turn, every world's path and every table draft's path and seats
-    (``adp.Draft``) of a run."""
-    seen: dict[str, list] = {"rotate": [], "world": [], "draft": []}
+    """Record every rotation's turn, every world's path and every table draft's path, seats and
+    rule (``adp.Draft``) of a run."""
+    seen: dict[str, list] = {"rotate": [], "world": [], "draft": [], "rule": []}
     rotate, world, draft = rn.rotate, rn.replay_world, adp.Draft
 
     def spy_rotate(arms, teams, turn):
@@ -193,9 +193,10 @@ def _spies(monkeypatch) -> dict[str, list]:
         seen["world"].append(path)
         return world(setup, lines, lag, seed, path, *rest, **kw)
 
-    def spy_draft(picks, spread, seed, path, seats):
+    def spy_draft(picks, spread, seed, path, seats, **rule):
         seen["draft"].append((path, tuple(sorted(seats))))
-        return draft(picks, spread, seed, path, seats)
+        seen["rule"].append(rule)
+        return draft(picks, spread, seed, path, seats, **rule)
 
     monkeypatch.setitem(ss.GRIDS, "full", SMALL)
     monkeypatch.setattr(rn, "rotate", spy_rotate)
@@ -229,7 +230,8 @@ def test_on_a_table_the_seat_follows_the_turn_and_the_rivals_draws_the_path(
     the shape's ``teams[turn mod
     n]`` (seat 2 of twelve) and the rivals' draws are keyed on path 3 (``adp.Draft``'s path); a
     room's every seat drafts on its arm's board, rotated by the turn, its draws on the path.
-    Under the market's rule (the default) the draft names no seat and keeps the path."""
+    Under the market's rule (the default) the draft names the same seat on the same path, and
+    the rule; under ``own`` it names no rule, as before the PR."""
     table = (
         "--adp",
         "espn",
@@ -253,11 +255,13 @@ def test_on_a_table_the_seat_follows_the_turn_and_the_rivals_draws_the_path(
     assert code == 0, out
     assert seen["draft"] == [(SLOW, tuple(range(1, 13)))] and seen["world"] == [SLOW]
     assert seen["rotate"] and set(seen["rotate"]) == {(12, SLOW_TURN)}
+    assert seen["rule"] == [{}]
     market = tuple(x for x in table if x not in ("--seat-draft", "own"))
     seen = _spies(monkeypatch)
     code, out = replay(wire, "--arms", *spec(wire, "R", "S"), *market)
     assert code == 0, out
-    assert seen["draft"] == [(SLOW, ())] and seen["world"] == [SLOW]
+    assert seen["draft"] == [(SLOW, (seat,))] and seen["world"] == [SLOW]
+    assert seen["rule"] == [{"rule": "market"}]
 
 
 def _week_most(data: Path, league: str, monkeypatch) -> tuple[int, set, dict]:

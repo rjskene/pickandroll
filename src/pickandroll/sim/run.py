@@ -1465,23 +1465,27 @@ def draft_boards(
     cats: Sequence[str],
     points: Mapping[str, float] | None = None,
 ) -> dict[int, list[int]]:
-    """Each seat's board under ``draft`` (#172, PR D4a): a seat ``draft.seats`` names drafts on
-    its own forecaster's per-game values on draft day (over the league's ``players`` it
-    projects, as the run's ``value`` is over the run's; in a points league on ``points``, PR
-    D4c), every other seat on a rival's board
-    (``adp.rival_board``) drawn from its own generator on the path's ``(seed, path)`` and the
-    ``draft`` stream, so two leagues on one path meet the same rivals' boards. A draft that
-    names no seat (the draft PR: an arm's seat under ``adp.MARKET_DRAFT``) gives every seat a
-    rival's board, the arm's seat's on the draw the rival in that seat would take."""
+    """Each seat's board under ``draft`` (#172, PR D4a). A seat ``draft.seats`` does not name
+    drafts on a rival's board (``adp.rival_board``) drawn from its own generator on the path's
+    ``(seed, path)`` and the ``draft`` stream, so two leagues on one path meet the same rivals'
+    boards. A seat it names holds an arm, valued on its own forecaster's per-game values on
+    draft day (over the league's ``players`` it projects, as the run's ``value`` is over the
+    run's; in a points league on ``points``, PR D4c), and drafts by ``draft.rule`` (the draft
+    PR): under ``adp.OWN_DRAFT`` on those values alone (``adp.seat_board``); under
+    ``adp.MARKET_DRAFT`` on the rival's board in its seat, on that seat's own draw, less the
+    players it has no value for (``adp.market_seat_board``)."""
     out: dict[int, list[int]] = {}
     for t in teams:
         own = draft.seats.get(t)
-        if own is None:
-            g = world.rng(draft.seed, draft.path, t, 0, world.STREAMS["draft"])
-            out[t] = adp.rival_board(draft.picks, draftable, value, draft.spread, g)
-        else:
+        mine = None
+        if own is not None:
             mine = wk.per_game_values({k: own[k] for k in own if k in players}, tuple(cats), points)
+        if mine is not None and draft.rule == adp.OWN_DRAFT:
             out[t] = adp.seat_board(mine, draftable)
+            continue
+        g = world.rng(draft.seed, draft.path, t, 0, world.STREAMS["draft"])
+        board = adp.rival_board(draft.picks, draftable, value, draft.spread, g)
+        out[t] = board if mine is None else adp.market_seat_board(board, mine)
     return out
 
 
