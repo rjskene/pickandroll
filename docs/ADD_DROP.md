@@ -400,6 +400,19 @@ keep rule").
   open spot, leaves it), and the solve reads it as it reads the knob file. Out, he still goes to
   an open held slot: Yahoo blocks drops, not IL moves. The queue names him protected "on Yahoo's
   can't-cut list"; a league with no file (the private league) has none.
+- **The keep list (#442).** A player the user keeps for next season (the private league is a
+  keeper league, and the values stop at the season's end) is protected whatever the three tests
+  say, and the queue names the player protected "on the keep list". The list is
+  `data/autopilot/keep.json`: each entry a Yahoo player id, an optional name, the leagues it
+  applies in (null for every league), who set it and when; no expiry. `GET /autopilot/keep` reads
+  it, `PUT /autopilot/keep` sets one entry (by id, or by name as one of the user's leagues lists
+  the player; an entry already there is replaced), `DELETE /autopilot/keep/{player}` removes one.
+  A session sets an entry only on the user's word in chat. The file is written whole and moved
+  into place; one that does not read is refused, never overwritten, and the solves then keep no
+  one from it. A change to it moves the moves stamp, so the league solves again. No set, plan,
+  comeback, pick's drop or strategy run drops a listed player, and a comeback sends a kept player
+  before a listed one. An empty or absent list leaves every solve as it was. The repo holds no
+  name from the list.
 - **Benched**: not beaten by the best add by the floor, not net positive, and back within seven
   days (`SHORT_ABSENCE_DAYS`). A replacement-level player out a few days is streamed like any
   other.

@@ -76,7 +76,7 @@ from ..season import stream as st
 from ..season import weekly as wk
 from ..sources.injuries import Listed
 from ..sources.matching import match_players
-from . import season_cantcut, season_flags, season_reads
+from . import season_cantcut, season_flags, season_keep, season_reads
 from . import season_week as sw
 
 #: The weeks the moves look at: this week and the three after it.
@@ -452,6 +452,8 @@ def build(
         daily_cap=int(knobs["daily_cap"]),
         stash_threshold=stash_threshold(knobs),
         cantcut=season_cantcut.load(data_dir, s.league),
+        # The user's keep list (#442): never dropped.
+        listed=season_keep.in_force(data_dir, s.league),
     )
     pending = pending_claims(
         on_roster,
@@ -873,6 +875,8 @@ def _kept_row(key: int, k: mv.Kept) -> dict[str, Any]:
         "protected": k.protected,
         "bench": k.bench,
         "cantcut": k.cantcut,
+        # On the keep list (#442): only on such a player, so a solve without one is unchanged.
+        **({"listed": True} if k.listed else {}),
     }
 
 

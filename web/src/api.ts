@@ -1995,6 +1995,8 @@ export interface KeptPlayer {
   /** On Yahoo's can't-cut list as the moves executor last read it (#220): protected whatever the
    * three tests say. */
   cantcut?: boolean;
+  /** On the user's keep list (#442): protected, never dropped. */
+  listed?: boolean;
 }
 
 export interface KeepRule {

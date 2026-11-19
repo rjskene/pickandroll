@@ -237,6 +237,8 @@ class MoveProblem:
     #: My players on Yahoo's can't-cut list, as the moves executor last read it on an add page
     #: (#220): the keep rule protects them.
     cantcut: frozenset[int] = frozenset()
+    #: My players on the user's keep list (#442, ``api.season_keep``): the keep rule protects them.
+    listed: frozenset[int] = frozenset()
     #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
     kept: frozenset[int] = frozenset()
     #: The streaming plan's floor and its moves a day (knobs, #152); None for the stream's own
@@ -691,10 +693,12 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
             out.append(Comeback(k, slot, day, chosen, back))
             continue
         # Never a player the keep rule keeps, while another can go, and never a pending claim's
-        # add, who is not mine before Yahoo's run (#360).
+        # add, who is not mine before Yahoo's run (#360); a player on the user's keep list
+        # (#442) only when every active player is on it.
         pool = (
             [x for x in active if x not in problem.kept and x not in problem.pending]
-            or [x for x in active if x not in problem.pending]
+            or [x for x in active if x not in problem.pending and x not in problem.listed]
+            or [x for x in active if x not in problem.listed]
             or active
         )
         # A returning player the stash threshold keeps goes only when no one else can (#373).
@@ -934,6 +938,8 @@ class Kept:
     bench: bool
     #: On Yahoo's can't-cut list (#220).
     cantcut: bool = False
+    #: On the user's keep list (#442).
+    listed: bool = False
 
 
 @dataclass(frozen=True)
@@ -965,10 +971,11 @@ def kept_of(
     beats = value is not None and (best_value is None or value + floor > best_value)
     returns = back is not None
     cut = key in problem.cantcut
-    protected = (net and beats and returns) or cut
+    listed = key in problem.listed
+    protected = (net and beats and returns) or cut or listed
     away = back is not None and 0 < (back - problem.first_day).days < SHORT_ABSENCE_DAYS
     bench = not protected and beats and away
-    return Kept(key, value, back, net, beats, returns, protected, bench, cut)
+    return Kept(key, value, back, net, beats, returns, protected, bench, cut, listed)
 
 
 def keep_rule(problem: MoveProblem) -> KeepRule:

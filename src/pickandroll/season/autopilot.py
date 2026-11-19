@@ -871,12 +871,22 @@ def resolve(
 
 #: Why a player on Yahoo's can't-cut list is protected (#220).
 CANTCUT_REASON = "on Yahoo's can't-cut list"
+#: Why a player on the user's keep list is protected (#442).
+LISTED_REASON = "on the keep list"
 
 
 def keep_reason(
-    net_positive: bool, beats_best: bool, returns: bool, bench: bool, cantcut: bool = False
+    net_positive: bool,
+    beats_best: bool,
+    returns: bool,
+    bench: bool,
+    cantcut: bool = False,
+    listed: bool = False,
 ) -> str:
-    """Why the keep rule protects a player, in words (#124): Yahoo's can't-cut list first (#220)."""
+    """Why the keep rule protects a player, in words (#124): the user's keep list first (#442),
+    then Yahoo's can't-cut list (#220)."""
+    if listed:
+        return LISTED_REASON
     if cantcut:
         return CANTCUT_REASON
     if bench and not (net_positive and beats_best and returns):

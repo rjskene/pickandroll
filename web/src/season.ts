@@ -1686,13 +1686,15 @@ export function keptPlayers(rule: KeepRule | undefined): KeptPlayer[] {
 
 /** The keep rule in a line: who no move drops and why; null when it keeps no one. */
 export function keepLine(rule: KeepRule | undefined, name: (id: number) => string): string | null {
-  const kept = rule?.players.filter((k) => k.protected && !k.cantcut).map((k) => k.player) ?? [];
-  const cut = rule?.players.filter((k) => k.cantcut).map((k) => k.player) ?? [];
+  const kept = rule?.players.filter((k) => k.protected && !k.cantcut && !k.listed).map((k) => k.player) ?? [];
+  const cut = rule?.players.filter((k) => k.cantcut && !k.listed).map((k) => k.player) ?? [];
+  const listed = rule?.players.filter((k) => k.listed).map((k) => k.player) ?? [];
   const bench = rule?.players.filter((k) => k.bench) ?? [];
-  if (!rule || (!kept.length && !cut.length && !bench.length)) return null;
+  if (!rule || (!kept.length && !cut.length && !listed.length && !bench.length)) return null;
   const best = rule.best ? `the best add, ${name(rule.best.player)}` : "any add";
   const parts: string[] = [];
   if (kept.length) parts.push(`keeps ${andList(kept, name)} (better than ${best}, over the rest of the season)`);
+  if (listed.length) parts.push(`keeps ${andList(listed, name)} (on the keep list)`);
   if (cut.length) parts.push(`keeps ${andList(cut, name)} (on Yahoo's can't-cut list)`);
   if (bench.length) parts.push(`benches ${bench.map((k) => `${name(k.player)} (back ${dayLabel(k.back)})`).join(", ")}`);
   return `The keep rule ${parts.join(" and ")}: no move drops them.`;
@@ -1737,6 +1739,7 @@ export function waiversNote(a: {
 /** Why the keep rule keeps a player: on Yahoo's can't-cut list (#220), protected, or on the
  * bench until his return. */
 export function keptWhy(k: KeptPlayer): string {
+  if (k.listed) return "on the keep list";
   if (k.cantcut) return "can't cut (Yahoo)";
   return k.protected ? "protected" : `bench, back ${dayLabel(k.back)}`;
 }

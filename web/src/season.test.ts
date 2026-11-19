@@ -1146,6 +1146,18 @@ test("the keep rule names whom it keeps and benches, and why", () => {
     keepLine(cut, name),
     "The keep rule keeps P1 (better than the best add, P9, over the rest of the season) and keeps P4 (on Yahoo's can't-cut list): no move drops them.",
   );
+  // The keep list (#442): its own words, ahead of the can't-cut list and the value test.
+  const listed = keepRule([
+    { player: 1, protected: true },
+    { player: 5, protected: true, listed: true, net_positive: false, beats_best: false },
+    { player: 6, protected: true, listed: true, cantcut: true },
+  ]);
+  assert.equal(keptWhy(listed.players[1]), "on the keep list");
+  assert.equal(keptWhy(listed.players[2]), "on the keep list");
+  assert.equal(
+    keepLine(listed, name),
+    "The keep rule keeps P1 (better than the best add, P9, over the rest of the season) and keeps P5 and P6 (on the keep list): no move drops them.",
+  );
   assert.equal(
     keepRuleNote({ ...rule, floor: 0.1 }, name),
     "Protected: above the pool's average (0.00 a game), better than the best add (P9, 0.50) minus 0.1 over the rest of the season, and back this season; benched: better than the best add (P9, 0.50) minus 0.1 and back within a week. No move drops either.",

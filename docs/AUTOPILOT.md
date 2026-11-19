@@ -523,7 +523,8 @@ page, from PR 2:
     empty list replaces it, an open-spot page with no drop table leaves it), the next solve reads
     it and protects those players like the keep rule's (a held slot still allowed), and
     `due.protected` names them "on Yahoo's can't-cut list", so the queue never carries such a
-    drop and this check is the backstop.
+    drop and this check is the backstop. The keep list (#442, `docs/ADD_DROP.md`) works the same
+    way: a listed player is protected, and `due.protected` names the player "on the keep list".
   - **No drop (#199, extension 0.8.1):** the page's drop section decides. None shown (no
     `table.statTable-drop` row and no `dpid` box) is an open spot: `would_claim` with reason
     "open spot". One shown means the roster is full, and the entry skips with the count: "the

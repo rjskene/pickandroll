@@ -287,7 +287,7 @@ def protected_of(rule: mv.KeepRule | None) -> dict[int, str]:
     if rule is None:
         return {}
     return {
-        k: qa.keep_reason(x.net_positive, x.beats_best, x.returns, x.bench, x.cantcut)
+        k: qa.keep_reason(x.net_positive, x.beats_best, x.returns, x.bench, x.cantcut, x.listed)
         for k, x in (*rule.players.items(), *rule.held.items())
         if x.protected or x.bench
     }

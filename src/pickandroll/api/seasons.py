@@ -165,6 +165,7 @@ from . import (
     season_flags,
     season_hillclimb,
     season_history,
+    season_keep,
     season_knobs,
     season_lineup,
     season_matchup,
@@ -857,6 +858,8 @@ class SeasonService:
             season_cantcut.path_of(self.data_dir, league),
             # The user's picks (#434): a pick set or removed solves again.
             season_picks.path_of(self.data_dir),
+            # The keep list (#442): an entry set or removed solves again.
+            season_keep.path_of(self.data_dir),
         ]
         for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
             files += sorted(self.data_dir.glob(pattern))
@@ -1501,6 +1504,34 @@ class SeasonService:
         except season_picks.PicksError as exc:
             raise HTTPException(409, str(exc)) from exc
         return self.picks()
+
+    def keep(self) -> dict[str, Any]:
+        """The keep list (#442); reads only."""
+        try:
+            return season_keep.payload(self.data_dir)
+        except season_keep.KeepError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def set_keep(self, body: KeepBody) -> dict[str, Any]:
+        """List one player (#442), a session's on the user's word."""
+        if body.player is None and not body.name:
+            raise HTTPException(422, "send the player's id or name")
+        player, name = self._find_player(body.player, body.name)
+        try:
+            season_keep.set_keep(self.data_dir, player, name, body.leagues, body.by)
+        except season_keep.KeepError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return self.keep()
+
+    def remove_keep(self, player: int) -> dict[str, Any]:
+        """Take a player off the keep list (#442)."""
+        try:
+            gone = season_keep.remove(self.data_dir, player)
+        except season_keep.KeepError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not gone:
+            raise HTTPException(404, f"player {player} is not on the keep list")
+        return self.keep()
 
     def remove_pick(self, player: int) -> dict[str, Any]:
         """Remove a pick (#434)."""
@@ -3965,6 +3996,16 @@ class StrikeBody(BaseModel):
     undo: bool = False
 
 
+class KeepBody(BaseModel):
+    """One keep-list entry (#442): its player by Yahoo id or by name, its leagues (null: every
+    league) and who set it."""
+
+    player: int | None = Field(None, ge=1)
+    name: str | None = Field(None, min_length=2, max_length=80)
+    leagues: list[str] | None = Field(None, min_length=1)
+    by: str = Field("dashboard", pattern=r"^[A-Za-z][A-Za-z -]{0,39}$")
+
+
 class PickBody(BaseModel):
     """One pick (#434): its player by Yahoo id or by name; its leagues (null: all), the drop to
     make for him where he is mine (null: the cheapest), the bid (null: the bid policy's), its
@@ -4091,6 +4132,21 @@ def register(
     def delete_pick(player: int) -> dict[str, Any]:
         """Remove a pick (#434)."""
         return service.remove_pick(player)
+
+    @app.get("/autopilot/keep")
+    def get_keep() -> dict[str, Any]:
+        """The keep list (#442); reads only."""
+        return service.keep()
+
+    @app.put("/autopilot/keep")
+    async def put_keep(body: KeepBody) -> dict[str, Any]:
+        """List one player whom no solve drops (#442), a session on the user's word."""
+        return await asyncio.to_thread(service.set_keep, body)
+
+    @app.delete("/autopilot/keep/{player}")
+    def delete_keep(player: int) -> dict[str, Any]:
+        """Take a player off the keep list (#442)."""
+        return service.remove_keep(player)
 
     @app.post("/autopilot/queue/{entry}/strike")
     def post_strike(entry: str, body: StrikeBody | None = None) -> dict[str, Any]:
