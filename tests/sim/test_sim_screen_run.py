@@ -702,6 +702,8 @@ def test_a_lever_of_the_exact_tier_is_played_on_it_in_both_arms(data: Path):
 
 
 # --------------------------------------------------------------------------- the bid policy
+# PR F2: a bid lever's pair in the screen, and on this small league the replay's own words for an
+# arm that names a ``bid`` (a dry run plays one path of it in a second or two).
 @pytest.mark.parametrize("h2h", [ONE_WIN, EACH_CATEGORY])
 def test_a_bid_lever_s_pair_is_played_by_faab_and_is_the_same_pair_run_by_replay(data: Path, h2h):
     """PR F2's levers in the command, in both formats. Under continuous waivers by FAAB the
@@ -742,3 +744,48 @@ def test_a_bid_lever_is_listed_and_not_played_where_waivers_carry_no_bid(data: P
     assert code == 0, out
     assert out.count("not read here: waivers by priority carry no budget and no bid") == 2
     assert "0 pair(s) to play" in out and folders(data) == before
+
+
+def test_a_replay_says_an_arm_s_bid_before_any_path_and_refuses_one_nobody_reads(data: Path):
+    """The command's words for a pair whose arm B names a ``bid`` (PR F2), on a dry run: the
+    line is ``replay_plan``'s, which a run and the no-peek check print too. By FAAB it says the
+    block in words, and nothing of arm A, which names none. By priority two arms apart only on
+    the block are one seat, refused by name before any path; apart on the pool too, the pair is
+    planned and the line says why its league does not read the block."""
+    block = {"routine": 1, "pace": {"k": 1, "shape": 1, "reserve": 0.2}}
+    specs = {"a": BASE, "b": {**BASE, "name": "P", "bid": block}}
+    specs["c"] = {**specs["b"], "name": "Q", "pool": 45}
+    files = {}
+    for key, spec in specs.items():
+        files[key] = data / f"said-{key}.json"
+        files[key].write_text(json.dumps(spec))
+    before = folders(data)
+
+    def dry(b: str, *flags: str) -> tuple[int, str]:
+        argv = ["--data", str(data), "--rooms", "0", "replay", "--seasons", "2024", "--seed", "5"]
+        argv += ["--workers", "1", "--paths", "1", *flags, "--dry-run"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = ss.main([*argv, "--arms", str(files["a"]), str(files[b])])
+        return code, buf.getvalue()
+
+    words = bp.of(block).label()
+    assert "pace k 1 shape 1 reserve 0.2" in words and "a routine claim $1" in words
+    code, out = dry("b", "--waivers", "faab", "--waiver-rule", "continuous")
+    assert code == 0, out
+    assert f"bid policy, arm B (P): {words}\n" in out and "bid policy, arm A" not in out
+    assert "not read in this run" not in out and "dry run, nothing written" in out
+    code, out = dry("b", "--waivers", "priority")
+    assert code == 2, out
+    assert (
+        "refused: arms a and b are the same seat: they differ only in bid (waivers by priority "
+        f"carry no budget and no bid; read by {policy.BID_WHEN_READ})"
+    ) in out
+    assert "bid policy" not in out
+    code, out = dry("c", "--waivers", "priority")
+    assert code == 0, out
+    assert (
+        f"bid policy, arm B (Q): {words}; not read in this run: waivers by priority carry no "
+        "budget and no bid\n"
+    ) in out
+    assert folders(data) == before
