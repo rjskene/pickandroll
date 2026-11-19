@@ -22,6 +22,7 @@ from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, replay_of
 from tests.sim.test_no_peek import SEED, WEIGHTS, recorded
+from tests.sim.test_sim_knobs import weakened
 from tests.sim.test_sim_league import totals
 from tests.sim.test_sim_points import TABLE, made_up_season, setup_of
 from tests.sim.test_sim_split import armed, second_of, variant_of, world_of
@@ -221,7 +222,7 @@ def own_decisions(setup, w, variants, plans, me, monkeypatch):
         assert results[vi].solves + results[vi].shared == alone.solves
     days = apart_on_one_state(keys)
     differ = [d for d in days if recs[(d, 0)].decisions[me] != recs[(d, 1)].decisions[me]]
-    return results, days, differ
+    return results, recs, days, differ
 
 
 #: The found paths of the test below, a format each: the seat's team, the rival that swaps, the
@@ -256,7 +257,7 @@ def test_two_arms_of_one_name_apart_in_their_rivals_each_decide_on_their_own_wee
         for arm, day in ((a, first), (b, second))
     ]
     w = replay_of(setup, 5, 0)
-    results, days, differ = own_decisions(setup, w, variants, [False, False], me, monkeypatch)
+    results, _, days, differ = own_decisions(setup, w, variants, [False, False], me, monkeypatch)
     final = setup.calendar.weeks[-1]
     assert days and all(final.contains(d) for d in days)
     assert differ, "on no such day did the two seats decide differently"
@@ -265,6 +266,48 @@ def test_two_arms_of_one_name_apart_in_their_rivals_each_decide_on_their_own_wee
     if apart == "opponent":
         # The two seasons seeded different finals, and each seat met its own.
         assert ra.result.playoffs.seeds != rb.result.playoffs.seeds
+
+
+def test_two_arms_of_one_name_apart_in_execute_plan_each_decide_on_their_own_week(monkeypatch):
+    """The other pair of one ``repr``: two arms of one name apart only in ``execute_plan``. Both
+    draw the week's plan, one executes it, so their seasons part by the seat's own moves, with
+    no rival moving; by the final's first morning the two states agree again in
+    ``SimState.key()`` while the standings, and so the final's pairs, differ. Before the key
+    held the week's view the arm that executes its plan was handed the other's decision there,
+    made against another opponent. A pair of arms whose seasons seed different pairs: each
+    arm's seat meets its own. A found path (seed 9, seat 4). One format, every category, with
+    the plan floor under zero: under one win a plan must beat its set by the engine's own floor
+    in the matchup's odds, and in these made-up leagues none does (``test_sim_knobs.py``'s note
+    on its cases), so the two arms never part. About 4 s."""
+    me = 4
+    setup = weakened(final_league("each_category"))
+    knobs = {**KNOBS, "plan_floor_cats": -1.0}
+    a = rn.Arm("S", "exact", knobs, {"kind": "static"}, with_plan=True)
+    b = replace(a, execute_plan=True)
+    assert a != b and repr(a.seat()) == repr(b.seat()) and a.seat().reads_week
+    assert rn.same_seat(a, b, [policy.shape_of(setup)]) is None  # the pair is not refused
+    static = {t: op.Static() for t in setup.teams}
+    variants = [{**static, me: arm.seat()} for arm in (a, b)]
+    plans = [a.execute_plan, b.execute_plan]
+    w = replay_of(setup, 9, 0)
+    results, recs, days, differ = own_decisions(setup, w, variants, plans, me, monkeypatch)
+    final = setup.calendar.weeks[-1]
+    assert days and all(final.contains(d) for d in days)
+    assert differ, "on no such day did the two seats decide differently"
+    (ra, rb) = results
+    assert not ra.breaches and not rb.breaches
+    # They parted by the plan alone: only the second arm queued a step of one.
+    assert ra.executed != rb.executed
+    # Each season seeded its own final, and on the days the old key met, each seat read its own
+    # opponent: the other team of its own season's final, or nobody when it is not in it.
+    met = []
+    for vi, res in enumerate(results):
+        ((pair,),) = end_pairs(res.result)
+        mine = next(iter(set(pair) - {me})) if me in pair else None
+        for day in days:
+            assert policy.opponent_of(setup, recs[(day, vi)].state, me, final.number) == mine
+        met.append(mine)
+    assert met[0] != met[1]
 
 
 # --------------------------------------------------------------------------- Rule 1 and the bite
