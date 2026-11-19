@@ -28,8 +28,8 @@ DAYS = 7
 PICK = "pick"
 
 #: Why a pick is not made in a league today.
-NOT_AVAILABLE = "not available in this league: no projection for him"
-CLAIMED = "a claim on him is already placed"
+NOT_AVAILABLE = "not available in this league: no projection for the player"
+CLAIMED = "a claim on the player is already placed"
 NO_ADDS = "no adds left that week: waits for the next week's adds"
 DROP_KEPT = "the drop you named is kept: the keep rule, a held slot or a claim"
 NO_DROP = "no drop: every rostered player is protected or held"
