@@ -384,7 +384,10 @@ a number is the share. Nothing else in the simulator reads the knob.
 - **The count.** In a run where an arm names a threshold (and in no other), every seat's counts
   carry `returning_dropped`: the players who left its roster (a move's drop, a churn's held
   drop, a drop a returning held player forced) whom the engine read as returning on the seat's
-  problem the day before. A seat that builds no problem (a market or a static rival) has none.
+  problem the day before. A claim's drop is off the seat's problem while the claim is open (the
+  problem is the roster the claim will leave), so he is counted as he was read the day the
+  claim was placed, however many mornings it waits. A seat that builds no problem (a market or
+  a static rival) has none.
 
 Two limits, each plainly. **The day's choice of an activation's drop** (`moves.choose_activation`,
 #360) is still not made: live chooses it for a player whose status has already cleared, by the
@@ -1439,7 +1442,8 @@ is added. These counts are the world's knowledge of
 every bid, not the seat's: no decision reads them. In a run where an arm names a stash threshold
 only (PR G; a run that names none has no such key, so its counts are as before), last:
 `returning_dropped`, the players who left the seat's roster whom the engine read as returning
-on the seat's problem the day before (null for a seat that builds no problem). A pair (`--arms`) adds the rivals'
+on the seat's problem the day before, a claim's drop as he was read the day the claim was placed
+(null for a seat that builds no problem). A pair (`--arms`) adds the rivals'
 seats as one row, both arms' seasons pooled. The landing counters are per seat on the state
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state
 counters); the rest is tallied by `sim/counts.py`.

@@ -69,8 +69,10 @@ BIDS: dict[str, str | None] = {
 #: The stash count (PR G), after :data:`BIDS`, only in a run where an arm names a stash
 #: threshold: the players who left the seat's roster (a move's drop, a churn's held drop, a drop
 #: a returning held player forced) whom the engine read as returning on the seat's problem the
-#: day before (``moves.returning_net`` not None, ``policy.returning_of``). None for a seat that
-#: builds no problem (a market or a static rival): nothing reads its players.
+#: day before (``moves.returning_net`` not None, ``policy.returning_of``); a claim's drop, who
+#: is off the seat's problem while the claim is open, as he was read the day the claim was
+#: placed (:meth:`Tally.reading`). None for a seat that builds no problem (a market or a static
+#: rival): nothing reads its players.
 STASH = ("returning_dropped",)
 
 
@@ -80,7 +82,8 @@ class Tally:
 
     def __init__(self, setup: Setup, stash: bool = False) -> None:
         self.stash = stash
-        #: Each seat's players its last decision read as returning, and those of them it dropped.
+        #: Each seat's players its last decision read as returning (with the drops of its open
+        #: claims as read the day each was placed), and those of them it dropped.
         self._returning: dict[int, frozenset[int]] = {}
         self.returning_dropped: dict[int, int] = {}
         self.teams = tuple(setup.teams)
@@ -110,14 +113,22 @@ class Tally:
             if n:
                 self.adds[t][week] = self.adds[t].get(week, 0) + n
 
-    def reading(self, team: int, returning: frozenset[int]) -> None:
-        """``team``'s seat decided today on a problem whose returning players are ``returning``."""
-        self._returning[team] = returning
+    def reading(self, team: int, returning: frozenset[int], state: SimState) -> None:
+        """``team``'s seat decided today, on ``state``, on a problem whose returning players are
+        ``returning``. The problem is the roster as the seat's open claims will leave it
+        (``moves.with_pending``): a claim's drop is off it from the day after the claim is
+        placed, though he is on the team's roster until the claim is won. So the drop of a claim
+        still open today stays in the reading as he was read the day it was placed, until the
+        claim is decided: a claim that waits two mornings or more counts like any other move."""
+        claimed = {c.move.drop for c in state.claims.get(team, ())}
+        waiting = self._returning.get(team, frozenset()) & claimed
+        self._returning[team] = returning | waiting
         self.returning_dropped.setdefault(team, 0)
 
     def left(self, before: SimState, after: SimState) -> None:
         """A morning, from the state before anything landed to the one after: each player who
-        left a seat's roster and whom its last decision read as returning is counted."""
+        left a seat's roster and whom its last reading (:meth:`reading`) holds as returning is
+        counted."""
         for t, returning in self._returning.items():
             if not returning:
                 continue

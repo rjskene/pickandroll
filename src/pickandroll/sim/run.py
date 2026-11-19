@@ -781,7 +781,8 @@ def simulate(
                     solves[vi] += decision.solves
                 decided[team] = decision
                 if stash and decision.source in policy.TIERS:
-                    tallies[vi].reading(team, decision.returning)
+                    # Before today's queue: the claims open are those placed on earlier days.
+                    tallies[vi].reading(team, decision.returning, state)
                 state = policy.queue(
                     state,
                     team,

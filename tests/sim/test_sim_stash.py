@@ -34,7 +34,7 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, wk
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED
-from pickandroll.sim.state import BENCH, initial
+from pickandroll.sim.state import BENCH, Claim, Waiting, initial
 from tests.sim.sim_league import (
     KNOBS,
     arm,
@@ -44,10 +44,12 @@ from tests.sim.sim_league import (
     rates,
     recorded_lines,
 )
+from tests.sim.test_sim_continuous import morning
 from tests.sim.test_sim_held_morning import KINDS, WAYS, found, full_with_one_held, play
 from tests.sim.test_sim_seasons import rounded
 
 TEAM = 1
+DAY = timedelta(1)
 WEEK = timedelta(7)
 #: A threshold no add clears: every returning player is kept while another can go.
 NEVER = 1e6
@@ -442,8 +444,8 @@ def test_the_count_is_a_named_run_s_only():
     plain = ct.Tally(setup).rows(s)
     assert set(plain[1]) == set(ct.METRICS) and ct.metrics_in([plain[1]]) == ct.METRICS
     tally = ct.Tally(setup, stash=True)
-    tally.reading(1, frozenset({out, stays}))
-    tally.reading(2, frozenset())
+    tally.reading(1, frozenset({out, stays}), s)
+    tally.reading(2, frozenset(), s)
     after = replace(s, rosters={**s.rosters, 1: s.rosters[1][1:2] + s.rosters[1][3:]})
     assert {k for k, _ in s.rosters[1]} - {k for k, _ in after.rosters[1]} == {out, other}
     tally.left(s, after)
@@ -458,6 +460,63 @@ def test_the_count_is_a_named_run_s_only():
     assert set(ss.counts_note("faab", True)) - set(ss.counts_note("faab")) == set(ct.STASH)
     none, share = arm("A", "surrogate"), arm("B", "surrogate", stash_threshold=0.0)
     assert not rn.stash_named((none, none)) and rn.stash_named((none, share))
+    # A claim in flight is folded into the seat's problem, its drop off it: he stays in the
+    # reading as he was read the day the claim was placed, while the claim is open and no longer.
+    claim = Claim(mv.Move(min(s.pool), stays), s.day, s.day + 2 * DAY, 1)
+    waiting = replace(s, claims={1: (claim,)})
+    won = replace(waiting, rosters={**s.rosters, 1: s.rosters[1][:1] + s.rosters[1][2:]}, claims={})
+    for decided, counted in ((False, 1.0), (True, 0.0)):
+        tally = ct.Tally(setup, stash=True)
+        tally.reading(1, frozenset({stays}), s)
+        tally.reading(1, frozenset(), waiting)
+        if decided:  # lost or failed: the next day's reading is that day's alone
+            tally.reading(1, frozenset(), s)
+        tally.left(waiting, won)
+        assert tally.rows(won)[1]["returning_dropped"] == counted
+
+
+@pytest.mark.parametrize("rule", (DROPPED, CONTINUOUS))
+@pytest.mark.parametrize("waivers", KINDS)
+def test_a_returning_player_a_claim_drops_is_counted_however_long_the_claim_waits(waivers, rule):
+    """The review's finding. The star is on waivers, so the seat's add of him for ``gone``, a
+    returning player, is a claim, by priority and by FAAB under either waiver rule. While the
+    claim is open the seat's problem is the roster the claim will leave (``moves.with_pending``):
+    ``gone`` is on the team's roster and off the problem, so the next day's reading does not
+    hold him. The morning the claim is won he leaves, and he is counted once, whether the claim
+    waited one morning or two. The runner's own steps (``run.simulate``): the decision, the
+    reading, the queue, the morning, the count. Made on one made-up day: no format is named."""
+    for wait in (1, 2):
+        setup, state, status, returns, star, gone, _ = a_day(churn=False)
+        setup = replace(setup, waivers=waivers, waiver_days=2, waiver_rule=rule)
+        s = replace(
+            initial(setup),
+            rosters=state.rosters,
+            pool=state.pool,
+            waivers={star: Waiting(state.day + wait * DAY, 2)},
+        )
+        value = wk.per_game_values(setup.projection, setup.cats, None)
+        tally = ct.Tally(setup, stash=True)
+        for n in range(wait):
+            built = policy.problem_of(
+                setup, s, TEAM, knobs_at(None), setup.projection, status, returns
+            )
+            decision = policy.decide(built, "surrogate", with_plan=False)
+            tally.reading(TEAM, decision.returning, s)
+            on_problem = gone in dict(built.problem.roster)
+            if n == 0:
+                assert decision.moves == (mv.Move(star, gone),) and gone in decision.returning
+            else:
+                assert not on_problem and gone not in decision.returning and not decision.moves
+            assert gone in dict(s.rosters[TEAM])
+            placed = policy.queue(
+                s, TEAM, decision, 1, setup.max_weekly_adds, False, setup.spots(), setup
+            )
+            assert [c.move for c in placed.claims[TEAM]] == [mv.Move(star, gone)]
+            s = replace(morning(setup, placed, s.day + DAY, status, value), day=s.day + DAY)
+            tally.left(placed, s)
+        row = tally.rows(s)[TEAM]
+        assert star in s.active(TEAM) and gone in s.pool and not s.claims.get(TEAM)
+        assert row["claims_won"] == 1.0 and row["returning_dropped"] == 1.0, wait
 
 
 # --------------------------------------------------------------------------- the seasons

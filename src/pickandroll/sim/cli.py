@@ -483,7 +483,8 @@ STASH_NOTE = {
     "returning_dropped": "players who left the seat's roster (a move's drop, a churn's held "
     "drop, a drop a returning held player forced) whom the engine read as returning on the "
     "seat's problem the day before (moves.returning_net: out, back this season and worth "
-    "something then); null for a seat that builds no problem (a market or a static rival)",
+    "something then; a claim's drop as read the day the claim was placed); null for a seat "
+    "that builds no problem (a market or a static rival)",
 }
 
 
