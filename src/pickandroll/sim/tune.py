@@ -130,8 +130,8 @@ SAME_SEAT = (
 )
 NOT_YET = "left for the next piece"
 UNPLANNED = (
-    "not played: the confirmation's pair cannot be planned on the season confirmed on, and the "
-    "season was not read"
+    "not played: the confirmation's pair cannot be planned on the season confirmed on; no path "
+    "of the season was played and no look is counted"
 )
 #: The verdict's rule, for the record.
 VERDICT_RULE = (
