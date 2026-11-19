@@ -561,7 +561,11 @@ def result_of(
     the two arms and whether its outcomes are; whether the lever did nothing (both: the two arms
     played one season on every path, as far as a record tells); and whether it survives
     (:data:`RULE`). Both arms play one world, so equal counts with an outcome that differs is a
-    lever that changed which moves were made, not how many: it did something."""
+    lever that changed which moves were made, not how many: it did something. The counts
+    compared are every key of a row, the guard's ``sets_past_guard`` among them (the guard PR):
+    a set an ``off`` arm decided past the guard is the lever acting on a decision, so a pair
+    with one is never "did nothing", even if none of that set was queued (the day's cap, the
+    week's adds, a claim's rule) and the two seasons are equal."""
     cells = {
         t: {
             label: {

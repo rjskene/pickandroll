@@ -8,8 +8,9 @@ a waiver league the best it may add and the weakest it may drop, :class:`Market`
 league it bids by an assumed form, ``policy.rival_bid``, or on the price book, ``bids.book_bid``,
 PR Fd). Its view is the draft day's all season, or the season's that morning (``view``), and it
 may pick among its best few (``among``), PR Fd.
-**Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
-whole: at the defaults nothing changes; in a FAAB league it bids by the live rule on them). **Seat** is the equal room's: a named arm in another
+**Mirror** runs the surrogate on the shared beliefs with the arm's knobs and its four fields,
+never its guard or its stake (the guard PR: a rival stays on the block; at the defaults nothing
+changes; in a FAAB league it bids by the live rule on them). **Seat** is the equal room's: a named arm in another
 seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
 draws (``run.World`` passes the day's generator), so two arms of a comparison see the same
 opponents while their states agree.

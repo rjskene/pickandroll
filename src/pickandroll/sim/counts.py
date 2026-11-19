@@ -16,9 +16,9 @@ only, the world's knowledge of every bid, which no decision reads. The landing a
 counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
 ``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
 and the day's lines once they are scored. In a run where an arm names its guard or its stake (the
-guard PR) also, on the run's arms' seats, the sets decided that the season guard would have
-refused, and the season's mean week's stake with the weeks it was above a half: such a run's
-only, so a run that names neither counts as before. Pure.
+guard PR) also, on the seats of the run's arms on the exact or the surrogate tier, the sets
+decided that the season guard would have refused, and the season's mean week's stake with the
+weeks it was above a half: such a run's only, so a run that names neither counts as before. Pure.
 """
 
 from __future__ import annotations
@@ -73,7 +73,8 @@ BIDS: dict[str, str | None] = {
 #: The guard's and the stake's counts (the guard PR), after :data:`BIDS`, by the season field
 #: (``policy.SEASON_FIELDS``) whose naming brings them: in a run where an arm names ``guard``,
 #: the sets its arms' seats decided that the season guard would have refused (none under the
-#: block, by construction); in one where an arm names ``stake``, the mean of the week's stake
+#: block, by construction; under ``off`` a lower bound on how often the block would have turned
+#: the decision); in one where an arm names ``stake``, the mean of the week's stake
 #: ``L`` over the weeks the seat played and the weeks ``L`` was above :data:`HALF`. On the
 #: run's arms' seats whose tier reads the fields, never a rival's; a run that names neither has
 #: none, so its counts are as before.

@@ -245,7 +245,11 @@ def same_seat(
 def stake_refused(arm: Arm, shapes: Sequence[policy.Shape]) -> str | None:
     """Why ``arm`` may not play a run whose leagues are ``shapes`` (the guard PR): it names a
     stake above 0 and one of them has no bracket read, so the cut line and the bracket's weeks
-    its stake reads are not trusted. None when it may."""
+    its stake reads are not trusted. None when it may. The refusal is by the field, whether or
+    not the arm's tier reads a stake (the ranking tier and a static seat do not): no path of
+    such a league is played with a stake named, as none is with a stake and no season weight.
+    Every league a replay builds today has its bracket read (``replay_setup`` always makes a
+    spec), so the command's refusal guards a later league kind."""
     if arm.stake > 0 and any(not shape.bracket for shape in shapes):
         return (
             f"arm {arm.name} names stake {arm.stake:g}: a stake reads the cut line and the "
@@ -734,7 +738,7 @@ def simulate(
     ``counted``, by variant, names for a seat the season fields its run counts
     (:func:`counted_of`; ``counts.SEASON``); none by default, and the counts are as before. A
     seat with a stake in a league whose bracket is not read is refused by name before any day
-    (ValueError)."""
+    (ValueError), by the field: on any tier, read there or not (:func:`stake_refused`)."""
     n = len(variants)
     if setup.spec is None:
         for v in variants:

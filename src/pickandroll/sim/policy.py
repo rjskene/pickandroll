@@ -1024,7 +1024,10 @@ def mark_past_guard(built: Built, decision: Decision) -> Decision:
     PR): its rest of the season is below 0 by the engine's own figure (:func:`guard_of`, the
     guard itself asked). Only a seat whose guard is ``off`` can decide such a set, so under
     ``block`` nothing is asked and the decision is returned as it is. The week plan's steps are
-    not asked about."""
+    not asked about, nor the exact tier's week set. A mark is a decision the block would have
+    turned; an unmarked one may be too (the block tests every set a search tries, so its search
+    can end on another set where this one passes as a whole): the count of marks is a lower
+    bound on how often the block binds."""
     if built.guard == BLOCK or not decision.moves or guard_of(built)(decision.moves):
         return decision
     return replace(decision, past_guard=True)

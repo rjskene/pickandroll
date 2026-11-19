@@ -338,8 +338,9 @@ size of `ROS_w`, over the swaps that have a `ROS_w`, 0 or more by construction: 
 `season_weight` at which the term is the week gain's size; and `against`, the share of those
 swaps whose `ROS_w` is below 0, where the week's best swap costs season value (PR C2: the ratio
 was the signed medians' quotient, which flips sign or blows up when the season figures straddle
-zero). It is recorded per arm (`season_scale.by_arm`: the mean over paths of each figure, and how
-many paths gave one) for every replay, at any `season_weight`, 0 included; null on
+zero). It is recorded per arm (`season_scale.by_season`, then the arm: the mean over paths of
+each figure, and how many paths have a row and how many a ratio, below) for every replay, at any
+`season_weight`, 0 included; null on
 the ranking tier and a static seat. A dry run prints the four. It draws nothing, changes no
 outcome and is no part of a solve. Its gain is in the league's measure: in a one-win league the
 matchup's win odds (the note says so in every one-win run, the format PR), as it is in matchups
@@ -364,8 +365,10 @@ here changes nothing live without the user.
   exact tier's recommended set (or its weighted search), its week set and its streaming plan, and
   the surrogate's search. A set that loses on the rest of the season may then be queued, and what
   holds it back is the season term at the arm's `season_weight`, which may be 0. The week plan
-  takes no season term, so under `off` nothing holds its steps back. The ranking tier and a
-  static seat search under no guard: an arm that names `guard` there is refused by name.
+  takes no season term, so under `off` the season guard no longer holds its steps back; the
+  stream's own check (a step's path must be no worse on the weeks after, `stream.plan`) still
+  does. The ranking tier and a static seat search under no guard: an arm that names `guard`
+  there is refused by name.
 - **`stake`**: a number from 0 to 1 (default 0). The season weight in force on a day is
   `season_weight × (1 − stake × L)`, where `L`, between 0 and 1, is the week's stake for the seat:
   how much this week's result can move whether it makes the playoffs. At `stake` 0 the weight is
@@ -375,7 +378,9 @@ here changes nothing live without the user.
   worth, which gate 5 measures at the defaults (the block, no stake). The season scale is measured
   without the term and does not change. An arm with `stake` above 0 and `season_weight` 0 is
   refused by name (there is nothing to scale); so is one in a league whose bracket is not read
-  (the cut line and the bracket's weeks are not trusted), before any path.
+  (the cut line and the bracket's weeks are not trusted), before any path. Both refusals are by
+  the field, on any tier: an arm on the ranking tier, whose seat reads no stake, is refused the
+  same.
 
 `L` in a regular week is a working default: the ruling fixes the idea (the gap to the cut line
 against the weeks left, and full in the playoffs), not the formula.
@@ -620,7 +625,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   seat by construction is refused by name, the knobs and fields it differs in listed with why none
   is read (**What each knob reads**); the same arm twice stays allowed (a check that the difference
   is zero). An arm with a `stake` above 0 is refused by name before any path when a league of the
-  run has no bracket read (the guard PR).
+  run has no bracket read (the guard PR), whatever its tier. Every league a replay plays today
+  has its bracket read, so this refusal guards a later league kind.
   `--no-peek` checks the design the run names: with `--arms` it compares both arms'
   seasons' day records on path 0. The payload (`design: paired`) carries the seat rule and each
   path's seat, and per cell each arm's outcomes, the `difference` (B less A) with its standard error
@@ -1481,15 +1487,19 @@ fell short of the winning bid by. A claim is "behind" there when another claim o
 decided before it (the winner's, or one that failed). Under continuous waivers (PR Fc) the claim
 counts cover every add, so `landed` equals `claims_won` and `gone` equals `claims_failed`; no key
 is added. In a run where an arm names its `guard` only (the guard PR; a run that does not has no
-such key), on the run's arms' seats and never a rival's: `sets_past_guard`, the sets the seat
-decided that the season guard would have refused (the engine's own guard asked about the decided
-set, before the day's cap and the week's adds cut it; the week plan's steps are not asked about).
-It is 0 for an arm on the block, by construction, and for an arm with the guard off it says how
-often the block would bind. In a run where an arm names its `stake` only, on the same seats:
-`stake_mean`, the mean of the week's stake `L` over the weeks the seat played, and
-`stake_weeks_above_half`, the weeks `L` was above a half. They are counted for both arms of the
-run, whichever names the field: `L` is a fact of a seat's season, read by the weight only where
-the arm has a stake. These counts are the world's knowledge of
+such key), on the seats of the run's arms on the exact or the surrogate tier and never a
+rival's: `sets_past_guard`, the sets the seat decided that the season guard would have refused
+(the engine's own guard asked about the decided set, before the day's cap and the week's adds
+cut it). It is 0 for an arm on the block, by construction. For an arm with the guard off it is a
+lower bound on how often the block would have turned its decision, not that number: the block
+tests every set a search tries, so its search can be turned at a step and end on another set
+where the set decided under `off` passes as a whole and is not counted; and on the exact tier
+the week set and the week plan's steps are not asked about. In a run where an arm names its
+`stake` only, on the same seats: `stake_mean`, the mean of the week's stake `L` over the weeks
+the seat played, and `stake_weeks_above_half`, the weeks `L` was above a half. They are counted
+for every arm of the run on those two tiers, whichever names the field (an arm on the ranking
+tier, and a static one, has no such key): `L` is a fact of a seat's season, read by the weight
+only where the arm has a stake. These counts are the world's knowledge of
 every bid, not the seat's: no decision reads them. A pair (`--arms`) adds the rivals'
 seats as one row, both arms' seasons pooled. The landing counters are per seat on the state
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state

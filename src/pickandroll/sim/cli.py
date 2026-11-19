@@ -481,13 +481,19 @@ BIDS_NOTE = {
 
 
 #: What the guard's and the stake's counts are (the guard PR), by the arm field whose naming
-#: brings them (``counts.SEASON``): a run's in which an arm names that field, on its arms' seats.
+#: brings them (``counts.SEASON``): a run's in which an arm names that field, on the seats of
+#: its arms on the exact or the surrogate tier. ``sets_past_guard`` is a lower bound on how
+#: often the block would have turned an ``off`` seat's decision, and the note says so: the
+#: count asks the guard about the decided set alone (``policy.mark_past_guard``).
 SEASON_NOTE = {
     "guard": {
         "sets_past_guard": "sets the seat decided that the season guard would have refused (the "
         "rest of the season below 0 by the engine's own figure), before the day's cap and the "
-        "week's adds cut them: 0 for an arm on the block, by construction; an arm with the "
-        "guard off shows how often the block would bind",
+        "week's adds cut them: 0 for an arm on the block, by construction; for an arm with the "
+        "guard off a lower bound on how often the block would have turned its decision, not "
+        "that number (the block tests every set a search tries, so it can end on another set "
+        "where the set decided here passes as a whole and is not counted; the exact tier's "
+        "week set and week plan are not asked about)",
     },
     "stake": {
         "stake_mean": "the week's stake L for the seat, its mean over the weeks played (the "
