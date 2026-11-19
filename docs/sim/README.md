@@ -204,6 +204,11 @@ route's weighted set when the arm executes `weighted`, or the live queue's rule 
 arm's `pool` (thirty by default) best candidates by value times games this week, the greedy search
 alone, on the arm's `surrogate_days` (Mondays and Thursdays by default). **Ranking** swaps the
 pool's best for the roster's worst the keep rule does not keep, when it gains, with no evaluator.
+Two rules of the live route are played by no seat here, on any tier: the breakout lift (#439; a
+seat's `MoveProblem` always has `lifted` and `marginal` empty) and the add reserve with the
+no-quick-re-cut rule (#441; applied where live builds its solve and its queue, in the API's layer
+and `autopilot.queue_of`, neither of which the simulator calls). "Exact is the live route" holds
+but for those two; whether the simulator gets readers for them is open with the user.
 The executor lands yesterday's queue team by team in a rotating order. First its return rule: a held
 player whose status no longer fits his slot comes back to the bench that morning and, while the
 active roster is then over the league's spots, a player goes to the pool, counted as a forced
