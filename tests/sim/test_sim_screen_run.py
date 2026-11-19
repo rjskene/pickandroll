@@ -748,6 +748,15 @@ def test_the_bid_s_week_pair_and_its_season_pair_part_by_a_size_on_a_found_path(
     step for each claim whose gain has another sign on the two horizons, and by nothing else,
     so a part of a step is a size read.
 
+    What this shows, and what it does not (found in review). Each row did something here: its
+    arm B spends other dollars than the baseline, and the row is not "did nothing". But the two
+    rows part from each other in the value their claims were sized on alone, a count no
+    decision reads (``screen.SIZED_ON``): in this league of three weeks the two sizes round to
+    one dollar on every claim, so the two arms B play one season and the screen reports one
+    outcome under two names. No dollar parted on any of the eight seeds tried (1 to 8, both
+    formats; the handoff). A dollar that parts between the two weights is
+    ``test_sim_bid_seasons.py``'s, in a made-up season of six weeks in both formats.
+
     Here the seat's ten moves are inside one fortnight, which the live rule's fortnight reads
     too; a seat's last ten moves past a fortnight are ``test_sim_bid_seasons.py``'s."""
     flags = ("--waivers", "faab", "--waiver-rule", "continuous", "--h2h", h2h, "--seed", "7")
@@ -763,6 +772,13 @@ def test_the_bid_s_week_pair_and_its_season_pair_part_by_a_size_on_a_found_path(
     assert week["a"] == season["a"]
     for key in ("claims_won", "dollars_spent"):
         assert week["b"][key] == season["b"][key] and week["b"][key]["mean"] > 0
+    # Each row did something: its arm B spends other dollars than the baseline.
+    for k, counts in (("week", week), ("season", season)):
+        result = rows[f"bid.{k}-up"]["result"]
+        assert not result["counts_equal"] and not result["did_nothing"]
+        assert counts["a"]["dollars_spent"] != counts["b"]["dollars_spent"]
+    # The two arms B part in the value their claims were sized on, and in no other count.
+    assert {m for m in week["b"] if week["b"][m] != season["b"][m]} == set(sc.SIZED_ON)
     paths = 2
     apart = week["b"]["value_won"]["mean"] - season["b"]["value_won"]["mean"]
     steps = apart * paths / sc.WEIGHT_STEP

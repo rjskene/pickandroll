@@ -50,9 +50,9 @@ EVERY_KEY = {
 
 
 def public(h2h: str, **kw):
-    """Four seats and twelve free agents under the public leagues' rules: FAAB, continuous
-    waivers, a dropped player after two days, $100."""
-    return of_format(league("faab", pool=12, **kw), h2h)
+    """Four seats and twelve free agents (``pool`` says another wire) under the public leagues'
+    rules: FAAB, continuous waivers, a dropped player after two days, $100."""
+    return of_format(league("faab", **{"pool": 12, **kw}), h2h)
 
 
 def seat(block=None, **knobs) -> rn.Arm:
@@ -76,6 +76,24 @@ def seasons(setup, arms, rivals=RIVALS, world=None):
 def placed(days, team: int = 1):
     """The claims ``team`` placed: the day, the player, the bid and the value."""
     return [(r.day, c.move.add, c.bid, c.value) for r in days for c in r.claims.get(team, ())]
+
+
+def dollars(days, team: int = 1):
+    """The claims ``team`` placed, without their values: the day, the player and the bid."""
+    return [(day, player, bid) for day, player, bid, _ in placed(days, team)]
+
+
+def in_force(named, plain) -> bool:
+    """Whether a block is in force in a season: its seat's bids in dollars part from the same
+    seat's that names no ``bid``, on the same world (``named`` and ``plain`` the two seasons'
+    days). A block changes what a claim bids and nothing else, so until a claim is decided
+    apart the two seasons are one: the two seats place their first claims on one day, on the
+    same players. A season in which the block was dropped would be the no-bid arm's, bid for
+    bid."""
+    first = min(day for day, _, _ in (*dollars(named), *dollars(plain)))
+    one, two = ([player for day, player, _ in dollars(d) if day == first] for d in (named, plain))
+    assert one and one == two
+    return dollars(named) != dollars(plain)
 
 
 def decided(days, outcome: str, team: int = 1):
@@ -239,9 +257,19 @@ def test_the_screen_s_week_pair_and_its_season_pair_part_from_the_seat_s_tenth_m
     less, which counts nothing). From the tenth move each values the claim on its own horizon's
     gain over its own typical, and the two part: the two rows are two levers.
 
-    (In the command's small league of three weeks the two pairs part on a found path too,
-    ``test_sim_screen_run.py``; there the seat's ten moves are inside one fortnight, which the
-    live rule's fortnight reads as well. The last ten moves past a fortnight are this test's.)"""
+    They part in dollars too, not only in the value a claim is sized on (found in review: the
+    test once held them apart by the recorded value alone, which no decision reads). Where
+    every category counts, on this file's world, the two arms bid the same dollar on every
+    claim before the seat's tenth move and a different dollar on the claim of the tenth, and
+    spend apart. In one win, on that world, the two sizes round to the same dollar on every
+    claim, so there the two part in the value alone; on another found world (seed 3, path 0)
+    the seat also makes its tenth move, and the two bid the same dollars before it and a
+    different dollar on a claim after it.
+
+    (In the command's small league of three weeks the two pairs part by a size on a found path
+    too, in the value alone, ``test_sim_screen_run.py``; there the seat's ten moves are inside
+    one fortnight, which the live rule's fortnight reads as well. The last ten moves past a
+    fortnight are this test's.)"""
     spec = {
         "name": "U",
         "tier": "surrogate",
@@ -298,6 +326,37 @@ def test_the_screen_s_week_pair_and_its_season_pair_part_from_the_seat_s_tenth_m
     assert abs(vw - vs) > 0.01 and gw / tw != pytest.approx(gs / ts)
     # The claim is won in both, so the value won, a count of the screen's record, parts too.
     assert abs(week.counts[1]["value_won"] - season.counts[1]["value_won"]) > 0.01
+
+    # In dollars: the claims both arms placed that bid apart, each by the seat's moves through
+    # its day.
+    def parted(one, two):
+        def bids(days):
+            out, made = {}, 0
+            for r in days:
+                decision = r.decisions.get(1)
+                made += len(decision.moves) if decision is not None else 0
+                out |= {(r.day, c.move.add): (c.bid, made) for c in r.claims.get(1, ())}
+            return out
+
+        a, b = bids(one), bids(two)
+        assert a.keys() == b.keys() and any(moves < TYPICAL_MIN for _, moves in a.values())
+        return sorted(a[key][1] for key in a if a[key][0] != b[key][0])
+
+    spent = [r.counts[1]["dollars_spent"] for r in (week, season)]
+    if h2h == EACH_CATEGORY:
+        # The same dollar on every claim before the tenth move, another on the tenth's.
+        assert parted(dw, ds)[0] == n == TYPICAL_MIN and spent[0] != spent[1]
+        assert dollars(dw)[: len(early)] == dollars(ds)[: len(early)]
+    else:
+        # One win, this world: the sizes round to one dollar on every claim.
+        assert parted(dw, ds) == [] and spent[0] == spent[1]
+        # Another found world: the same dollars before the tenth move, another after it.
+        setup = public(h2h)
+        other = rn.replay_world(setup, recorded_lines(setup, 11), 1, 3, 0)
+        (week, dw), (season, ds) = seasons(setup, arms, world=other)
+        apart = parted(dw, ds)
+        assert apart and apart[0] >= TYPICAL_MIN
+        assert week.counts[1]["dollars_spent"] != season.counts[1]["dollars_spent"]
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
@@ -356,34 +415,54 @@ def test_in_the_bracket_s_last_week_only_an_arm_whose_bid_weighs_the_season_spen
 
 
 # --------------------------------------------------------------------------- every league kind
+#: A seat that decides every day, and rivals that claim every day: the league kinds' seasons
+#: play them so that the seat's claims are contested and one is lost (found: on its two days a
+#: week among :data:`RIVALS` the every-key seat lost no claim with a held slot on any world
+#: tried, ``~/sim-notes/vm/scratch/f2/fix/``; the handoff says what was tried).
+DAILY = replace(policy.DEFAULT_FIELDS, surrogate_days=tuple(range(7)))
+BUSY = op.Market(1.0, op.SEASON, 3)
+
+
 @pytest.mark.parametrize("h2h", FORMATS)
 def test_a_bid_naming_every_key_plays_clean_under_the_public_rules_with_a_held_slot(h2h):
     """Every league kind once (the lesson of Fc's finding 1): FAAB, continuous waivers and an
-    IL slot, the seat's ``bid`` naming every key. The audit finds nothing (``seasons`` holds
-    every season of this file to it), the seat makes a held stint, wins claims it paid for and
-    is never below $0, and the rivals win claims. Without the held slot the same seat both wins
-    a claim and loses one."""
-    ((result, days),) = seasons(public(h2h, held_slots=("IL",)), [seat(EVERY_KEY)])
+    IL slot, a seat that decides every day among rivals that claim every day, its ``bid``
+    naming every key, and beside it on the same world the same seat naming none. The audit
+    finds nothing (``seasons`` holds every season of this file to it); the seat makes a held
+    stint, wins claims it paid for and loses one, and is never below $0; the rivals win claims.
+    And the block is in force in this league kind: the seat's bids part from the no-bid arm's
+    (found in review: the test once played the every-key arm alone, and passed with the block
+    dropped by every seat)."""
+    arms = [replace(seat(block), fields=DAILY) for block in (EVERY_KEY, None)]
+    (result, days), (_, plain) = seasons(public(h2h, held_slots=("IL",)), arms, BUSY)
     row = result.counts[1]
-    assert row["held_stints"] >= 1 and row["claims_won"] >= 1
+    assert row["held_stints"] >= 1 and row["claims_won"] >= 1 and row["value_won"] > 0
+    assert decided(days, WON) and decided(days, LOST)
     assert any(bid > 1 for _, _, bid in decided(days, WON))
     assert row["dollars_spent"] == sum(bid for _, _, bid in decided(days, WON))
     assert all(min(r.state.dollars.values()) >= 0 for r in days)
     assert any(decided(days, WON, t) for t in (2, 3, 4))
     held = [{k for k, slot in r.state.rosters[1] if slot in mv.HELD} for r in days]
     assert any(held)
-    ((result, days),) = seasons(public(h2h), [seat(EVERY_KEY)])
-    assert decided(days, WON) and decided(days, LOST)
-    assert result.counts[1]["value_won"] > 0
+    assert in_force(days, plain)
 
 
 def test_a_bid_naming_every_key_plays_clean_in_a_points_league_and_under_the_dropped_rule():
-    """The other kinds, one season each, the seat's ``bid`` naming every key: a points league
-    with an IL slot under the public rules (its week is one result on the points: one format),
-    and FAAB under the dropped rule, where only a dropped player is bid on (one win, the
-    format the rule's own FAAB season test plays). The audit finds nothing in either."""
+    """The other kinds, one season each, the seat's ``bid`` naming every key and beside it the
+    same seat naming none: a points league with an IL slot under the public rules (its week is
+    one result on the points: one format), and FAAB under the dropped rule, where only a
+    dropped player is bid on (one win, the format the rule's own FAAB season test plays). The
+    audit finds nothing in either, and in both the block is in force: the seat's bids part
+    from the no-bid arm's.
+
+    The points season is a found world: a wire of eight, seed 2 and path 0, a seat that decides
+    every day among rivals that claim every day and bid three times the assumed form. There the
+    seat wins claims and loses one. In a points league the made-up seat's claims are seldom
+    contested (every claim it won on the worlds tried, it won alone), and no lost claim was
+    found on this file's own world, wire or rivals. Under the dropped rule the seat places a
+    claim or two a season and none was lost."""
     table = {"pts": 1.0, "reb": 1.2, "ast": 1.5, "stl": 3.0, "blk": 3.0, "tov": -1.0, "threes": 1.0}
-    base = public(ONE_WIN, held_slots=("IL",))
+    base = replace(public(ONE_WIN, pool=8, held_slots=("IL",)), rival_scale=3.0)
     points = replace(
         base,
         scoring="points",
@@ -391,15 +470,23 @@ def test_a_bid_naming_every_key_plays_clean_in_a_points_league_and_under_the_dro
         cats=("fpts",),
         spec=replace(base.spec, scoring="points", points=table, cats=()),
     )
-    ((result, days),) = seasons(points, [seat(EVERY_KEY, plan_floor_points=0.01)])
-    assert result.counts[1]["claims_won"] >= 1 and result.counts[1]["dollars_spent"] > 0
-    assert result.counts[1]["held_stints"] >= 1
+    arms = [
+        replace(seat(block, plan_floor_points=0.01), fields=DAILY) for block in (EVERY_KEY, None)
+    ]
+    found = rn.replay_world(points, recorded_lines(points, 11), 1, 2, 0)
+    (result, days), (_, plain) = seasons(points, arms, BUSY, world=found)
+    row = result.counts[1]
+    assert row["claims_won"] >= 1 and row["dollars_spent"] > 0 and row["held_stints"] >= 1
+    assert decided(days, WON) and decided(days, LOST)
+    assert row["dollars_spent"] == sum(bid for _, _, bid in decided(days, WON))
+    assert in_force(days, plain)
     dropped = league("faab", DROPPED, pool=12)
-    ((result, days),) = seasons(dropped, [seat(EVERY_KEY)], op.Market(0.3))
+    (result, days), (_, plain) = seasons(dropped, [seat(EVERY_KEY), seat()], op.Market(0.3))
     assert set(ct.PACING) <= set(result.counts[1])
     won = decided(days, WON)
     assert won and any(bid > 0 for _, _, bid in won), placed(days)
     assert result.counts[1]["dollars_spent"] == sum(bid for _, _, bid in won)
+    assert in_force(days, plain)
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
@@ -424,7 +511,10 @@ def test_a_split_seat_bids_on_its_own_beliefs_and_plays_clean():
     another for the wire, PR D1), its ``bid`` naming every key, in a league that counts every
     category (the format whose typical gain is the arm's own floor): its bids come from its own
     problem, so the season plays clean and its claims carry bids, as the same arm's on the run's
-    forecaster do."""
+    forecaster do. Three seats on one world hold that: the split seat's block is in force (its
+    bids part from the same split seat's that names no ``bid``; found in review: a split seat
+    that dropped its block passed), and its claims are its own beliefs' (they part from the
+    seat's on the run's forecaster under the same block)."""
     setup = public(EACH_CATEGORY)
     out = [k for k, _ in setup.rosters[1][:2]]
     short = {k: v for k, v in setup.projection.items() if k not in out}
@@ -438,10 +528,13 @@ def test_a_split_seat_bids_on_its_own_beliefs_and_plays_clean():
         split={"split": "short"},
     )
     own = replace(seat(EVERY_KEY), forecaster="split")
-    (split, ds), (run, dr) = seasons(setup, [own, seat(EVERY_KEY)], world=w)
+    bare = replace(seat(), forecaster="split")
+    (split, ds), (run, dr), (_, db) = seasons(setup, [own, seat(EVERY_KEY), bare], world=w)
     for result, days in ((split, ds), (run, dr)):
         assert any(bid > 1 for _, _, bid, _ in placed(days))
         assert result.counts[1]["dollars_spent"] == sum(b for _, _, b in decided(days, WON))
+    assert in_force(ds, db)
+    assert placed(ds) != placed(dr) and dollars(ds) != dollars(dr)
 
 
 # --------------------------------------------------------------------------- the walls
