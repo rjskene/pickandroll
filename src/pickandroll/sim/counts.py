@@ -88,6 +88,18 @@ SEASON: dict[str, tuple[str, ...]] = {
         "union_head_refused_days",
     ),
 }
+#: Of the counts above, the ones that describe an arm's own search and so differ between an arm
+#: with the field on and one with it off by construction, whatever either plays: an arm at 0
+#: builds no union and counts 0 in each. A rule that asks whether two arms played one season
+#: leaves them out (the screen's "did nothing", ``screen.result_of``). ``union_taken_days`` is
+#: not one of them: a decided add that came from the list is a real difference. A count
+#: declares nothing unless it is named here.
+BY_CONSTRUCTION: tuple[str, ...] = (
+    "union_days",
+    "union_admitted",
+    "union_admitted_days",
+    "union_head_refused_days",
+)
 
 
 class Tally:
@@ -221,4 +233,14 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
     return pooled(rows) if rows else None
 
 
-__all__ = ["BIDS", "CLAIMS", "METRICS", "SEASON", "Tally", "metrics_in", "pooled", "row_of"]
+__all__ = [
+    "BIDS",
+    "BY_CONSTRUCTION",
+    "CLAIMS",
+    "METRICS",
+    "SEASON",
+    "Tally",
+    "metrics_in",
+    "pooled",
+    "row_of",
+]

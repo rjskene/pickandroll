@@ -27,9 +27,11 @@ from pickandroll.sim import counts as ct
 from pickandroll.sim import engine, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
+from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, sg, wk
 from pickandroll.sim.state import Member, initial
 from tests.sim.sim_league import KNOBS, NINE, make_setup, of_format, rates, replay_of
+from tests.sim.test_sim_screen import pair, path
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
 FORMATS = (ONE_WIN, EACH_CATEGORY)
@@ -672,3 +674,100 @@ def test_rule_1_a_run_of_arms_at_zero_has_no_new_key_and_guard_pool_zero_named_i
     assert got["a"] == got["b"] and set(got["delta"].values()) == {0.0}
     assert got["counts"]["a"] == got["counts"]["b"] and got["counts"]["a"]["landed"] > 0
     assert not set(UNION_KEYS) & (set(got["counts"]["a"]) | set(got["counts"]["rivals"]))
+
+
+# --------------------------------------------------------------------------- the screen
+def screen_row(baseline: dict, h2h: str = ONE_WIN) -> sc.Row:
+    (row,) = sc.rows_of(baseline, ["guard_pool"], [policy.Shape(h2h=h2h)], sc.Context())
+    return row
+
+
+@pytest.mark.parametrize("opponents", ["static", "market", "mirror"])
+@pytest.mark.parametrize("tier", ["surrogate", "exact"])
+def test_the_screen_s_row_is_played_on_the_exact_tier_in_both_arms(tier, opponents):
+    """One row, to 30 (the size of the list the live search takes): whatever tier the baseline
+    is on, both arms are the baseline on the exact tier, and they differ in the field alone."""
+    (lever,) = [x for x in sc.LEVERS if x.name == "guard_pool"]
+    assert (lever.tier, lever.nudge) == ("exact", "to 30")
+    for start in (0, 10):
+        baseline = spec("B", tier, opponents, **({"guard_pool": start} if start else {}))
+        row = screen_row(baseline)
+        assert (row.key, row.status, row.tier, row.why) == ("guard_pool-30", sc.PLAY, "exact", None)
+        assert row.both == ({} if tier == "exact" else {"tier": "exact"})
+        a, b = rn.arm_of(row.a), rn.arm_of(row.b)
+        assert a.tier == b.tier == "exact" and (a.name, b.name) == ("B", "B:guard_pool-30")
+        assert (a.fields.guard_pool, b.fields.guard_pool) == (start, 30)
+        assert row.values == {"a": start, "b": 30}
+        assert replace(b, name="B", fields=a.fields) == a
+        assert rn.same_seat(a, b, [policy.Shape()]) is None
+
+
+def test_a_baseline_already_at_the_row_s_size_is_refused_by_name():
+    row = screen_row(spec("B", "surrogate", guard_pool=30))
+    assert row.status == sc.REFUSED and row.a is None
+    assert row.why.startswith("lever guard_pool: ")
+    assert "its nudge to 30 is the baseline's value (30)" in row.why and "--levers" in row.why
+
+
+def test_did_nothing_leaves_out_the_counts_that_describe_an_arm_s_own_search():
+    """The counts an arm with the field on has by construction (it builds a union every
+    decision day, an arm at 0 never) are declared beside their definition, and the screen's
+    "did nothing" compares every count but those. A decided add from the list is not one of
+    them: it is a real difference. A row whose counts declare nothing is read as before."""
+    assert ct.BY_CONSTRUCTION == (
+        "union_days",
+        "union_admitted",
+        "union_admitted_days",
+        "union_head_refused_days",
+    )
+    assert set(ct.BY_CONSTRUCTION) == set(UNION_KEYS) - {"union_taken_days"}
+    assert not set(ct.BY_CONSTRUCTION) & {*ct.METRICS, *ct.CLAIMS, *ct.BIDS}
+    zeros = dict.fromkeys(UNION_KEYS, 0.0)
+    searched = {
+        **zeros,
+        "union_days": 30.0,
+        "union_admitted": 12.0,
+        "union_admitted_days": 9.0,
+        "union_head_refused_days": 4.0,
+    }
+    flat = pair({("2024", "prior"): {}})
+    idle = sc.result_of(flat, [path(a=zeros, b=searched)] * 2, "matchup_wins")
+    assert idle["counts_equal"] and idle["outcomes_equal"] and idle["did_nothing"]
+    assert not idle["survives"]
+    took = {**searched, "union_taken_days": 1.0}
+    one = sc.result_of(flat, [path(a=zeros, b=searched), path(a=zeros, b=took)], "matchup_wins")
+    assert not one["counts_equal"] and one["outcomes_equal"] and not one["did_nothing"]
+    # Any other count that moves is a difference, with the declared ones beside it or not.
+    for a, b in ((zeros, {**searched, "landed": 9.0}), ({}, {"landed": 9.0})):
+        moved = sc.result_of(flat, [path(a=a, b=b)], "matchup_wins")
+        assert not moved["counts_equal"] and not moved["did_nothing"]
+    # The same search with an outcome that differs did something.
+    apart = sc.result_of(flat, [path(a=zeros, b=searched, delta=1.0)], "matchup_wins")
+    assert apart["counts_equal"] and not apart["outcomes_equal"] and not apart["did_nothing"]
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_the_row_s_pair_did_nothing_when_no_set_takes_an_add_from_the_list(h2h):
+    """The row's own two arms through a season, read by the screen's rule. With a head that
+    holds every add (four free agents, a head of four) the list brings nothing, both arms
+    play one season, and the row reads "did nothing" though the arm with the list built a
+    union every day. With a head of two the arm with the list queues an add the head left
+    out, and the row did something."""
+    setup = refusing(h2h, now=True)
+    flat = pair({("2024", "prior"): {}})
+    measure = sc.measure_of("categories", h2h)
+    seen = {}
+    for head in (4, 2):
+        row = screen_row(spec("B", "surrogate", pool=head), h2h)
+        a, b = rn.arm_of(row.a), rn.arm_of(row.b)
+        got = rn.paired(setup, replay_of(setup, 2, 0), a, b, 1)
+        assert got["breaches"] == []
+        seen[head] = got["counts"], sc.result_of(flat, [got], measure)
+    counts, result = seen[4]
+    assert counts["b"]["union_days"] > 1 and counts["a"]["union_days"] == 0
+    assert counts["b"]["union_admitted"] == 0 and counts["b"]["union_taken_days"] == 0
+    assert counts["b"]["landed"] > 0
+    assert result["counts_equal"] and result["outcomes_equal"] and result["did_nothing"]
+    counts, result = seen[2]
+    assert counts["b"]["union_taken_days"] >= 1
+    assert not result["counts_equal"] and not result["did_nothing"]

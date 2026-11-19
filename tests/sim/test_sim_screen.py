@@ -80,6 +80,7 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "execute_plan",
         "system",
         "blend",
+        "guard_pool",
     )
     exact = {lever.name for lever in sc.LEVERS if lever.tier == "exact"}
     assert exact == {
@@ -89,6 +90,7 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "executes",
         "with_plan",
         "execute_plan",
+        "guard_pool",
     }
     assert all(lever.tier in ("exact", "surrogate") and lever.nudge for lever in sc.LEVERS)
     # Every name is a knob, a field or a key of an arm's spec: nothing the arm parser refuses.

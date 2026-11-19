@@ -15,7 +15,8 @@ This module is the list and the rules, and touches no file:
   step for, is listed and not played; a nudge equal to the baseline's value is refused by name.
 - :func:`result_of`, what a played pair's figures say: the paired difference on the measure the
   league's standings count against one standard error, and "did nothing" when the two arms'
-  counts and outcomes are equal on every path.
+  counts and outcomes are equal on every path (the counts a lever's arm has by construction,
+  ``counts.BY_CONSTRUCTION``, left out).
 
 The command that plays each pair, by the code ``replay`` plays a pair with, is ``cli.cmd_screen``.
 """
@@ -26,6 +27,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import counts as ct
 from . import forecast as fc
 from . import policy
 from . import run as rn
@@ -334,6 +336,13 @@ LEVERS: tuple[Lever, ...] = (
         _plain(_system),
     ),
     Lever("blend", "surrogate", "to 0.25 and to 0.75", _blend, "system blend"),
+    # The union pool (PR pool): to the size of the list the live search takes beside its pool.
+    Lever(
+        "guard_pool",
+        "exact",
+        "to 30",
+        _plain(lambda b, c: (Step("30", "to 30", {"guard_pool": 30}),)),
+    ),
 )
 #: The levers' names, in the list's order.
 NAMES: tuple[str, ...] = tuple(lever.name for lever in LEVERS)
@@ -527,6 +536,11 @@ def clears(mean: float | None, se: float | None) -> bool:
     return mean is not None and se is not None and abs(mean) > se
 
 
+def _played(counts: Mapping[str, Any]) -> dict[str, Any]:
+    """A seat's counts without the ones an arm has by construction (``counts.BY_CONSTRUCTION``)."""
+    return {k: v for k, v in counts.items() if k not in ct.BY_CONSTRUCTION}
+
+
 def result_of(
     payload: Mapping[str, Any], standing: Sequence[Mapping[str, Any]], measure: str
 ) -> dict[str, Any]:
@@ -537,7 +551,12 @@ def result_of(
     the two arms and whether its outcomes are; whether the lever did nothing (both: the two arms
     played one season on every path, as far as a record tells); and whether it survives
     (:data:`RULE`). Both arms play one world, so equal counts with an outcome that differs is a
-    lever that changed which moves were made, not how many: it did something."""
+    lever that changed which moves were made, not how many: it did something.
+
+    The counts compared are every one but those declared to describe an arm's own search
+    (``counts.BY_CONSTRUCTION``, PR pool): an arm with such a lever on has them above 0 whatever
+    it plays, so they say nothing of whether the two played one season. A row whose counts
+    declare none is read on all of them."""
     cells = {
         t: {
             label: {
@@ -552,7 +571,7 @@ def result_of(
         }
         for t, by_label in payload["results"].items()
     }
-    counts = all(r["counts"]["a"] == r["counts"]["b"] for r in standing)
+    counts = all(_played(r["counts"]["a"]) == _played(r["counts"]["b"]) for r in standing)
     outcomes = all(all(not v for v in r["delta"].values()) for r in standing)
     nothing = counts and outcomes
     return {
