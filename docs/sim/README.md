@@ -1415,6 +1415,14 @@ What the bid policy does not model, each plainly:
    the bracket only by an arm whose `bid.season` is above 0. For every other arm the path's
    straight line from `reserve` to 0 and the last morning's every dollar left move no bid in a
    season; they are held on the pure function (`tests/sim/test_sim_bid_policy.py`).
+10. **Until ten moves in a fortnight a weight on the week or the season reads no size.** A seat
+    that has recommended fewer than ten moves in fourteen days has no typical on those two
+    horizons, and a move that gains there counts as one typical whatever it gains (item 1 of the
+    family). The weight then only takes its share of the claim's value off the three weeks, and
+    a block at a weight on the week bids as one at the same weight on the season wherever both
+    figures are above 0. On the tests' made-up seasons a surrogate seat on its two days a week
+    never reached ten moves in a fortnight; one that decides every day did, and from then on the
+    two weights value a claim apart. A look at a real season says how often its seat reaches ten.
 
 **Not yet.** The ruling of 2026-11-07
 makes the market rivals' add rate a parameter of the league shape, with a default written as a
