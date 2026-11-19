@@ -249,6 +249,7 @@ CORE = (
     "shapes",
     "bids",
     "screen",
+    "stake",
 )
 #: What the core never imports: files, processes, the network, stores on disk.
 NO_IO = {
