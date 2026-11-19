@@ -254,6 +254,27 @@ def test_a_pace_reads_the_calendar_and_a_league_without_a_budget_has_none():
     assert bp.pace(huge, seen(dollars=100, budget=100, when=on(BRACKET))) == math.inf
 
 
+def test_a_pace_whose_product_is_beyond_a_float_has_no_bound_either():
+    """A ``k`` the block takes can give a pace that is a float while its product with the
+    claim's value, or the base's with the sizing, is not one. That is no bound, as a power
+    beyond a float is none: a claim worth more than nothing bids every dollar left, one worth
+    less the routine, the caps and the clamp after it, and nothing is raised (found in review:
+    it raised ``OverflowError`` inside the queue)."""
+    steep = bp.of({"pace": {"k": 1023.5, "shape": 1, "reserve": 0.5}})
+    at = {"budget": 100, "when": on(BRACKET)}
+    p = bp.pace(steep, seen(**at))
+    assert math.isfinite(p) and math.isinf(4.0 * p) and math.isfinite(1.0 * p)
+    # The value times the pace is beyond a float.
+    assert bp.amount(steep, seen(4.0, 1.0, 100, **at)) == 100
+    assert bp.amount(steep, seen(4.0, 1.0, 100, sizing=0.5, **at)) == 100
+    assert bp.amount(replace(steep, rival_cap=True), seen(4.0, 1.0, 100, others=(3,), **at)) == 4
+    for routine in bp.ROUTINES:
+        assert bp.amount(replace(steep, routine=routine), seen(-4.0, 1.0, 100, **at)) == routine
+    # The base is a float and its product with the sizing is not.
+    assert bp.amount(steep, seen(1.0, 1.0, 100, sizing=2.0, **at)) == 100
+    assert bp.amount(steep, seen(1.0, 1.0, 100, sizing=0.5, **at)) == 100
+
+
 # --------------------------------------------------------------------------- the routine
 def test_a_routine_claim_bids_nothing_or_a_dollar_and_is_clamped_to_the_dollars_left():
     one = bp.of({"routine": 1})
@@ -358,6 +379,32 @@ def test_the_block_s_keys_defaults_payload_and_label():
     # A null pace or shade is none; it is part of the repr, so two seats never share a decision.
     assert bp.of({"pace": None, "shade": None}) == bp.DEFAULT
     assert repr(full) != repr(bp.DEFAULT) and hash(full) != hash(bp.DEFAULT)
+
+
+def test_weights_that_sum_to_one_leave_the_three_weeks_a_plain_nothing():
+    """The three weeks take the rest of the weight, rounded: for some pairs that sum to 1 the
+    rounded rest was a negative zero, and the line a run prints read "the three weeks -0"."""
+    for week, season in ((0.9, 0.1), (0.8, 0.2), (0.7, 0.3), (0.25, 0.75), (1, 0), (0, 1)):
+        rule = bp.of({"week": week, "season": season})
+        assert rule.three == 0 and math.copysign(1.0, rule.three) == 1.0, (week, season)
+        assert ", the three weeks 0, " in rule.label()
+    assert bp.of({"week": 0.3, "season": 0.3}).three == 0.4
+
+
+def test_a_pace_at_k_0_is_no_pace_in_the_block_as_it_bids():
+    """``BidPolicy.bids``: the block with everything it never reads taken out. A pace at ``k`` 0
+    follows no path, whatever its ``shape`` and ``reserve``, so it is no pace; every other key
+    stands, and the block as named (the payload's) is not changed."""
+    still = bp.of({"pace": {"k": 0, "shape": 3, "reserve": 0.9}, "routine": 1, "week": 0.5})
+    assert still.pace == bp.Pace(0.0, 3.0, 0.9) and still.payload()["pace"]["shape"] == 3.0
+    assert still.bids() == bp.of({"routine": 1, "week": 0.5}) != still
+    assert bp.of({"pace": {"k": 0, "shape": 1, "reserve": 0.2}}).bids() == bp.DEFAULT
+    paced = bp.of({"pace": PACE})
+    assert paced.bids() is paced and bp.DEFAULT.bids() is bp.DEFAULT
+    # It bids as the block without the pace, on any day and at any dollars.
+    for day, dollars in product((FIRST, MID, BRACKET, LAST), (0, 20, 100)):
+        s = seen(4.0, 1.0, dollars, budget=100, when=on(day), week=1.0)
+        assert bp.amount(still, s) == bp.amount(still.bids(), s)
 
 
 @pytest.mark.parametrize(

@@ -14,7 +14,8 @@ the default member to, through the door). The family, in order (:func:`amount`):
    typical: no weight applies.
 2. **The pace** (:func:`pace`): ``((left / start) / path) ** k``, the seat's share of the budget
    left over a spending path (:func:`path`), so a seat ahead of the path bids up and one behind
-   it bids down. Where the path is 0 the pace has no bound (``math.inf``).
+   it bids down. Where the path is 0 the pace has no bound (``math.inf``), and neither has one
+   whose power, or whose product with the value, is beyond a float.
 3. **The base** is the value times the pace, rounded half up. At 1 or less the claim is routine
    and bids ``routine`` dollars.
 4. Otherwise the amount is the base times ``faab_sizing``, rounded half up; with no bound on the
@@ -37,7 +38,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any
 
@@ -96,8 +97,18 @@ class BidPolicy:
 
     @property
     def three(self) -> float:
-        """The three weeks' weight: the rest."""
-        return round(1.0 - self.week - self.season, PLACES)
+        """The three weeks' weight: the rest, and never a rounded negative zero (a run prints
+        it)."""
+        return max(0.0, round(1.0 - self.week - self.season, PLACES))
+
+    def bids(self) -> BidPolicy:
+        """The block as it bids: itself with what it never reads taken out. A pace at ``k`` 0
+        follows no path whatever its ``shape`` and ``reserve`` (:func:`pace`), so it is no
+        pace. Two blocks with one such form bid alike on every claim (``run.same_seat``); the
+        payload keeps the block as named."""
+        if self.pace is not None and self.pace.k == 0:
+            return replace(self, pace=None)
+        return self
 
     def payload(self) -> dict[str, Any]:
         """Every key with its value in force."""
@@ -330,14 +341,17 @@ def amount(rule: BidPolicy, seen: Seen) -> int:
     list, in its order)."""
     v, p = value(rule, seen), pace(rule, seen)
     left = max(0, math.floor(seen.dollars))
-    if math.isinf(p):
+    paced = v * p if math.isfinite(p) else math.inf
+    if not math.isfinite(paced):
         # No bound: a claim worth more than nothing bids what is left, one worth nothing or
-        # less the routine (on the same value as everywhere else).
+        # less the routine (on the same value as everywhere else). So too where the pace is a
+        # float and its product with the value is beyond one.
         out = left if v > 0 else rule.routine
     else:
-        base = _half_up(v * p)
-        size = 1.0 if seen.sizing is None else float(seen.sizing)
-        out = rule.routine if base <= 1 else _half_up(base * size)
+        base = _half_up(paced)
+        sized = base * (1.0 if seen.sizing is None else float(seen.sizing))
+        # A base whose product with the sizing is beyond a float is above any dollars left.
+        out = rule.routine if base <= 1 else _half_up(sized) if math.isfinite(sized) else left
     if rule.rival_cap and seen.others:
         out = min(out, max(seen.others) + 1)
     if rule.shade is not None and len(seen.wins) >= rule.shade.least:
