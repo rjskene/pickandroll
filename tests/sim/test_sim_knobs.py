@@ -50,6 +50,10 @@ def test_the_twelve_knobs_are_the_live_ten_and_the_simulators_two():
         ({"season_weight": None}, ValueError, "season_weight None is not a number"),
         ({"playoff_weight": "twice"}, ValueError, "playoff_weight 'twice' is not a number"),
         ({"playoff_weight": float("inf")}, ValueError, "playoff_weight inf is not a finite"),
+        # The engine's own check passes a NaN (it is below no minimum), and the stash threshold
+        # has no maximum; it is read since PR G, so the simulator refuses both.
+        ({"stash_threshold": float("nan")}, ValueError, "stash_threshold nan is not a finite"),
+        ({"stash_threshold": float("inf")}, ValueError, "stash_threshold inf is not a finite"),
         ({"rival_claim_rate": 0.3}, ValueError, "knob 'rival_claim_rate' is not a knob"),
     ],
 )
@@ -461,7 +465,13 @@ def test_the_reads_table_as_built():
     # plan reads it.
     for shape, floor in ((cats, set()), (policy.Shape(h2h=EACH_CATEGORY), {"plan_floor_cats"})):
         read = {k for k, v in policy.reads(exact, shape).items() if v == policy.READ}
-        assert read == {"protection_floor", "daily_cap", "season_weight", *floor}
+        assert read == {
+            "protection_floor",
+            "daily_cap",
+            "season_weight",
+            "stash_threshold",
+            *floor,
+        }
         read = {k for k, v in policy.reads(heavy, shape).items() if v == policy.READ}
         assert read == {
             "protection_floor",
@@ -469,6 +479,7 @@ def test_the_reads_table_as_built():
             "horizon_weight",
             "season_weight",
             "playoff_weight",
+            "stash_threshold",
             *floor,
         }
     assert policy.reads(exact, cats)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
@@ -481,11 +492,18 @@ def test_the_reads_table_as_built():
     ranking = policy.reads(rn.Arm("R", "ranking", KNOBS, {}), cats)
     assert {k for k, v in ranking.items() if v == policy.READ} == {"protection_floor"}
     assert ranking["daily_cap"].startswith("the ranking tier queues one move a day")
+    # The stash threshold (PR G): the arm's own seat's searches read it, with or without a held
+    # slot; the ranking tier's one swap is not held to it; a mirror rival keeps None.
+    assert ranking["stash_threshold"] == policy.RANKING_STASH
+    for held in (False, True):
+        surrogate = policy.reads(rn.Arm("U", "surrogate", KNOBS, {}), policy.Shape(held=held))
+        assert surrogate["stash_threshold"] == policy.READ
     static = policy.reads(rn.Arm("S", "static", KNOBS, {}), cats)
     assert set(static.values()) - {policy.STATIC} == {
         static[k]
         for k in ("horizon_weight", "plan_floor_cats", "plan_floor_points", "three_weight")
-    } | {static[k] for k in ("system", "blend", "faab_sizing", "stash_threshold")}
+    } | {static[k] for k in ("system", "blend", "faab_sizing")}
+    assert static["stash_threshold"] == policy.STATIC
     # Rivals that mirror a static seat read what the surrogate reads.
     mirrored = policy.reads(rn.Arm("S", "static", KNOBS, {}), cats, mirrored=True)
     assert {k for k, v in mirrored.items() if v == policy.READ} == {
@@ -493,7 +511,8 @@ def test_the_reads_table_as_built():
         "daily_cap",
         "season_weight",
     }
-    for never in ("system", "blend", "faab_sizing", "stash_threshold"):
+    assert mirrored["stash_threshold"] == policy.STATIC
+    for never in ("system", "blend", "faab_sizing"):
         assert all(policy.reads(c, s)[never] != policy.READ for c in CONFIGS for s in SHAPES)
     # three_weight (PR E): the exact tier executing queue reads it, in every shape; nobody else.
     for c, s in product(CONFIGS, SHAPES):
@@ -509,7 +528,8 @@ def test_the_reads_table_as_built():
 def test_the_reads_table_of_an_arm_that_executes_queue():
     """PR E: the queue's rule reads ``three_weight`` and the league's plan floor (the gate a week
     plan clears), whatever the arm's two plan switches say: the rule draws and executes its own
-    plan. A one-win league's floor is the engine's own under queue too."""
+    plan. A one-win league's floor is the engine's own under queue too. The stash threshold (PR
+    G) is read there as by any seat on the exact tier: the three weeks' set is ``three``'s."""
     cats, each = policy.Shape(), policy.Shape(h2h=EACH_CATEGORY)
     points = policy.Shape("points")
     for with_plan, execute_plan in product((True, False), (True, False)):
@@ -521,6 +541,7 @@ def test_the_reads_table_of_an_arm_that_executes_queue():
             "plan_floor_cats",
             "three_weight",
             "season_weight",
+            "stash_threshold",
         }
         assert policy.reads(q, cats)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
         assert policy.reads(q, cats)["three_weight"] == policy.READ
@@ -640,7 +661,13 @@ CASES = [
     ("system", "exact", "three", True, True, {}, ("bbm", "yahoo"), 1, "cats"),
     ("blend", "exact", "three", True, True, {}, (None, 0.5), 1, "cats"),
     ("faab_sizing", "exact", "three", True, True, {}, (None, 2.0), 1, "cats"),
-    ("stash_threshold", "exact", "three", True, True, {}, (None, 0.5), 1, "cats"),
+    # The stash threshold (PR G): read by the tiers that search with the engine, on a league
+    # where the seat's search drops a returning player (the weakened points league; a share no
+    # add clears keeps him); not by the ranking tier's one swap, nor by a static seat.
+    ("stash_threshold", "exact", "three", True, True, {}, (None, 1e6), 1, "weak points"),
+    ("stash_threshold", "surrogate", "three", False, False, {}, (None, 1e6), 1, "weak points"),
+    ("stash_threshold", "ranking", "three", True, False, {}, (None, 1e6), 1, "weak points"),
+    ("stash_threshold", "static", "three", True, False, {}, (None, 1e6), 1, "weak points"),
     # Read only somewhere: a case where it is not, and one built where it is.
     ("horizon_weight", "exact", "three", True, False, {}, ("natural", "season"), 1, "cats"),
     ("horizon_weight", "exact", "weighted", False, False, {}, ("natural", "season"), 1, "cats"),

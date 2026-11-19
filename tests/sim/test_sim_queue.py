@@ -144,7 +144,7 @@ def leading(setup):
     in_set = mv.Move(pool[0], roster[0])
     first = mv.Move(pool[1], roster[1], tomorrow)
     later = mv.Move(pool[2], roster[2], tomorrow + 2 * DAY)
-    decision = policy.Decision((in_set,), (), (first, later), 3, "exact", None, True)
+    decision = policy.Decision((in_set,), (), (first, later), 3, "exact", None, plan_leads=True)
     return state, decision, in_set, first, later
 
 
@@ -192,7 +192,7 @@ def test_the_queue_s_counts_are_kept_only_for_a_run_that_names_queue():
     plain = ct.Tally(setup).rows(state)
     assert all(not set(ct.PLANS) & set(row) for row in plain.values())
     assert ct.metrics_in(list(plain.values())) == ct.METRICS
-    tally = ct.Tally(setup, True)
+    tally = ct.Tally(setup, plans=True)
     tally.took(1, 2)
     tally.took(1, 0)
     rows = tally.rows(state)
@@ -210,10 +210,12 @@ def test_the_counts_note_says_the_queue_s_counts_only_when_an_arm_executes_queue
     assert ss.queue_run([three, queue])
     for waivers in ("none", "priority", "faab"):
         before = ss.counts_note(waivers)
-        assert ss.counts_note(waivers, False) == before and not set(ct.PLANS) & set(before)
-        with_queue = ss.counts_note(waivers, True)
+        assert ss.counts_note(waivers, queue=False) == before and not set(ct.PLANS) & set(before)
+        with_queue = ss.counts_note(waivers, queue=True)
         assert list(with_queue) == [*before, *ct.PLANS]
         assert {k: with_queue[k] for k in before} == dict(before)
+        # Beside the stash count (PR G), the queue's counts come last.
+        assert list(ss.counts_note(waivers, True, True)) == [*before, *ct.STASH, *ct.PLANS]
     assert ss.counts_note() is ss.COUNTS_NOTE
     assert "instead of the three weeks' set" in ss.PLANS_NOTE["plan_days"]
     assert "queued" in ss.PLANS_NOTE["plan_steps"]

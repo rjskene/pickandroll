@@ -25,7 +25,7 @@ import math
 import multiprocessing
 import os
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -179,6 +179,12 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
         bool(spec.get("execute_plan", False)),
         policy.fields_of(spec),
     )
+
+
+def stash_named(arms: Iterable[Arm]) -> bool:
+    """Whether a run of ``arms`` names a stash threshold (#172, PR G): one of them holds a
+    number for the knob. Such a run counts the returning players each seat dropped."""
+    return any(arm.knobs.get("stash_threshold") is not None for arm in arms)
 
 
 def mirrored(arm: Arm) -> bool:
@@ -697,6 +703,7 @@ def simulate(
     execute_plan: Sequence[bool] | None = None,
     on_day: Callable[[DayRecord], None] | None = None,
     rules: Sequence[audit.Rule] | None = None,
+    stash: bool = False,
     queue_counts: bool | None = None,
 ) -> list[VariantResult]:
     """Every variant (a strategy by seat) through one world in lockstep. Each day, after the lineup
@@ -706,10 +713,12 @@ def simulate(
     (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
     forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
     reads its table on the rosters before the landing for the forced drops, and on the rosters after
-    it for the rest of the day. The world's draws are common to all of them. ``queue_counts``:
-    whether the run has an arm that takes the queue's rule, so every seat's counts carry the
-    queue's (PR E); None reads it off ``variants`` (:func:`queue_named`), and a pair whose arms
-    play apart says it for both."""
+    it for the rest of the day. The world's draws are common to all of them. ``stash``: the run
+    names a stash threshold (:func:`stash_named`, PR G), and every variant's counts carry the
+    returning players each seat dropped (``counts.STASH``); nothing else reads it.
+    ``queue_counts``: whether the run has an arm that takes the queue's rule, so every seat's
+    counts carry the queue's (PR E); None reads it off ``variants`` (:func:`queue_named`), and a
+    pair whose arms play apart says it for both."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -719,7 +728,7 @@ def simulate(
     spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
     auditor = audit.Auditor(setup, rules, w.path)
     counted = queue_named(variants) if queue_counts is None else queue_counts
-    tallies = [ct.Tally(setup, counted) for _ in range(n)]
+    tallies = [ct.Tally(setup, stash, counted) for _ in range(n)]
     holds = [holds_of(w, v) for v in variants]
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
@@ -751,6 +760,7 @@ def simulate(
         before = [s.executed_by for s in states]
         # Who leaves a roster this morning waits from today (a waiver league's only).
         waiver = {"waiver": (day, setup.waiver_days)} if waiting else {}
+        was = list(states)
         if waiting:
             states = [
                 policy.clear_waivers(
@@ -773,6 +783,8 @@ def simulate(
         ]
         for vi, s in enumerate(states):
             tallies[vi].charge((made or week).number, before[vi], s.executed_by)
+            if stash:
+                tallies[vi].left(was[vi], s)
         if monday:
             states = [policy.new_week(s) for s in states]
         # From here on, the day's rosters: yesterday's moves are in, today's land tomorrow.
@@ -801,6 +813,9 @@ def simulate(
                     cache[key] = decision
                     solves[vi] += decision.solves
                 decided[team] = decision
+                if stash and decision.source in policy.TIERS:
+                    # Before today's queue: the claims open are those placed on earlier days.
+                    tallies[vi].reading(team, decision.returning, state)
                 state = policy.queue(
                     state,
                     team,
@@ -967,7 +982,14 @@ def paired(
     va = {**opponents_of(setup, a, me), me: a.seat()}
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
-    ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan], on_day=on_day)
+    ra, rb = simulate(
+        setup,
+        w,
+        [va, vb],
+        [a.execute_plan, b.execute_plan],
+        on_day=on_day,
+        stash=stash_named((a, b)),
+    )
     return _pair_result(setup, ra, rb, me, scale)
 
 
@@ -989,11 +1011,16 @@ def paired_apart(
     va = {**opponents_of(setup_a, a, me), me: a.seat()}
     vb = {**opponents_of(setup_b, b, me), me: b.seat()}
     scale = {"a": scale_on(setup_a, w_a, a, me), "b": scale_on(setup_b, w_b, b, me)}
+    stash = stash_named((a, b))
     # One run, two seasons: both arms' rows carry the queue's counts when either takes the rule.
     counted = queue_named([va, vb])
-    (ra,) = simulate(setup_a, w_a, [va], [a.execute_plan], on_day=on_day, queue_counts=counted)
+    (ra,) = simulate(
+        setup_a, w_a, [va], [a.execute_plan], on_day=on_day, stash=stash, queue_counts=counted
+    )
     second = None if on_day is None else (lambda r: on_day(replace(r, variant=1)))
-    (rb,) = simulate(setup_b, w_b, [vb], [b.execute_plan], on_day=second, queue_counts=counted)
+    (rb,) = simulate(
+        setup_b, w_b, [vb], [b.execute_plan], on_day=second, stash=stash, queue_counts=counted
+    )
     rb = replace(rb, breaches=tuple(replace(x, variant=1) for x in rb.breaches))
     return _pair_result(setup_a, ra, rb, me, scale)
 
@@ -1054,7 +1081,14 @@ def room(
         name: min(t for t, n in assigned.items() if n == name) for name in set(assigned.values())
     }
     scale = {name: scale_on(setup, w, arms[name], t) for name, t in sorted(first.items())}
-    (r,) = simulate(setup, w, [variant], [any(arms[n].execute_plan for n in seats)], on_day=on_day)
+    (r,) = simulate(
+        setup,
+        w,
+        [variant],
+        [any(arms[n].execute_plan for n in seats)],
+        on_day=on_day,
+        stash=stash_named(arms.values()),
+    )
     by_arm: dict[str, list[dict[str, float | None]]] = {}
     seats_of: dict[str, list[int]] = {}
     for t, name in assigned.items():
