@@ -443,7 +443,9 @@ week it plays in (the exact tier decides every day; the default surrogate, on Mo
 Thursdays, does not meet it). The same on any day for the games after the week: a move decided
 in the last regular week counts the bracket's games at that week's `L`, whatever the seat's `L`
 in the bracket will be. A claim that clears after the running week is scaled whole too. An
-exact arm's week plan takes no season term and reads no stake.
+exact arm's week plan takes no season term and reads no stake. An exact arm that executes
+`weighted` searches on a key that holds the running week as well; its term is the same split
+figure.
 
 The split is a working default, as the formula of `L` is: the ruling fixes the idea (a decisive
 week wins over the rest of the season). The three cases and the limit are pinned by name in

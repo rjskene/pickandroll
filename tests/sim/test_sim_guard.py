@@ -513,6 +513,14 @@ def test_a_decisive_week_takes_the_term_off_the_later_season_and_turns_the_choic
     # week, where the split figure of the swap it is measured on is 0.
     scale = policy.scale_of(built, tier)
     assert scale.ratio is not None and policy.scale_of(decisive, tier) == scale
+    if tier == "exact":
+        # The strategy route's weighted set takes the same term on its own key: the late player
+        # goes with his term there too, and the player of the three weeks comes in for the spot
+        # that plays nothing.
+        whole, split = (
+            policy.exact(b, executes=policy.WEIGHTED, with_plan=False) for b in (built, decisive)
+        )
+        assert LATE in adds(whole) and adds(split) == {SOON} and drops(split) == {DEAD}
 
 
 def test_the_week_s_stake_is_the_runner_s_figure_or_the_same_function_of_the_finished_weeks():
