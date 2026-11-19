@@ -557,7 +557,11 @@ lands on the roster it was planned on, where PR G's names, made with the set alo
 queued step's own drop. One case stays a limit (limits, item 7): when the engine's plan, with
 the queue made, charges a queued move's own add, he has not arrived when the held player returns
 (the adds land after the returns), so the morning falls to the rule before, the least valuable
-active player. No rule of the seat's own is written for it.
+active player. No rule of the seat's own is written for it. Rule 1 keeps PR G's exception and
+no other: a seat that holds no player names nobody and its decision is the one before, so a
+league without held slots plays as before; in a league with held slots an arm that executes its
+streaming plan may play another season than before this PR, on the mornings a plan step due
+meets a return.
 
 **The floor** is the engine's (`plans.gate_floor`): the knob of the league's kind
 (`plan_floor_cats` where every category counts, `plan_floor_points` in a points league), in a

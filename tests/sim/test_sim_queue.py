@@ -945,6 +945,25 @@ def test_the_queue_is_gathered_in_one_place_for_the_executor_and_for_the_names()
         assert policy.queue(state, 1, d, 3, None, execute_plan).pending[1] == want
 
 
+def test_a_seat_that_holds_no_player_names_nobody_and_its_decision_is_untouched():
+    """Rule 1's mechanism: ``policy.named`` is the identity on a problem that holds no player,
+    in a league with an IL slot as in one without, whatever the decision carries. So no
+    decision of such a seat moves with the refit, on any tier."""
+    for setup in (cats(), make_setup(seed=3, weeks=3, playoff_weeks=1, held_slots=("IL",))):
+        built = built_on(setup)
+        assert built.problem.held == ()
+        leads = leading(setup)[1]
+        for decision in (leads, replace(leads, plan_leads=False), policy.NONE):
+            assert policy.named(built.problem, decision) is decision
+        for tier, executes in (
+            ("exact", policy.QUEUE),
+            ("exact", policy.QUEUE_SET),
+            ("surrogate", policy.QUEUE_SET),
+        ):
+            decided = policy.decide(built, tier, executes)
+            assert decided.sends == () and decided.plan_sends is None
+
+
 @pytest.mark.parametrize("rule", (DROPPED, CONTINUOUS))
 def test_the_day_a_step_is_due_reads_the_same_on_the_problem_as_on_the_state(rule):
     """The names are made when the seat decides, on its problem (``policy.due_on``), and the
