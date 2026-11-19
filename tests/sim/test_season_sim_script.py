@@ -863,4 +863,4 @@ def test_a_simulating_run_without_a_hash_seed_says_so_on_stderr(
     monkeypatch.setenv("PYTHONHASHSEED", "0")
     assert ss.main(argv) == 2
     assert capsys.readouterr().err == ""
-    assert set(ss.SIMULATING) == {"replay", "validate", "screen"}
+    assert set(ss.SIMULATING) == {"replay", "validate", "screen", "tune"}

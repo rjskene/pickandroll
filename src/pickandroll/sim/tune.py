@@ -64,7 +64,7 @@ SECOND: Mapping[str, Mapping[str, Any]] = {
 ABOVE, BELOW, FLIPS, NO_SIGN = "above", "below", "flips", "none"
 #: What a played value is, in its step's record.
 TAKEN = "taken"
-BEATEN = "clears one SE in every cell's direction, and another value of the lever is ahead of it"
+BEATEN = "above zero in every cell, and another value of the lever is ahead of it"
 WITHIN = "within one SE"
 NO_SE = "no SE (fewer than two paths stand in every cell)"
 NOTHING = "did nothing (both arms' counts and outcomes are equal on every path)"
@@ -72,6 +72,8 @@ WORSE = "below zero in every cell"
 FLAT_CELL = "no difference in a cell: its sign does not agree in every cell"
 DEPENDS_SEASON = "depends on the season"
 DEPENDS_FORECASTER = "depends on the forecaster"
+DEPENDS_BOTH = "depends on the season and on the forecaster"
+DEPENDS = (DEPENDS_SEASON, DEPENDS_FORECASTER, DEPENDS_BOTH)
 NO_CELL = "no cell the rule reads"
 
 #: The search's rule, for the record and the plan.
@@ -81,9 +83,10 @@ SEARCH_RULE = (
     "current arm on the same paths, on every season and forecaster the search names; a value's "
     "difference (B less A) is the mean over those cells on the measure the league's standings "
     "count, its SE over the paths (a path's figure the mean over its cells), and it counts only "
-    "when every cell is above zero; the best value that counts becomes the current one when its "
-    "difference is above one SE, else the lever stays; an oracle's cells and a season that fails "
-    "espn's freeze check are shown and not read"
+    "when every cell is above zero; the best value that counts (the largest difference; a tie "
+    "to the first in the lever's order) becomes the current one when its difference is above "
+    "one SE, else the lever stays; an oracle's cells and a season that fails espn's freeze check "
+    "are shown and not read"
 )
 #: What the current arm takes from a chosen value.
 CARRY_NOTE = (
@@ -487,11 +490,18 @@ def value_result(
 
 
 def _depends(by_cell: Mapping[str, float | None]) -> str:
-    """Whether a value whose cells flip does so between two seasons or inside one (between two
-    forecasters)."""
-    up = {k.split(" ", 1)[0] for k, m in by_cell.items() if m is not None and m > 0}
-    down = {k.split(" ", 1)[0] for k, m in by_cell.items() if m is not None and m < 0}
-    return DEPENDS_SEASON if len(up | down) > 1 else DEPENDS_FORECASTER
+    """What a value whose cells flip depends on: the season, when one forecaster's cells are on
+    both sides of zero between two seasons; the forecaster, when one season's cells are between
+    two forecasters; both, when both are so or the cells that disagree share neither."""
+    signed = [(*k.split(" ", 1), m > 0) for k, m in by_cell.items() if m]
+    pairs = [(x, y) for x in signed for y in signed if x[2] and not y[2]]
+    season = any(x[1] == y[1] and x[0] != y[0] for x, y in pairs)
+    forecaster = any(x[0] == y[0] and x[1] != y[1] for x, y in pairs)
+    if season and not forecaster:
+        return DEPENDS_SEASON
+    if forecaster and not season:
+        return DEPENDS_FORECASTER
+    return DEPENDS_BOTH
 
 
 def standing_of(result: Mapping[str, Any]) -> str:
@@ -508,32 +518,35 @@ def standing_of(result: Mapping[str, Any]) -> str:
         return FLAT_CELL
     if result["se"] is None:
         return NO_SE
-    return BEATEN if result["clears"] else WITHIN
+    return WITHIN if not result["clears"] else BEATEN
 
 
 def choose(values: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """A step's choice among a lever's played ``values`` (each its row's record with its
-    ``result``, in the lever's order): the one with the largest mean among those that clear
-    (every cell above zero and the mean above one SE; a tie to the first in the lever's order),
-    or none. With each value's standing by its key, and ``depends`` naming the values whose
-    cells flip when the lever stays."""
-    clearing = [v for v in values if v["result"]["clears"]]
-    best = max(clearing, key=lambda v: v["result"]["mean"]) if clearing else None
-    standings = {
-        v["key"]: TAKEN
-        if best is not None and v["key"] == best["key"]
-        else standing_of(v["result"])
-        for v in values
-    }
-    depends = [
-        k
-        for k, s in standings.items()
-        if s in (DEPENDS_SEASON, DEPENDS_FORECASTER) and best is None
+    ``result``, in the lever's order; :data:`SEARCH_RULE`): the best of those that count is the
+    one with the largest mean among those above zero in every cell (a tie to the first in the
+    lever's order), and it is taken when its mean is above one SE; else none is. A value that
+    clears one SE behind a best that does not is not taken: the best is chosen first, and the
+    bar is the best's. With ``best`` (the best that counts, taken or not), each value's standing
+    by its key, and ``depends`` naming the values whose cells flip when the lever stays."""
+    counting = [
+        v for v in values if v["result"]["signs"] == ABOVE and not v["result"]["did_nothing"]
     ]
+    best = max(counting, key=lambda v: v["result"]["mean"]) if counting else None
+    taken = best if best is not None and best["result"]["clears"] else None
+    standings = {}
+    for v in values:
+        if taken is not None and v["key"] == taken["key"]:
+            standings[v["key"]] = TAKEN
+        elif best is not None and v["key"] == best["key"]:
+            standings[v["key"]] = NO_SE if v["result"]["se"] is None else WITHIN
+        else:
+            standings[v["key"]] = standing_of(v["result"])
     return {
-        "key": None if best is None else best["key"],
+        "key": None if taken is None else taken["key"],
+        "best": None if best is None else best["key"],
         "standings": standings,
-        "depends": depends,
+        "depends": [k for k, s in standings.items() if s in DEPENDS and taken is None],
     }
 
 
@@ -580,7 +593,12 @@ def step_words(step: Mapping[str, Any]) -> str:
             "the best of the lever's values"
         )
     whys = "; ".join(f"{v['key']}: {standings[v['key']]}" for v in played)
-    return f"{lever} stays at {at}: no value counts and clears one SE ({whys})"
+    best = step["choice"]["best"]
+    if best is None:
+        return f"{lever} stays at {at}: no value counts ({whys})"
+    return (
+        f"{lever} stays at {at}: the best value that counts, {best}, is not above one SE ({whys})"
+    )
 
 
 # --------------------------------------------------------------------------- the final set
@@ -710,7 +728,9 @@ def _figure(d: Mapping[str, Any], scale: float = 1.0, digits: int = 3) -> str:
 def confirmation_lines(conf: Mapping[str, Any], measure: str) -> list[str]:
     """A played confirmation as the run prints it: a row a forecaster and kind of rivals (the
     change in playoff odds in points, in final rank and on the standings' measure, each with its
-    SE, and the finish), the flags, the verdict's line and what a verdict is."""
+    SE, and the finish), the flags, the verdict's line and what a verdict is. The verdict's line
+    says which look at the confirmation season it is, when it is one (``conf["look"]``): its
+    number for the league kind and its line in the ledger, where every run's look is counted."""
     rows = [
         (
             label + ("" if c["read"] else " [not read]"),
@@ -740,22 +760,31 @@ def confirmation_lines(conf: Mapping[str, Any], measure: str) -> list[str]:
         "  (B less A: the final set less the baseline; a rank below zero is a better finish)"
     )
     out += [f"flag: {f}" for f in conf["verdict"]["flags"]]
-    out.append(f"verdict (advisory): {conf['verdict']['words']}")
+    look = conf.get("look")
+    which = (
+        f"; look {look['look']} for this league kind, line {look['line']} of the ledger"
+        if look
+        else ""
+    )
+    out.append(f"verdict (advisory{which}): {conf['verdict']['words']}")
     out.append(conf["verdict"]["advisory"])
     return out
 
 
 # --------------------------------------------------------------------------- the ledger's looks
 def own_look(
-    lines: Sequence[Mapping[str, Any]], name: str, spec_sha: str
+    lines: Sequence[Mapping[str, Any]], name: str, spec_sha: str, started_at: str
 ) -> Mapping[str, Any] | None:
-    """The ledger's line this tune already wrote (its name and its spec's hash), so a tune taken
-    up again after its look is counted once; None when it has none."""
+    """The ledger's line this tune already wrote, so a tune taken up again after its look is
+    counted once; None when it has none. A tune is its name, its spec's hash and when its folder
+    was started (its first piece's start): the same command run in a new folder, after the old
+    one was removed, reads the season again and is another look."""
     for line in lines:
         if (
             line.get("design") == "tune"
             and line.get("name") == name
             and line.get("spec_sha") == spec_sha
+            and line.get("tune_started_at") == started_at
         ):
             return line
     return None
@@ -785,6 +814,8 @@ __all__ = [
     "CARRY_NOTE",
     "CONFIRMED",
     "CURRENT",
+    "DEPENDS",
+    "DEPENDS_BOTH",
     "DEPENDS_FORECASTER",
     "DEPENDS_SEASON",
     "FLAT_CELL",

@@ -244,6 +244,64 @@ def test_a_nudge_that_is_the_current_value_is_not_played():
     assert to(base(pool=60), "pool") == {"pool-45": 45, "pool-45-again": 30}
 
 
+@pytest.mark.parametrize("tier", ["surrogate", "exact"])
+def test_a_tune_that_took_any_nudge_of_the_list_goes_on_from_it_without_a_refusal(tier):
+    """Every lever of the list as it stands, and every value a tune could take of it (a nudge or
+    a nudge again): from the arm that took it the lever's values are listed again, and none is a
+    refusal. A row whose nudge is a fixed target (``pool`` to 45, ``executes`` to ``weighted``,
+    a share of the mix) is at its target there: a screen refuses that pair by name, and a tune
+    lists it as the current value and plays the lever's other rows. A lever PR's rows are held
+    to this by being in the list."""
+    spec = base({"protection_floor": 0.05, "season_weight": 0.1}, tier=tier)
+    taken = 0
+    for name in sc.NAMES:
+        for row in tn.values_of(name, spec, [EVERY], RICH):
+            assert row.status in (sc.PLAY, sc.NOT_PLAYED, sc.NOT_READ), row
+            if row.status != sc.PLAY:
+                assert row.why and row.a is None and row.b is None, row
+                continue
+            change = tn.change_of(row.a, row.b)
+            assert change and rn.arm_of(row.a) and rn.arm_of(row.b), row
+            moved = sc.applied(spec, change)
+            assert rn.arm_of(moved).tier == tier
+            onward = tn.values_of(name, moved, [EVERY], RICH)
+            assert onward and all(r.status != sc.REFUSED for r in onward), (row.key, onward)
+            # Nothing offered from there is the value the arm now holds, and every key is one.
+            assert all(tn.change_of(r.a, r.b) for r in onward if r.status == sc.PLAY)
+            assert len({r.key for r in onward}) == len(onward)
+            taken += 1
+    assert taken >= 20
+
+
+def test_a_made_up_switch_to_a_fixed_target_is_taken_once_and_then_left_out(monkeypatch):
+    """A lever whose one nudge is a fixed target and no number (a made-up row: the week plan
+    executed, to on): it has no second step, and from the arm that took it the row is the
+    current value, not played, with no refusal of the lever or of the tune."""
+    made = sc.Lever(
+        "execute_plan",
+        "exact",
+        "to on",
+        lambda arm, ctx: ({}, (sc.Step("on", "to on", {"execute_plan": True}),)),
+    )
+    monkeypatch.setattr(sc, "LEVERS", (made,))
+    monkeypatch.setattr(sc, "NAMES", (made.name,))
+    spec = base()
+    (row,) = tn.values_of("execute_plan", spec, [EVERY], RICH)
+    assert (row.key, row.status, row.values) == (
+        "execute_plan-on",
+        sc.PLAY,
+        {"a": False, "b": True},
+    )
+    assert tn.second_of("execute_plan", spec, row, [row], [EVERY], RICH) is None
+    moved = sc.applied(spec, tn.change_of(row.a, row.b))
+    assert moved == {**spec, "execute_plan": True}
+    (there,) = tn.values_of("execute_plan", moved, [EVERY], RICH)
+    assert (there.key, there.status, there.why) == ("execute_plan-on", sc.NOT_PLAYED, tn.CURRENT)
+    assert there.a is None and there.b is None
+    assert [o["lever"] for o in tn.order_of(None, ["execute_plan"])] == ["execute_plan"]
+    assert tn.tier_of(["execute_plan"]) == "exact"
+
+
 def test_what_arm_b_holds_that_arm_a_does_not():
     a = base()
     b = sc.applied(a, {"pool": 45, "daily_cap": 3, "name": "B:x"})
@@ -325,6 +383,14 @@ def test_a_value_counts_only_when_every_cell_is_above_zero():
     assert not flips["clears"] and tn.standing_of(flips) == tn.DEPENDS_SEASON
     by_forecaster = result({(2024, "prior"): [3.0, 3.0, 4.0], (2024, "espn"): [-1.0, 0.0, -1.0]})
     assert tn.standing_of(by_forecaster) == tn.DEPENDS_FORECASTER and not by_forecaster["clears"]
+    # Two seasons whose forecasters disagree the same way in each: it is the forecaster's, not
+    # the season's. Cells that disagree and share neither depend on both.
+    up, down = [3.0, 3.0, 4.0], [-1.0, 0.0, -1.0]
+    each = {(2023, "prior"): up, (2023, "espn"): down, (2024, "prior"): up, (2024, "espn"): down}
+    assert tn.standing_of(result(each)) == tn.DEPENDS_FORECASTER
+    across = result({(2023, "prior"): up, (2024, "espn"): down})
+    assert tn.standing_of(across) == tn.DEPENDS_BOTH
+    assert tn.DEPENDS == (tn.DEPENDS_SEASON, tn.DEPENDS_FORECASTER, tn.DEPENDS_BOTH)
     flat = result({(2023, "prior"): [3.0, 3.0, 4.0, 4.0], (2024, "prior"): [1.0, -1.0, 0.0, 0.0]})
     assert flat["signs"] == tn.NO_SIGN and not flat["clears"]
     assert tn.standing_of(flat) == tn.FLAT_CELL
@@ -393,7 +459,7 @@ def test_the_step_takes_the_best_value_that_counts_and_clears_one_se():
         value("pool-x", {cell: [3.0, -3.0, 0.0, 1.0]}),
     ]
     choice = tn.choose(values)
-    assert choice["key"] == "pool-45-again" and choice["depends"] == []
+    assert choice["key"] == choice["best"] == "pool-45-again" and choice["depends"] == []
     assert choice["standings"] == {
         "pool-45": tn.BEATEN,
         "pool-45-again": tn.TAKEN,
@@ -407,6 +473,39 @@ def test_the_step_takes_the_best_value_that_counts_and_clears_one_se():
     # A tie goes to the first in the lever's order.
     tie = tn.choose([values[0], {**values[0], "key": "pool-twin"}])
     assert tie["key"] == "pool-45"
+
+
+def test_the_best_is_chosen_first_and_the_bar_is_the_best_s():
+    """The value with the largest mean among those that count is the best, and it moves the
+    lever only when it is above one SE. A surer value behind it is not taken in its place: the
+    rule names the best before it looks at the bar, so nothing is picked after seeing which
+    values cleared."""
+    cell = (2024, "prior")
+    values = [
+        value("pool-45", {cell: [1.0, 2.0, 1.0, 2.0]}, 45),
+        value("pool-45-again", {cell: [9.0, -5.0, 9.0, -5.0]}, 60),
+    ]
+    sure, best = (v["result"] for v in values)
+    assert sure["clears"] and best["mean"] > sure["mean"] and not best["clears"]
+    choice = tn.choose(values)
+    assert choice == {
+        "key": None,
+        "best": "pool-45-again",
+        "standings": {"pool-45": tn.BEATEN, "pool-45-again": tn.WITHIN},
+        "depends": [],
+    }
+    step = {"lever": "pool", "from": 30, "values": values, "choice": choice}
+    assert tn.step_words(step) == (
+        "pool stays at 30: the best value that counts, pool-45-again, is not above one SE "
+        f"(pool-45: {tn.BEATEN}; pool-45-again: within one SE)"
+    )
+    # One path has no SE: the best is named, and nothing is taken on it.
+    alone = tn.choose([value("pool-45", {cell: [1.0]}, 45)])
+    assert (alone["key"], alone["best"], alone["standings"]) == (
+        None,
+        "pool-45",
+        {"pool-45": tn.NO_SE},
+    )
 
 
 def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():
@@ -423,9 +522,10 @@ def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():
     choice = tn.choose(values)
     assert choice["key"] is None and choice["depends"] == ["pool-45"]
     step = {"lever": "pool", "from": 30, "values": values, "choice": choice}
+    assert choice["best"] is None
     assert tn.step_words(step) == (
-        "pool stays at 30: no value counts and clears one SE (pool-45: depends on the season; "
-        f"pool-45-again: {tn.NOTHING})"
+        f"pool stays at 30: no value counts (pool-45: depends on the season; pool-45-again: "
+        f"{tn.NOTHING})"
     )
     # A lever with no value to play stays too, each row with its reason.
     rows = [
@@ -433,7 +533,7 @@ def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():
         {"key": "pool-45", "status": sc.NOT_PLAYED, "why": tn.CURRENT},
     ]
     bare = {"lever": "pool", "from": 45, "values": rows, "choice": tn.choose([])}
-    assert tn.choose([]) == {"key": None, "standings": {}, "depends": []}
+    assert tn.choose([]) == {"key": None, "best": None, "standings": {}, "depends": []}
     assert tn.step_words(bare) == (
         "pool stays at 45: no value to play (faab_sizing: not read here (no budget); pool-45: "
         "not played (the current value))"
@@ -583,21 +683,32 @@ def test_the_verdict_s_words_recommend_and_never_say_more():
     assert "flag: prior: ahead against the run's rivals only" in lines
     assert lines[-2] == f"verdict (advisory): {tn.VERDICT_WORDS[tn.HOLDS]}"
     assert lines[-1] == tn.ADVISORY
+    # A look at the confirmation season is named in the verdict's own line, by both its numbers.
+    counted = tn.confirmation_lines({**conf, "look": {"look": 2, "line": 5}}, M)
+    assert counted[-2] == (
+        "verdict (advisory; look 2 for this league kind, line 5 of the ledger): "
+        + tn.VERDICT_WORDS[tn.HOLDS]
+    )
+    assert counted[:-2] == lines[:-2] and "optimal" not in counted[-2]
 
 
 # --------------------------------------------------------------------------- the ledger's looks
 def test_a_look_is_counted_by_league_kind_and_a_tune_s_own_line_is_found_again():
+    tune = {"design": "tune", "tune_started_at": "day one"}
     lines = [
         {"look": 1, "design": "paired", "name": "a-replay"},
-        {"look": 2, "design": "tune", "name": "t1", "spec_sha": "s1", "league_kind_sha": "k1"},
-        {"look": 3, "design": "tune", "name": "t2", "spec_sha": "s2", "league_kind_sha": "k2"},
+        {"look": 2, **tune, "name": "t1", "spec_sha": "s1", "league_kind_sha": "k1"},
+        {"look": 3, **tune, "name": "t2", "spec_sha": "s2", "league_kind_sha": "k2"},
     ]
     assert tn.look_of_kind([], "k1") == 1
     assert tn.look_of_kind(lines, "k1") == 2 and tn.look_of_kind(lines, "k3") == 1
-    assert tn.own_look(lines, "t1", "s1") == lines[1]
-    # Another spec under the same name, or the same spec under another, is another tune.
-    assert tn.own_look(lines, "t1", "s2") is None and tn.own_look(lines, "t3", "s1") is None
-    assert tn.own_look(lines, "a-replay", "s1") is None
+    assert tn.own_look(lines, "t1", "s1", "day one") == lines[1]
+    # Another spec under the same name, or the same spec under another, is another tune; and so
+    # is the same tune started again in a new folder: it reads the season again.
+    assert tn.own_look(lines, "t1", "s2", "day one") is None
+    assert tn.own_look(lines, "t3", "s1", "day one") is None
+    assert tn.own_look(lines, "t1", "s1", "day two") is None
+    assert tn.own_look(lines, "a-replay", "s1", "day one") is None
 
 
 # --------------------------------------------------------------------------- the folder, the ledger
