@@ -141,7 +141,9 @@ VERDICT_RULE = (
     "one SE and neither is the other way by more than one SE; behind the other way round; the "
     "final set holds when every forecaster the rule reads is ahead, is against when one is "
     "behind, and is not shown otherwise; a forecaster the search read that has no cell on that "
-    "season is no verdict; the standings' measure is shown beside and decides nothing here; "
+    "season is no verdict; one whose cell is there and not read (espn's, on a season that fails "
+    "its freeze check) leaves a verdict on the others, and the verdict's line names it as not "
+    "confirmed, with why; the standings' measure is shown beside and decides nothing here; "
     "the same pair against static rivals is shown, and an edge against one kind of rivals only "
     "is flagged (against static rivals the final arm can be the baseline's seat: that pair is "
     "not played, and an edge against the run's rivals is then against one kind only)"
@@ -162,6 +164,21 @@ VERDICT_WORDS = {
     ),
     AGAINST: "the final set is not recommended: it finished behind the baseline on the withheld season",
 }
+#: Why a cell that is there is not read, by replay's mark, as a verdict's line says it. (An
+#: oracle's row is a yardstick in the search too, so it is never one the search read.)
+UNREAD_WHY = {rn.FREEZE: "its stored projection of that season fails the freeze check"}
+#: The same of a mark this list does not hold.
+UNREAD = "its cell on that season is not read"
+#: What a verdict's line says of the forecasters it rests on when a forecaster the search read
+#: went unconfirmed (its cell on the season confirmed on is there and not read), by state: the
+#: word never stands alone.
+RESTS_ON = {
+    HOLDS: "confirmed on {read} alone, ",
+    NOT_SHOWN: "stated on {read} alone, ",
+    AGAINST: "stated on {read} alone, ",
+}
+#: And what it says of each forecaster that went unconfirmed, whatever the state.
+UNCONFIRMED = "not confirmed on {others}, which the search read"
 
 
 # --------------------------------------------------------------------------- the order
@@ -447,12 +464,19 @@ def pair_key(turn: int, row_key: str) -> str:
 
 
 # --------------------------------------------------------------------------- a value's result
+def _mark(payload: Mapping[str, Any], season: str, label: str) -> str | None:
+    """The mark the replay's own verdict puts on the cell, None when the rule reads it: its
+    row's (an oracle's, a yardstick), else its own (a season that fails espn's freeze check, a
+    skipped cell)."""
+    row = ((payload.get("verdict") or {}).get("rows") or {}).get(label) or {}
+    cell = (row.get("cells") or {}).get(season) or {}
+    return row.get("mark") if row.get("mark") is not None else cell.get("mark")
+
+
 def _read(payload: Mapping[str, Any], season: str, label: str) -> bool:
     """Whether the rule reads the cell: not an oracle's row (a yardstick) and not a cell the
     replay's own verdict marks (a season that fails espn's freeze check, a skipped cell)."""
-    row = ((payload.get("verdict") or {}).get("rows") or {}).get(label) or {}
-    cell = (row.get("cells") or {}).get(season) or {}
-    return row.get("mark") is None and cell.get("mark") is None
+    return _mark(payload, season, label) is None
 
 
 def _se(xs: Sequence[float]) -> float | None:
@@ -689,15 +713,18 @@ def finish_of(difference: Mapping[str, Mapping[str, Any]]) -> str:
 def confirmation_of(payload: Mapping[str, Any], season: int) -> dict[str, Any]:
     """One confirmation pair's cells, by forecaster, from its record: the paired difference on
     every outcome, the paths, both arms' and the rivals' mechanism counts, whether the rule
-    reads the cell, and its finish."""
+    reads the cell (``read``; when it does not, ``mark`` is replay's mark on it), and its
+    finish."""
     t = str(season)
     out = {}
     for label, cell in (payload["results"].get(t) or {}).items():
+        mark = _mark(payload, t, label)
         out[label] = {
             "difference": cell["difference"],
             "paths": cell["paths"],
             "counts": payload["counts"]["by_season"][t][label],
-            "read": _read(payload, t, label),
+            "read": mark is None,
+            "mark": mark,
             "finish": finish_of(cell["difference"]),
         }
     return out
@@ -730,6 +757,7 @@ def verdict_of(
     voided: int = 0,
     missing: Mapping[str, str] | None = None,
     one_seat: Sequence[str] = (),
+    searched: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The confirmation's verdict (:data:`VERDICT_RULE`) from its cells by kind of rivals
     (:data:`RUN`, and :data:`STATIC` when the run's rivals are not static) and forecaster:
@@ -739,10 +767,19 @@ def verdict_of(
     forecaster and kind, and a flag for each forecaster ahead against one kind of rivals only.
     ``one_seat``: the kinds of rivals against which the final arm is the baseline's seat, whose
     pair was not played (:data:`ONE_SEAT`): ahead against the other kind is ahead against one
-    kind only."""
+    kind only. ``searched``: the forecasters the search read (:func:`searched_of`). One of them
+    whose cell here is there and not read (``espn``'s, on a season that fails its freeze check)
+    is ``unconfirmed``, with why: the verdict is stated on the forecasters read, and its
+    ``words`` say which those are and name each one that went unconfirmed, so "recommended"
+    never stands alone. (No cell at all is ``missing``, and no verdict.)"""
     run = cells[RUN]
     missing = dict(missing or {})
     read = [label for label, c in run.items() if c["read"]]
+    unconfirmed = {
+        label: UNREAD_WHY.get(run[label].get("mark"), UNREAD)
+        for label in searched
+        if label in run and not run[label]["read"]
+    }
     by_forecaster = {
         label: {
             **{kind: cells[kind][label]["finish"] for kind in cells if label in cells[kind]},
@@ -785,16 +822,22 @@ def verdict_of(
         state = AGAINST
     else:
         state = NOT_SHOWN
+    words = why if state is None else VERDICT_WORDS[state]
+    if unconfirmed:
+        others = ", ".join(f"{label} ({w})" for label, w in unconfirmed.items())
+        rests = RESTS_ON.get(state, "").format(read=" and ".join(read))
+        words = f"{words}; {rests}{UNCONFIRMED.format(others=others)}"
     return {
         "rule": VERDICT_RULE,
         "advisory": ADVISORY,
         "read": read,
         "missing": missing,
+        "unconfirmed": unconfirmed,
         "by_forecaster": by_forecaster,
         "flags": flags,
         "state": state,
         "why": why,
-        "words": why if state is None else VERDICT_WORDS[state],
+        "words": words,
     }
 
 
@@ -924,6 +967,7 @@ __all__ = [
     "ONE_SEAT",
     "PASSED",
     "PASSES",
+    "RESTS_ON",
     "RIVALS_WORDS",
     "ROUNDING",
     "RUN",
@@ -933,7 +977,10 @@ __all__ = [
     "STATIC",
     "TAKEN",
     "TUNE_VERSION",
+    "UNCONFIRMED",
     "UNPLANNED",
+    "UNREAD",
+    "UNREAD_WHY",
     "UNSCREENED",
     "UNSURE",
     "VERDICT_RULE",

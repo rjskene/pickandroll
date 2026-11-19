@@ -382,6 +382,7 @@ def test_the_confirmation_season_is_read_once_at_the_end_and_its_look_is_counted
         "tier: confirmation season 2026: look"
     ) in out
     assert (conf["skipped"], conf["one_seat"], verdict["missing"]) == ({}, {}, {})
+    assert verdict["unconfirmed"] == {} and conf["cells"]["run"]["prior"]["mark"] is None
     # One line more, written by this tune.
     after = looks(data)
     assert len(after) == len(before) + 1
@@ -1424,6 +1425,58 @@ def test_a_forecaster_the_search_read_with_no_cell_on_the_season_is_no_verdict_i
         "confirmed on has no cell for it"
     ) in out
     assert "the final set is recommended" not in out and looks(data) == before
+
+
+def test_a_forecaster_whose_cell_is_there_and_not_read_is_named_beside_the_word_in_a_run(
+    data: Path, whole, monkeypatch
+):
+    """Two forecasters, searched on a season where the rule reads both. On the season confirmed
+    on, the second one's cell is there and replay's own verdict leaves it out, as it does
+    ``espn``'s on a season that fails its freeze check. The made-up logs carry no stored
+    projection, so the test plants that check's flag where the real one is written (the pair's
+    ``forecasters`` block), on ``marcel``. The verdict is stated on ``prior``; its line and the
+    record's verdict block name ``marcel`` as not confirmed, with why, and "recommended" does
+    not stand alone. (``marcel``'s carried seasons are ``prior``'s: the made-up world sets the
+    outcomes.)"""
+    block_of = ss.verdict_block
+
+    def verdict_block(payload, named, seasons, sources, note):
+        if [int(t) for t in seasons] == [2026]:
+            payload["forecasters"]["2026"]["marcel"]["freeze"] = {"flagged": True}
+        return block_of(payload, named, seasons, sources, note)
+
+    for (label, path, rules), kept in list(CARRIED.items()):
+        if label == "prior":
+            monkeypatch.setitem(CARRIED, ("marcel", path, rules), {**kept, "forecaster": "marcel"})
+    monkeypatch.setattr(ss, "verdict_block", verdict_block)
+    monkeypatch.setattr(ss, "task_paired", made_up(WIDER))
+    before = looks(data)
+    code, out = tune(data, "--forecasters", "prior,marcel", levers=("pool",), name="frozen")
+    assert code == 0, out
+    rec = record(data, "frozen")
+    (step,) = rec["steps"]
+    for value in step["values"]:
+        assert set(value["result"]["by_cell"]) == {"2024 prior", "2024 marcel"}
+    conf = rec["confirmation"]
+    run = conf["cells"]["run"]
+    assert (conf["status"], conf["skipped"]) == (tn.CONFIRMED, {})
+    assert (run["prior"]["read"], run["prior"]["mark"]) == (True, None)
+    assert (run["marcel"]["read"], run["marcel"]["mark"]) == (False, rn.FREEZE)
+    why = tn.UNREAD_WHY[rn.FREEZE]
+    verdict = conf["verdict"]
+    assert (verdict["state"], verdict["read"], verdict["missing"]) == (tn.HOLDS, ["prior"], {})
+    assert verdict["unconfirmed"] == {"marcel": why}
+    said = (
+        f"{tn.VERDICT_WORDS[tn.HOLDS]}; confirmed on prior alone, not confirmed on marcel "
+        f"({why}), which the search read"
+    )
+    assert verdict["words"] == said
+    lines = out.splitlines()
+    (line,) = [x for x in lines if x.startswith("verdict (advisory")]
+    assert line.endswith(f"of the ledger): {said}")
+    assert any(x.startswith("  marcel [not read]") for x in lines)
+    # The look is counted all the same: the season was read.
+    assert len(looks(data)) == len(before) + 1 and conf["look"]["line"] == len(before) + 1
 
 
 # --------------------------------------------------------------------------- one seat, one kind

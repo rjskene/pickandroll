@@ -4603,7 +4603,8 @@ def cmd_tune(args: argparse.Namespace) -> int:
                 lost = sum(int(payloads[k]["audit"]["paths_voided"]) for k in playing)
                 voided += lost
                 # Each named forecaster with no cell on the season, by replay's reason; one the
-                # search read is no verdict.
+                # search read is no verdict. One the search read whose cell is there and not
+                # read leaves a verdict on the others, and the verdict's line names it.
                 skipped = tn.skipped_of(payloads[tn.RUN], confirm)
                 searched = tn.searched_of(steps)
                 missing = {label: why_ for label, why_ in skipped.items() if label in searched}
@@ -4611,7 +4612,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
                     "status": tn.CONFIRMED,
                     "cells": cells,
                     "skipped": skipped,
-                    "verdict": tn.verdict_of(cells, lost, missing, list(one_seat)),
+                    "verdict": tn.verdict_of(cells, lost, missing, list(one_seat), searched),
                 }
     if stopped is not None:
         piece["stopped"] = stopped

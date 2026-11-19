@@ -750,6 +750,80 @@ def test_a_forecaster_the_search_read_with_no_cell_on_the_season_is_no_verdict()
     assert lines[-2] == f"verdict (advisory): {got['why']}"
 
 
+def test_a_forecaster_whose_cell_is_there_and_not_read_is_named_beside_the_word():
+    """The search read ``prior`` and ``espn``. On the season confirmed on ``espn`` fails its
+    freeze check: its cell is there, shown and not read. The verdict is stated on ``prior``, and
+    its line never says "recommended" alone: it says which forecaster it was confirmed on and
+    names the one that went unconfirmed, with why. The record's verdict block names it too. (No
+    cell at all is the other case: no verdict.)"""
+    why = "its stored projection of that season fails the freeze check"
+    named = f"not confirmed on espn ({why}), which the search read"
+    marks = {"espn": {"mark": None, "cells": {"2026": {"mark": rn.FREEZE}}}}
+
+    def confirmed(prior: list[float]) -> dict:
+        """The run's cells from a pair's record: ``prior`` as given, ``espn`` frozen."""
+        payload, _, _ = played({(2026, "prior"): prior, (2026, "espn"): [1.0, 1.0, 2.0]}, marks)
+        # The helper moves every outcome alike: turn the rank so that more is a better finish.
+        for cell in payload["results"]["2026"].values():
+            cell["difference"]["rank"]["mean"] *= -1
+        return {tn.RUN: tn.confirmation_of(payload, 2026)}
+
+    ahead = confirmed([1.0, 1.0, 2.0])
+    run = ahead[tn.RUN]
+    assert (run["prior"]["read"], run["prior"]["mark"], run["prior"]["finish"]) == (
+        True,
+        None,
+        tn.AHEAD,
+    )
+    assert (run["espn"]["read"], run["espn"]["mark"]) == (False, rn.FREEZE)
+    got = tn.verdict_of(ahead, searched=["prior", "espn"])
+    assert (got["state"], got["read"], got["why"]) == (tn.HOLDS, ["prior"], None)
+    assert got["unconfirmed"] == {"espn": why} and got["missing"] == {}
+    assert got["words"] == (
+        "the final set is recommended: it finished ahead of the baseline on the withheld season; "
+        f"confirmed on prior alone, {named}"
+    )
+    lines = tn.confirmation_lines({"cells": ahead, "verdict": got}, M)
+    assert any(x.startswith("  espn [not read]") for x in lines)
+    assert lines[-2] == f"verdict (advisory): {got['words']}"
+    # A forecaster the search never read is not "unconfirmed": the line is the plain one.
+    for searched in (["prior"], []):
+        plain = tn.verdict_of(ahead, searched=searched)
+        assert plain["unconfirmed"] == {} and plain["words"] == tn.VERDICT_WORDS[tn.HOLDS]
+    assert tn.verdict_of(ahead)["unconfirmed"] == {}
+    # Behind, or level: the line says what it is stated on, and names espn all the same.
+    behind = tn.verdict_of(confirmed([-1.0, -1.0, -2.0]), searched=["espn", "prior"])
+    assert behind["state"] == tn.AGAINST and behind["words"] == (
+        f"{tn.VERDICT_WORDS[tn.AGAINST]}; stated on prior alone, {named}"
+    )
+    level = tn.verdict_of(confirmed([1.0, -1.0, 0.0]), searched=["prior", "espn"])
+    assert level["state"] == tn.NOT_SHOWN and level["words"] == (
+        f"{tn.VERDICT_WORDS[tn.NOT_SHOWN]}; stated on prior alone, {named}"
+    )
+    # No verdict (here a voided path): the reason, and espn named beside it.
+    void = tn.verdict_of(ahead, 1, searched=["prior", "espn"])
+    assert void["state"] is None and void["why"] == "no verdict: the audit voided 1 path(s)"
+    assert void["words"] == f"{void['why']}; {named}"
+    # The search read espn alone: nothing is left to rest on, and the line says who that was.
+    alone = {tn.RUN: {"espn": run["espn"]}}
+    none = tn.verdict_of(alone, searched=["espn"])
+    assert none["state"] is None and none["read"] == [] and none["unconfirmed"] == {"espn": why}
+    assert none["words"].startswith("no verdict: no forecaster the rule may rest on (")
+    assert none["words"].endswith(f"; {named}")
+    # Two forecasters read, one not; and a mark the words do not know.
+    both = cells(prior=(tn.AHEAD,), marcel=(tn.AHEAD,))
+    both[tn.RUN]["espn"] = {**run["espn"], "mark": "another"}
+    two = tn.verdict_of(both, searched=["prior", "marcel", "espn"])
+    assert two["words"] == (
+        f"{tn.VERDICT_WORDS[tn.HOLDS]}; confirmed on prior and marcel alone, not confirmed on "
+        f"espn ({tn.UNREAD}), which the search read"
+    )
+    # Wherever a forecaster the search read went unconfirmed, the word does not stand alone.
+    for v in (got, behind, level, two):
+        assert "recommended" in v["words"] and "not confirmed on espn (" in v["words"]
+    assert "names it as not confirmed" in tn.VERDICT_RULE
+
+
 def test_a_kind_of_rivals_that_is_one_seat_is_not_a_cell_and_the_edge_is_flagged():
     """Against static rivals the final arm can be the baseline's seat (what moved is read only
     through the run's rivals): that pair is not played, its finish says so, and a forecaster
@@ -797,6 +871,7 @@ def test_the_verdict_s_words_recommend_and_never_say_more():
     conf = {"cells": cells(prior=(tn.AHEAD, tn.LEVEL)), "verdict": None}
     texts = [tn.SEARCH_RULE, tn.CARRY_NOTE, tn.VERDICT_RULE, tn.ADVISORY, tn.NO_CONFIRMATION]
     texts += [tn.NOTHING_TO_CONFIRM, tn.SAME_SEAT, tn.UNPLANNED, tn.ONE_SEAT]
+    texts += [tn.UNCONFIRMED, tn.UNREAD, *tn.RESTS_ON.values(), *tn.UNREAD_WHY.values()]
     texts += list(tn.VERDICT_WORDS.values())
     for state in (tn.HOLDS, tn.NOT_SHOWN, tn.AGAINST):
         assert "recommended" in tn.VERDICT_WORDS[state]
