@@ -260,15 +260,18 @@ What the format does not model, each plainly:
 
 **A bracket week** (PR bracket). The setup's pairings hold the regular weeks only, so before this
 PR a problem built in a week of the bracket had no opponent, and the engine values a week with
-no opponent at nothing: whatever read the week's value there (the weighted set, the week's plan
-and a plan step's bid) read a blind week. Now each round is seeded on its first simulated
+no opponent at nothing: the weighted set weighed a blind week, and no week's plan was drawn
+there at all (no path of the stream beats its set in a week worth nothing, so there was no step
+to execute or to bid on). Now each round is seeded on its first simulated
 morning, each variant's from its own totals (`policy.seed_round`): its pairs are the season's own
 bracket on the weeks finished before it (`league.round_pairs`, built on `league.season`, no rule
 of its own), kept on the state (`SimState.seeded`), and they read no total of the round's own
 week. A problem takes its week's opponent from one place (`policy.opponent_of`): the pairings,
 and where they have no entry the round's pair the state holds. So in a round a seat plays, the
 week is against the round's opponent, projected on the same beliefs with both sides' totals so
-far, exactly as a regular week is; the later weeks and the measure are as before. Two arms whose
+far, exactly as a regular week is; the later weeks and the measure are as before. The weighted
+set weighs the matchup, a week's plan can be drawn against it, an arm that executes its plan
+queues the plan's steps, and in a FAAB league a step's claim bids on its week gain. Two arms whose
 seasons differ seed their own rounds and each seat meets its own opponent. There is no switch:
 a round is always seeded. A seat on the three weeks' set with no executed plan, the surrogate,
 the ranking, a market, a mirror and a static rival search no week, and their seasons do not
