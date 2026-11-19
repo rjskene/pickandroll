@@ -20,10 +20,11 @@ from pickandroll.sim import counts as ct
 from pickandroll.sim import nopeek, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
+from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, TYPICAL_MIN, typical_gain
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import LOST, WON
-from tests.sim.sim_league import arm, make_setup, of_format, recorded_lines
+from tests.sim.sim_league import KNOBS, arm, make_setup, of_format, recorded_lines
 from tests.sim.test_sim_continuous import league
 
 DAY = timedelta(1)
@@ -226,20 +227,38 @@ def test_a_weight_on_the_week_or_the_season_moves_the_bids_on_its_own_fortnight(
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-def test_a_seat_on_two_days_a_week_reads_a_size_on_each_horizon_from_its_tenth_move(h2h):
+def test_the_screen_s_week_pair_and_its_season_pair_part_from_the_seat_s_tenth_move(h2h):
     """The lead's working default (q-6, 2026-11-19). A surrogate seat on its two days a week
     never holds ten moves in a fortnight here, so its typical on the week and on the season is
-    the median of its last ten moves whatever their age. Two arms on one world, half the weight
-    on the week in one and on the season in the other. Before the seat's tenth move neither
-    reads a size: a move that gains counts as one typical, so the two value a claim alike (but
-    for a gain of nothing or less, which counts nothing). From the tenth move each values the
-    claim on its own horizon's gain over its own typical, and the two part.
+    the median of its last ten moves whatever their age. The two arms are the screen's own: the
+    nudged arm of its ``bid.week`` pair and of its ``bid.season`` pair, one step up each from
+    one baseline, on one world. Before the seat's tenth move neither reads a size: a move that
+    gains counts as one typical, so the two value a claim alike (but for a gain of nothing or
+    less, which counts nothing). From the tenth move each values the claim on its own horizon's
+    gain over its own typical, and the two part: the two rows are two levers.
 
     (The screen's command does not show this on its tests' small league of three weeks: on
     the three seeds tried in both formats its seat placed six claims at most, short of a tenth
     move, so its ``bid.week`` pair and its ``bid.season`` pair differed by a gain's sign in the
     value won, or in nothing.)"""
-    (week, dw), (season, ds) = seasons(public(h2h), [seat({"week": 0.5}), seat({"season": 0.5})])
+    spec = {
+        "name": "U",
+        "tier": "surrogate",
+        "knobs": {**KNOBS, "plan_floor_cats": 0.1},
+        "opponents": {"kind": "market"},
+    }
+    shape = policy.Shape(waivers="faab", h2h=h2h)
+    names = ["bid.week", "bid.season"]
+    rows = {r.key: r for r in sc.rows_of(spec, names, [shape], sc.Context(waivers="faab"))}
+    up_week, up_season = rows["bid.week-up"], rows["bid.season-up"]
+    assert up_week.status == up_season.status == sc.PLAY and up_week.a == up_season.a
+    step = sc.WEIGHT_STEP
+    arms = [rn.arm_of(up_week.b), rn.arm_of(up_season.b)]
+    assert [(a.tier, a.bid.week, a.bid.season) for a in arms] == [
+        ("surrogate", step, 0.0),
+        ("surrogate", 0.0, step),
+    ]
+    (week, dw), (season, ds) = seasons(public(h2h), arms)
 
     def claims(days, key):
         """By day and player: the claim's value, its move's gain on ``key``, the seat's moves
@@ -265,18 +284,19 @@ def test_a_seat_on_two_days_a_week_reads_a_size_on_each_horizon_from_its_tenth_m
     for k in early:
         (vw, gw, n, tw, _), (vs, gs, m, ts, _) = w[k], s[k]
         assert n == m and tw is None and ts is None
-        assert vw - vs == pytest.approx(0.5 * ((gw > 0) - (gs > 0)))
+        assert vw - vs == pytest.approx(step * ((gw > 0) - (gs > 0)))
     assert any(w[k][1] > 0 and s[k][1] > 0 and w[k][0] == s[k][0] for k in early)
     # The claim of the tenth move: a size on each horizon, over the median of the seat's last
     # ten moves, some of them older than a fortnight. What is left of each value is the three
-    # weeks' half, which the two arms share.
+    # weeks' share, which the two arms hold alike.
     k = min(late)
     (vw, gw, n, tw, kept), (vs, gs, m, ts, _) = w[k], s[k]
     assert n == m >= TYPICAL_MIN and gw > 0 and gs > 0 and tw > 0 and ts > 0
     assert min(d for d, _ in kept) <= k[0] - 14 * DAY
-    assert vw - 0.5 * gw / tw == pytest.approx(vs - 0.5 * gs / ts)
+    assert vw - step * gw / tw == pytest.approx(vs - step * gs / ts)
     assert abs(vw - vs) > 0.01 and gw / tw != pytest.approx(gs / ts)
-    assert week.counts[1]["dollars_spent"] != season.counts[1]["dollars_spent"]
+    # The claim is won in both, so the value won, a count of the screen's record, parts too.
+    assert abs(week.counts[1]["value_won"] - season.counts[1]["value_won"]) > 0.01
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
