@@ -460,7 +460,9 @@ def round_pairs(
     the totals of the round's own week and of later weeks are not read for them. No winner, no
     later round and no champion is returned: on that morning those are not yet real (a week
     without totals reads as level, the higher seed through). A spec the bracket cannot play
-    raises as :func:`playoffs` raises it (ValueError)."""
+    raises here whatever :func:`playoffs` raises on it (a ValueError; a KeyError where the
+    bracket seats more teams than the league has), so on a round's first morning where it
+    raised at the season's end."""
     weeks = round_weeks(spec)
     if week not in weeks:
         return ()
