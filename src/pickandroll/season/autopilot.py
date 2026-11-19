@@ -41,6 +41,12 @@ executed. A step's bid scales on its score, so a step that costs the three weeks
 in a playoff week the score is the odds, in other units than the typical gain, and it scales on
 the week gain.
 
+The user's picks (#434, ``season.picks``) come first: the day's solve logged them as the set
+``pick``, each made with the drop the user named or the cheapest, and each is an entry like a
+move's, judged on the week with its score beside it, under the rules above but the season-costly
+flag, the re-add rule and the floor (the user's call); the cap counts them first, and the bid is
+the user's (:func:`user_bid`) or the policy's on the pick's score.
+
 Every claim's bid is
 :func:`bid_of`'s. A second build of a day keeps the entries struck or executed by id, leaves
 their moves out of the new build, and gives any entry new to the queue its full veto window
@@ -58,6 +64,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import moves as mv
+from . import picks as pk
 
 #: The set the queue takes, and the horizon it is judged on (#143): the three weeks after.
 QUEUE_SET = "three"
@@ -256,6 +263,18 @@ def bid_of(
     return Bid(amount, f"${amount}: {why}", base, factor, size)
 
 
+def user_bid(amount: int, budget: float | None, availability: str | None) -> Bid:
+    """A pick's bid when the user set one (#434): theirs, clamped to the budget left; a free agent
+    is added for $0."""
+    if availability == FREE_AGENT:
+        return Bid(0, "$0: a free agent is added at once", 0, 1, 1.0)
+    left = None if budget is None else max(0, math.floor(budget))
+    clamped = left is not None and amount > left
+    amount = max(0, amount if left is None else min(amount, left))
+    why = f"${amount}: your pick's bid" + (f", clamped to the ${left} left" if clamped else "")
+    return Bid(amount, why, 0, 1, 1.0)
+
+
 # --------------------------------------------------------------------------- the entries
 @dataclass(frozen=True)
 class LeagueDay:
@@ -298,6 +317,11 @@ def three_set(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return next((s for s in entry.get("sets") or () if s.get("key") == QUEUE_SET), None)
 
 
+def pick_set(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The user's picks the day's solve made (#434), None for none."""
+    return next((s for s in entry.get("sets") or () if s.get("key") == pk.PICK), None)
+
+
 def week_plan(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
     """The week plan the day's solve logged for the queue (#221 part 2), None for none."""
     return next((s for s in entry.get("sets") or () if s.get("key") == WEEK_PLAN), None)
@@ -321,9 +345,10 @@ def queue_of(
     judged on the week with the three weeks beside it, its bid on its score."""
     plan = week_plan(lg.entry)
     s = plan if plan is not None else three_set(lg.entry)
-    if s is None:
+    picks = pick_set(lg.entry)
+    if s is None and picks is None:
         return []
-    moves = list(s.get("moves") or [])
+    moves = list((s or {}).get("moves") or [])
     if plan is None:
         moves.sort(key=lambda m: (-((m.get("gain") or {}).get(JUDGED) or 0.0), m["add"]))
     drops = {m["drop"] for m in moves if m.get("drop") is not None}
@@ -338,6 +363,92 @@ def queue_of(
     judged = JUDGED if plan is None else PLAN_JUDGED
     claimed_adds = {int(c["add"]) for c in lg.open_claims if c.get("add") is not None}
     claimed_drops = {int(c["drop"]) for c in lg.open_claims if c.get("drop") is not None}
+    # The user's picks first (#434): queued like the set's moves, with neither the floor, the
+    # season guard nor the re-add rule (the user's call), and ahead of them for the cap.
+    for m in (picks or {}).get("moves") or []:
+        add, drop = int(m["add"]), m.get("drop")
+        pid = entry_id(day, lg.league, add, drop)
+        if pid in lg.kept:
+            continue
+        kind, clears = lg.availability.get(add, (None, None))
+        clear = date.fromisoformat(m["from"]) if m.get("from") else clears
+        week = _week_of(left, clear) if clear is not None else None
+        reason = None
+        if lg.private:
+            reason = PRIVATE
+        elif lg.mode == "off":
+            reason = OFF
+        elif drop is not None and drop in lg.protected:
+            reason = PROTECTED
+        elif add in claimed_adds:
+            reason = ALREADY_CLAIMED
+        elif drop is not None and int(drop) in claimed_drops:
+            reason = DROP_CLAIMED
+        elif week is not None and week in lg.unread:
+            reason = ADDS_UNREAD
+        elif week is not None and left[week] is not None and left[week] <= 0:
+            reason = NO_ADDS
+        elif lg.done + queued >= lg.cap:
+            reason = OVER_CAP
+        if reason is None:
+            queued += 1
+            if week is not None and left[week] is not None:
+                left[week] -= 1
+        gain = (m.get("gain") or {}).get(PLAN_JUDGED)
+        score = m.get("score")
+        if lg.uses_faab is False:
+            bid = None
+        elif m.get("bid") is not None:
+            bid = user_bid(int(m["bid"]), lg.budget, kind)
+        else:
+            worth = score if score is not None else gain
+            bid = bid_of(worth or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
+        out.append(
+            {
+                "id": pid,
+                "date": day.isoformat(),
+                "league": lg.league,
+                "scoring": lg.scoring,
+                "set": pk.PICK,
+                "decision": lg.entry.get("id"),
+                "knobs": lg.entry.get("knobs"),
+                "add": add,
+                "drop": drop,
+                "from": clear.isoformat() if clear else None,
+                "availability": kind,
+                "judged": PLAN_JUDGED,
+                "gain": gain,
+                "three": (m.get("gain") or {}).get(JUDGED),
+                "score": score,
+                "value": _horizon(m, PLAN_JUDGED),
+                "season": _horizon(m, SEASON),
+                "season_costly": m.get("season_costly"),
+                "held": list((picks or {}).get("held") or []),
+                "basis": m.get("basis"),
+                "held_move": m.get("held"),
+                "held_drop": m.get("held_drop"),
+                "plan": None,
+                "after": [],
+                "flag": lg.flags.get(add),
+                "floor": {**floor.to_dict(), "below": None},
+                "bid": None
+                if bid is None
+                else {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},
+                "claim": "priority" if lg.uses_faab is False and kind == "W" else None,
+                "queued": reason is None,
+                "reason": reason,
+                "rank": queued if reason is None else None,
+                "queued_at": None,
+                "executes_at": None,
+                "struck": False,
+                "bid_struck": False,
+                "outcome": None,
+                "outcome_reason": None,
+                "outcome_at": None,
+                "resolved": None,
+                "decided_by": pk.PICK,
+            }
+        )
     for i, m in enumerate(moves):
         add, drop = int(m["add"]), m.get("drop")
         if ids[i] in lg.kept:

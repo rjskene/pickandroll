@@ -161,6 +161,9 @@ import {
   checkingNow,
   queuePoll,
   queueMoveText,
+  pickLine,
+  pickMoveText,
+  pickSkipText,
   queueNamer,
   queueOrder,
   queueStateLine,
@@ -1865,6 +1868,8 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(planStepTag(step), "step 2 of 3");
   assert.equal(planStepTag(e), "");
   assert.equal(queueMoveText(step, name), "P101 for P201 (step 2 of 3 of the week plan)");
+  // The user's pick (#434) says so.
+  assert.equal(queueMoveText({ ...e, set: "pick" }, name), "P101 for P201 (your pick)");
   assert.equal(queueStateLine(step, now + 3_600_000, name), "waits for step 1 to land (P11)");
   assert.equal(queueStateLine({ ...step, waits: null }, now + 3_600_000, name), "due at the next pass");
   assert.equal(queueStateLine({ ...step, outcome: "added" }, now, name), queueStateText({ ...step, outcome: "added" }, now));
@@ -2604,4 +2609,17 @@ test("the Moves card counts each horizon's pool and the adds the season guard's 
     "Recommended by a search over the 30 candidates whose best single move adds most. A strong heuristic, not a proof.",
     "an answer made before #424",
   );
+});
+
+test("a pick reads as the user's, with the drop named or the cheapest, the bid and where it applies (#434)", () => {
+  const name = (id: number) => `P${id}`;
+  const m = { add: 10, drop: 3, held: null, held_drop: null, named_drop: false, bid: null };
+  assert.equal(pickMoveText(m, name), "P10 for P3 (the drop that costs least): your pick, the bid policy's bid");
+  assert.equal(pickMoveText({ ...m, named_drop: true, bid: 4 }, name), "P10 for P3 (the drop you named): your pick, your bid of $4");
+  assert.equal(pickMoveText({ ...m, drop: null }, name), "P10 (free: open spot): your pick, the bid policy's bid");
+  assert.equal(pickSkipText({ player: 7, name: null, reason: "no adds left that week", expires: "2026-11-26", by: "dashboard" }, name), "P7: no adds left that week");
+  const pick = { player: 7, name: "A", leagues: ["1", "2"], drop: null, bid: 3, expires: "2026-11-26", by: "dashboard", at: "", left: { "2": "2026-11-20" }, active: true };
+  const title = (league: string) => `L${league}`;
+  assert.equal(pickLine(pick, title), `L1, L2 · the cheapest drop · $3 · until ${dayLabel("2026-11-26")} · set by dashboard; on a team in L2`);
+  assert.equal(pickLine({ ...pick, leagues: null, left: {}, active: false, bid: null }, title), `every league · the cheapest drop · the bid policy's bid · until ${dayLabel("2026-11-26")} (expired) · set by dashboard`);
 });
