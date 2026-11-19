@@ -18,6 +18,11 @@ From the league's settings (``season.state``) the simulator takes the two names 
 league's head-to-head format (#172, the format PR): ``ONE_WIN``, a week one result in the
 standings, and ``EACH_CATEGORY``, each category of a week a result, so a run's format is named by
 the engine's own words.
+
+From the Monday step (``season.hillclimb``) the simulator takes the grids its screen nudges a
+floor by (#172, PR H1), and nothing of the step itself: ``FLOOR_STEP``, the protection floor's
+step a game in each scoring; ``PLAN_DEFAULT`` and ``PLAN_CAP``, a plan floor's default and how
+many times it the floor may rise to. The simulator never runs the step and writes no knob file.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from pickandroll.season import stream as st
 from pickandroll.season import weekly as wk
 from pickandroll.season.autopilot import TYPICAL_DAYS, TYPICAL_MIN, bid_of, typical_gain
 from pickandroll.season.calendar import Calendar, Week, monday_of
+from pickandroll.season.hillclimb import FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT
 from pickandroll.season.moves import HELD, Move
 from pickandroll.season.progress import BLEND, DEFAULTS, LIVE_KNOBS, refused
 from pickandroll.season.scorecard import FPTS, total, won
@@ -40,12 +46,15 @@ __all__ = [
     "COUNTING",
     "DEFAULTS",
     "EACH_CATEGORY",
+    "FLOOR_STEP",
     "FPTS",
     "HELD",
     "LIVE_KNOBS",
     "ONE_WIN",
     "PCT",
     "PHI",
+    "PLAN_CAP",
+    "PLAN_DEFAULT",
     "STATS",
     "TYPICAL_DAYS",
     "TYPICAL_MIN",

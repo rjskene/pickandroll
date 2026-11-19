@@ -49,6 +49,7 @@ import {
   forText,
   baseLabel,
   minGainText,
+  searchPoolText,
   moveGain,
   rankedLine,
   valueMove,
@@ -1047,8 +1048,7 @@ function Moves({
         </div>
       )}
       <p className="dim small">
-        Recommended by a search over the {m.search.pool} candidates whose best single move adds most: a strong heuristic, not a proof. Each move&apos;s prices
-        are re-solves: the set without his add, and the set keeping his drop.
+        {searchPoolText(m.search)} Each move&apos;s prices are re-solves: the set without its add, and the set keeping its drop.
       </p>
     </>
   );
