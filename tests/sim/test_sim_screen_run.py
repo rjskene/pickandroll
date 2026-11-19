@@ -18,11 +18,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pickandroll.sim import audit, shapes
+from pickandroll.sim import audit, policy, shapes
+from pickandroll.sim import bid_policy as bp
 from pickandroll.sim import cli as ss
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
+from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN
 from tests.sim.sim_league import KNOBS, make_data_dir
 from tests.sim.test_sim_rivals import fit_bids, table_rows, write_table
 
@@ -697,3 +699,46 @@ def test_a_lever_of_the_exact_tier_is_played_on_it_in_both_arms(data: Path):
     result = row["result"]
     assert result["did_nothing"] == (result["counts_equal"] and result["outcomes_equal"])
     assert result["cells"]["2024"]["prior"]["counts"]["a"]["landed"]["mean"] > 0
+
+
+# --------------------------------------------------------------------------- the bid policy
+@pytest.mark.parametrize("h2h", [ONE_WIN, EACH_CATEGORY])
+def test_a_bid_lever_s_pair_is_played_by_faab_and_is_the_same_pair_run_by_replay(data: Path, h2h):
+    """PR F2's levers in the command, in both formats. Under continuous waivers by FAAB the
+    routine's pair is played: arm A the baseline, which names no ``bid``, arm B its ``bid`` at
+    ``routine`` 1. The routine dollar moves the dollars spent and no claim won. The pair's record
+    lists arm B's block, every key with its value in force, and says its seat reads it; arm A
+    has neither. The pair's two specs run by ``replay --arms`` give the record key for key
+    (the screen's Rule 1, with a ``bid`` in a spec file)."""
+    flags = ("--waivers", "faab", "--waiver-rule", "continuous", "--h2h", h2h)
+    name = f"bid-{h2h}"
+    code, out = screen(data, *flags, levers=("bid.routine",), name=name)
+    assert code == 0, out
+    mine = same_by_replay(data, name, "bid.routine-flipped", flags)
+    assert mine["league"]["rules"]["waivers"] == "faab" and mine["audit"]["paths_voided"] == 0
+    assert "bid" not in mine["specs"]["a"] and mine["specs"]["b"]["bid"] == {"routine": 1}
+    assert mine["bid"] == {"b": {**bp.DEFAULT.payload(), "routine": 1}}
+    assert mine["bid_note"] == ss.BID_NOTE
+    (reads_a,), (reads_b,) = mine["reads"]["a"].values(), mine["reads"]["b"].values()
+    assert reads_b["bid"] == policy.READ and "bid" not in reads_a
+    assert {k: v for k, v in reads_b.items() if k != "bid"} == reads_a
+    counts = mine["counts"]["by_season"]["2024"]["prior"]
+    assert counts["a"]["claims_won"] == counts["b"]["claims_won"]
+    assert counts["a"]["claims_won"]["mean"] > 0
+    assert counts["b"]["dollars_spent"]["mean"] > counts["a"]["dollars_spent"]["mean"] > 0
+    assert {"dollars_at_bracket", "weeks_at_zero", "value_won"} <= set(counts["a"])
+    row = rows_of(record(data, name))["bid.routine-flipped"]
+    assert row["values"] == {"a": 0, "b": 1} and row["both"] == {}
+    assert not row["result"]["counts_equal"] and not row["result"]["did_nothing"]
+    assert f"bid policy, arm B (B:bid.routine-flipped): {bp.of({'routine': 1}).label()}" in out
+
+
+def test_a_bid_lever_is_listed_and_not_played_where_waivers_carry_no_bid(data: Path):
+    """By priority a ``bid`` is read by nobody: each of its levers is one row, not read here,
+    with the block's own reason, and the list has no pair to play."""
+    before = folders(data)
+    levers = ("bid.routine", "bid.shade")
+    code, out = screen(data, "--waivers", "priority", "--dry-run", levers=levers, name="unbid")
+    assert code == 0, out
+    assert out.count("not read here: waivers by priority carry no budget and no bid") == 2
+    assert "0 pair(s) to play" in out and folders(data) == before

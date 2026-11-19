@@ -26,6 +26,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import bid_policy as bp
 from . import forecast as fc
 from . import policy
 from . import run as rn
@@ -67,6 +68,16 @@ PLAN_FAAB_NOTE = (
     "on the surrogate tier too; that is not what this row screens, which is the plan's floor on "
     "the exact tier executing the plan (whose own bids read it as well)"
 )
+#: The bid policy's levers (PR F2), each a key of an arm's ``bid`` block by its dotted name and
+#: read only in a FAAB run (``policy.bid_reads``). Their steps are the list's own, written
+#: before any result: a horizon weight moves by :data:`WEIGHT_STEP`; a pace that the baseline
+#: does not name takes :data:`PACE_PATH`'s shape and reserve, and its reserve moves by
+#: :data:`RESERVE_STEP`; the shade goes on at :data:`SHADE_ON`.
+BID = "bid."
+WEIGHT_STEP = 0.25
+RESERVE_STEP = 0.2
+PACE_PATH: Mapping[str, Any] = {"k": 1.0, "shape": 1.0, "reserve": 0.2}
+SHADE_ON: Mapping[str, Any] = {"q": 0.9, "least": 10}
 #: The bar a lever survives at, for the record and the table.
 RULE = (
     "a lever survives when its paired difference (B less A) clears one standard error, either "
@@ -248,6 +259,55 @@ def _blend(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step
     )
 
 
+def _bid_weight(key: str) -> Callable[[rn.Arm, Context], Sequence[Step]]:
+    """A horizon weight of the bid policy, one step each way; a step the block refuses (below
+    0, above 1, a sum above 1) is listed and not played."""
+    name = f"{BID}{key}"
+
+    def steps(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+        at = float(value_of(base, name))
+        return (
+            Step("down", "one step down", {name: round(at - WEIGHT_STEP, 4)}),
+            Step("up", "one step up", {name: round(at + WEIGHT_STEP, 4)}),
+        )
+
+    return steps
+
+
+def _pace_of(base: rn.Arm, k: float | None = None) -> dict[str, Any]:
+    """The baseline's pace as a block, the list's path (:data:`PACE_PATH`) where it names none;
+    its ``k`` set to ``k`` when one is given."""
+    named = (base.bid or bp.DEFAULT).pace
+    block = dict(PACE_PATH) if named is None else named.payload()
+    return block if k is None else {**block, "k": k}
+
+
+def _pace_k(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+    """The pace's ``k`` to 0.5 and to 1. A baseline that names no pace holds ``k`` 0 on the
+    list's path in both arms: at ``k`` 0 a pace reads no path, so arm A bids as the baseline."""
+    both = {} if (base.bid or bp.DEFAULT).pace is not None else {f"{BID}pace": _pace_of(base, 0.0)}
+    return both, (
+        Step("0.5", "to 0.5", {f"{BID}pace.k": 0.5}),
+        Step("1", "to 1", {f"{BID}pace.k": 1.0}),
+    )
+
+
+def _pace_reserve(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+    """The path's reserve one step up, on a pace that follows the path in both arms: the
+    baseline's, or the list's where it names none or holds ``k`` 0."""
+    named = (base.bid or bp.DEFAULT).pace
+    follows = named is not None and named.k > 0
+    block = _pace_of(base) if follows else _pace_of(base, PACE_PATH["k"])
+    both = {} if follows else {f"{BID}pace": block}
+    up = round(float(block["reserve"]) + RESERVE_STEP, 4)
+    return both, (Step("up", "one step up", {f"{BID}pace.reserve": up}),)
+
+
+def _routine(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    at = int(value_of(base, f"{BID}routine"))
+    return (Step("flipped", "flipped", {f"{BID}routine": 1 - at}),)
+
+
 #: The list (Rule 2: written before any result), one row a lever, in the order the table prints.
 #: A floor's step is the Monday step's own grid: the protection floor's a game by scoring
 #: (``FLOOR_STEP``), a plan floor's times and divided by :data:`PLAN_STEP`, never above
@@ -334,6 +394,35 @@ LEVERS: tuple[Lever, ...] = (
         _plain(_system),
     ),
     Lever("blend", "surrogate", "to 0.25 and to 0.75", _blend, "system blend"),
+    Lever(f"{BID}week", "surrogate", "one step each way", _plain(_bid_weight("week"))),
+    Lever(f"{BID}season", "surrogate", "one step each way", _plain(_bid_weight("season"))),
+    Lever(
+        f"{BID}pace.k",
+        "surrogate",
+        "to 0.5 and to 1",
+        _pace_k,
+        "a pace: the baseline's, or with none k 0 on the list's path",
+    ),
+    Lever(
+        f"{BID}pace.reserve",
+        "surrogate",
+        "one step up",
+        _pace_reserve,
+        "a pace that follows its path: the baseline's, or with none (or at k 0) the list's",
+    ),
+    Lever(f"{BID}routine", "surrogate", "flipped", _plain(_routine)),
+    Lever(
+        f"{BID}rival_cap",
+        "surrogate",
+        "to on",
+        _plain(lambda b, c: (Step("on", "to on", {f"{BID}rival_cap": True}),)),
+    ),
+    Lever(
+        f"{BID}shade",
+        "surrogate",
+        "to on, at the list's quantile",
+        _plain(lambda b, c: (Step("on", "to on", {f"{BID}shade": dict(SHADE_ON)}),)),
+    ),
 )
 #: The levers' names, in the list's order.
 NAMES: tuple[str, ...] = tuple(lever.name for lever in LEVERS)
@@ -341,12 +430,21 @@ NAMES: tuple[str, ...] = tuple(lever.name for lever in LEVERS)
 
 # --------------------------------------------------------------------------- a lever's pair
 def applied(spec: Mapping[str, Any], change: Mapping[str, Any]) -> dict[str, Any]:
-    """``spec`` with ``change``: a knob's value under ``knobs``, any other name a spec key's."""
+    """``spec`` with ``change``: a knob's value under ``knobs``, a key of the ``bid`` block by
+    its dotted name (``bid.week``, ``bid.pace.k``, PR F2) inside that block, any other name a
+    spec key's."""
     out = dict(spec)
     knobs = dict(spec.get("knobs") or {})
     for name, value in change.items():
         if name in policy.KNOBS:
             knobs[name] = value
+        elif name.startswith(BID):
+            *path, last = name[len(BID) :].split(".")
+            block = out["bid"] = dict(out.get("bid") or {})
+            for key in path:
+                block[key] = dict(block.get(key) or {})
+                block = block[key]
+            block[last] = value
         else:
             out[name] = value
     out["knobs"] = knobs
@@ -354,7 +452,14 @@ def applied(spec: Mapping[str, Any], change: Mapping[str, Any]) -> dict[str, Any
 
 
 def value_of(arm: rn.Arm, name: str) -> Any:
-    """What ``arm`` holds under ``name``: a knob's value, a field's, or a spec key's."""
+    """What ``arm`` holds under ``name``: a knob's value, a field's, a key of its bid policy in
+    force by its dotted name (the default member's where the arm names no ``bid``; None for a
+    figure of a pace it does not name), or a spec key's."""
+    if name.startswith(BID):
+        at: Any = (arm.bid or bp.DEFAULT).payload()
+        for key in name[len(BID) :].split("."):
+            at = None if at is None else at[key]
+        return at
     if name in policy.KNOBS:
         return arm.knobs[name]
     if name in policy.FIELDS:
@@ -371,6 +476,8 @@ def shown(value: Any) -> str:
         return f"{value:g}"
     if isinstance(value, list | tuple):
         return "[" + ", ".join(shown(v) for v in value) + "]"
+    if isinstance(value, Mapping):
+        return "{" + ", ".join(f"{k} {shown(v)}" for k, v in value.items()) + "}"
     return str(value)
 
 
@@ -380,9 +487,12 @@ def read_why(name: str, arm: rn.Arm, shapes: Sequence[policy.Shape]) -> str | No
     ``policy.field_reads``; a mirror's rivals read what the surrogate reads). The three spec
     keys by what they are: ``executes`` is read on the exact tier; a week plan only recorded
     changes no season, so ``with_plan`` is read only by an arm that executes the plan and
-    ``execute_plan`` only by one that draws it."""
+    ``execute_plan`` only by one that draws it. A key of the ``bid`` block (PR F2) as the block
+    is read (``policy.bid_reads``): in a FAAB run, by a seat that bids."""
     mirror = rn.mirrored(arm)
-    if name in policy.KNOBS:
+    if name.startswith(BID):
+        whys = [policy.bid_reads(arm, shape, mirror) for shape in shapes]
+    elif name in policy.KNOBS:
         whys = [policy.reads(arm, shape, mirror)[name] for shape in shapes]
     elif name in policy.FIELDS:
         whys = [policy.field_reads(arm, mirror)[name]]
