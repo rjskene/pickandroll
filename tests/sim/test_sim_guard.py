@@ -1131,15 +1131,14 @@ def bye_league(h2h: str):
 
 @pytest.mark.parametrize("h2h", FORMATS)
 @pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
-def test_a_stated_limit_a_seat_with_a_bye_reads_a_full_stake_in_the_week_it_sits_out(tier, h2h):
-    """A stated limit, pinned by name (the README's "What a stake moves, and its limit"): in
-    the bracket's weeks ``L`` is 1 for every seat inside the field, and which of them plays a
-    week is not read. A top seed with a bye plays no matchup in the bracket's first week and
-    its ``L`` that week is 1 all the same. At a stake of 1 its term then keeps that week's
-    games, which decide nothing for it, and holds none of the round it will play: it fills the
-    spot that plays nothing with the player of its bye week, where with no stake it takes the
-    player of its round for it. A working default, as the bracket's ``L`` is: a rule that gave
-    a seat ``L`` 0 in the week of its bye would turn this test round."""
+def test_a_seat_with_a_bye_has_no_stake_in_the_week_it_sits_out(tier, h2h):
+    """A week that decides nothing for a seat has no stake (``stake.has_bye``). A top seed with
+    a bye plays no matchup in the bracket's first week and its ``L`` that week is 0: at a stake
+    of 1 its term is the season figure as it was, and it takes the player of the round it will
+    play, the final here, for the spot that plays nothing, as with no stake. Were its ``L`` 1
+    that week, as the two seats' that play it, the split would keep its term on the bye week's
+    games and hold none of the final's, and it would take the player of its bye week instead
+    (the last lines, the week's stake forced). In the final its ``L`` is 1."""
     setup = bye_league(h2h)
     spec_ = setup.spec
     assert (spec_.playoff_teams, spec_.byes, spec_.playoff_weeks) == (3, 1, (6, 7))
@@ -1148,20 +1147,24 @@ def test_a_stated_limit_a_seat_with_a_bye_reads_a_full_stake_in_the_week_it_sits
     tied: dict = {w: {} for w in spec_.regular_weeks}
     played = lg.season(spec_, tied).playoffs
     assert played.seeds[1] == 1 and [pair[:2] for pair in played.rounds[0]] == [(2, 3)]
-    assert stk.level(spec_, tied, 1, 6) == stk.level(spec_, tied, 1, 7) == 1.0
+    assert [stk.level(spec_, tied, 1, w) for w in (6, 7)] == [0.0, 1.0]
+    assert [stk.level(spec_, tied, t, 6) for t in (2, 3, 4)] == [1.0, 1.0, 0.0]
     first = setup.calendar.weeks[5]
     assert first.number == 6
     built, state = on_day(setup, first.start, totals=tied)
-    staked = policy.guarded(built, setup, state, stake=1.0)
-    assert staked.level == 1.0 and policy.later_share(staked) == 0.0
-    whole, part = policy.SeasonFigure(built, 1.0), policy.season_figure_of(staked)
     sits, plays = mv.Move(SITS, DEAD), mv.Move(PLAYS, DEAD)
+    plain = policy.decide(built, tier, with_plan=False)
+    assert plays in plain.moves
+    staked = policy.guarded(built, setup, state, stake=1.0)
+    assert (staked.stake, staked.level) == (1.0, 0.0) and policy.later_share(staked) == 1.0
+    assert type(policy.season_figure_of(staked)) is policy.SeasonFigure
+    assert policy.decide(staked, tier, with_plan=False).moves == plain.moves
+    # What the rule spares the seat: at a week's stake of 1 its term keeps the week it sits out.
+    forced = policy.guarded(built, setup, replace(state, stakes={1: 1.0}), stake=1.0)
+    whole, part = policy.SeasonFigure(built, 1.0), policy.season_figure_of(forced)
     assert part.move(sits) == whole.move(sits) > 0
     assert whole.move(plays) > 0 and part.move(plays) == 0.0
-    plain = policy.decide(built, tier, with_plan=False)
-    got = policy.decide(staked, tier, with_plan=False)
-    assert plays in plain.moves
-    assert got.moves == (sits,)
+    assert policy.decide(forced, tier, with_plan=False).moves == (sits,)
 
 
 # --------------------------------------------------------------------------- no peek, a split seat

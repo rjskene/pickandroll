@@ -40,12 +40,13 @@ is small early, rises as the weeks run out for a seat near the line and falls to
 seat far from it, ahead or behind.
 
 **In the bracket's weeks** it is 1 for a seat inside the field by the regular season's final
-standings and 0 for a seat outside. Who is knocked out inside the bracket is not read (a limit),
-nor which seat plays the week: a top seed with a bye has ``L`` 1 in the bracket's first week,
-which it sits out. Under the split a stake then keeps that seat's term on the games of a week
-that decides nothing for it and takes the term off the rounds it will play, the reverse of the
-idea for that seat in that week (a limit and a working default, stated in the README's passage
-and pinned by name in ``tests/sim/test_sim_guard.py``).
+standings and 0 for a seat outside, and 0 as well for a top seed in the week of its bye
+(:func:`has_bye`): a week that decides nothing for a seat has no stake. Under the split a stake
+would otherwise keep that seat's term on the games of the week it sits out and take it off the
+rounds it will play. The bye is read from the final standings and the league's own bracket rule
+(the ``byes`` top seeds sit out the bracket's first week), never from a result of the bracket. Who
+is knocked out inside the bracket is not read (a limit: a seat that lost its round still has
+``L`` 1 in the weeks after). A working default, as the formula is.
 
 ``Phi`` is from ``math.erf``, and ``L`` is rounded to :data:`DECIMALS` places before anything
 reads it, so two machines whose ``erf`` differs in the last bit decide alike (the lesson of
@@ -134,20 +135,31 @@ def lead(table: Sequence[lg.Standing], spec: lg.LeagueSpec, team: int) -> float 
     return measure(mine, spec) - measure(line, spec)
 
 
+def has_bye(spec: lg.LeagueSpec, rank: int, week: int) -> bool:
+    """Whether the team ranked ``rank`` in the regular season's final standings sits out
+    ``week``: the bracket's ``spec.byes`` top seeds play no matchup in its first week
+    (``spec.playoff_weeks[0]``; ``league.bracket``, ``league.playoffs``). The spec and the rank
+    alone: no result of the bracket is read."""
+    return bool(spec.playoff_weeks) and week == spec.playoff_weeks[0] and rank <= spec.byes
+
+
 def level(
     spec: lg.LeagueSpec, totals: Mapping[int, Mapping[int, lg.Totals]], team: int, week: int
 ) -> float:
     """``L``, the stake of week ``week`` for ``team``, from the weeks' ``totals`` (week to team to
-    totals; only the regular weeks finished before ``week`` are read). In one of the bracket's
-    weeks: 1 for a team inside the field by the regular season's final standings, 0 for one
-    outside, whether or not it plays a matchup that week (a bye and a lost round are not read:
-    the module's limits). In any other week the module's formula (:func:`swing` of the lead and
-    the regular weeks after this one); 0 in a league with no cut line, where no win moves the
-    field."""
+    totals; only the regular weeks are read, and in a regular week only those finished before
+    ``week``). In one of the bracket's weeks: 0 for a team outside the field by the regular
+    season's final standings, 0 for a top seed in the week of its bye (:func:`has_bye`: the
+    same standings and the spec, no total of a bracket's week), and 1 for every other team
+    inside the field, whether or not it is still alive (the module's limit). In any other week
+    the module's formula (:func:`swing` of the lead and the regular weeks after this one); 0 in
+    a league with no cut line, where no win moves the field."""
     if week in spec.playoff_weeks:
         final = table_before(spec, totals, None)
-        inside = {row.team for row in final if row.rank <= spec.playoff_teams}
-        return 1.0 if team in inside else 0.0
+        seed = {row.team: row.rank for row in final if row.rank <= spec.playoff_teams}
+        if team not in seed or has_bye(spec, seed[team], week):
+            return 0.0
+        return 1.0
     gap = lead(table_before(spec, totals, week), spec, team)
     if gap is None:
         return 0.0
@@ -159,6 +171,7 @@ __all__ = [
     "DECIMALS",
     "WEEK_VARIANCE",
     "WITHIN_ONE",
+    "has_bye",
     "lead",
     "level",
     "measure",

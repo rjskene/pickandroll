@@ -415,10 +415,14 @@ against the weeks left, and full in the playoffs), not the formula.
   seat far from it, ahead or behind.
 
 In the bracket's weeks `L` is 1 for a seat inside the field by the regular season's final
-standings and 0 for a seat outside. Who has been knocked out inside the bracket is not read (a
-limit: a seat that lost its first round still has `L` 1 in the weeks after), nor which seat plays
-the week: a top seed with a bye has `L` 1 in the bracket's first week, which it sits out (the
-second limit below).
+standings and 0 for a seat outside, and 0 as well for a top seed in the week of its bye: a week
+that decides nothing for a seat has no stake. The bye is read from the final standings and the
+league's own bracket rule (its `byes` top seeds sit out the bracket's first week;
+`stake.has_bye`), never from a result of the bracket. Without it the split below would keep that
+seat's term on the games of the week it sits out and take it off the rounds it will play. A field
+of six over three weeks, the replay's default league, has two such seats a season; a field of
+four or of eight has none, and there nothing changes. A working default, as the formula is. Who
+has been knocked out inside the bracket is not read (a limit, below).
 
 **What a stake moves, and its limit.** The set a seat queues is searched on `three`, the weeks
 after the running one: no day of the running week is in that key, and a move lands the day after
@@ -450,13 +454,10 @@ exact arm's week plan takes no season term and reads no stake. An exact arm that
 `weighted` searches on a key that holds the running week as well; its term is the same split
 figure.
 
-A second limit, in the bracket: `L` there is by the field, not by who plays the week. A top seed
-with a bye plays no matchup in the bracket's first week and its `L` that week is 1. At `stake` 1
-its term then keeps that week's games, which decide nothing for it, and holds none of the rounds
-it will play: for that seat in that week the split does the reverse of the idea. A field of six
-over three weeks, the replay's default league, has two such seats a season; a field of four or
-of eight has none. A seat knocked out in an earlier round is the same case in the weeks after.
-A working default, as the bracket's `L` is.
+A second limit, in the bracket: who has been knocked out is not read. A seat that lost its round
+still has `L` 1 in the weeks after, so at `stake` 1 its term stays on the games of weeks that
+decide nothing for it. After the bracket PR the round's pairs are on the state, and a later PR
+could read who is alive.
 
 The season guard reads no stake. Its figure is the engine's own, the whole rest of the season,
 at any `stake`. So under `block` a stake chooses among the sets the block allows and cannot take
@@ -465,8 +466,10 @@ decisive week wins over the rest of the season" is true of the term at any guard
 decision only under `off`.
 
 The split is a working default, as the formula of `L` is: the ruling fixes the idea (a decisive
-week wins over the rest of the season). The three cases, the two limits, the player who counts
-from after the week and the block's reading are pinned by name in `tests/sim/test_sim_guard.py`.
+week wins over the rest of the season). The three cases, the week's edge, the seat with a bye,
+the player who counts from after the week and the block's reading are pinned by name in
+`tests/sim/test_sim_guard.py`; the bye's rule and the bracket's limit in
+`tests/sim/test_sim_stake.py`.
 
 `Φ` is from `math.erf`, and `L` is rounded to twelve decimals before anything reads it, so two
 machines decide alike. The runner computes it once a week for each seat that reads or counts one,

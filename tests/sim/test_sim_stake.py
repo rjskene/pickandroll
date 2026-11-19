@@ -1,7 +1,7 @@
 """The week's stake (#172, the guard PR, ``sim/stake.py``): ``L`` from the finished weeks'
-standings, the gap to the cut line against the weeks left, and full in the bracket. The pure
-rule, in both head-to-head formats and a points league. Made-up totals; no season is played
-here (``test_sim_guard.py`` plays them)."""
+standings, the gap to the cut line against the weeks left, and full in the bracket but for a
+top seed in the week of its bye. The pure rule, in both head-to-head formats and a points
+league. Made-up totals; no season is played here (``test_sim_guard.py`` plays them)."""
 
 from __future__ import annotations
 
@@ -192,6 +192,99 @@ def test_in_the_bracket_s_weeks_the_stake_is_one_inside_the_field_and_zero_outsi
     # The bracket's own week is not read: whoever wins the final, the field is the field.
     after = {**FULL, **weeks({FINAL: [(3, 1, 9), (4, 2, 9)]})}
     assert {t: stake.level(spec, after, t, FINAL) for t in spec.teams} == got
+
+
+#: Ten teams and two regular weeks, for the bracket's shapes. Five teams win both weeks and five
+#: lose both; by the category wins the table is teams 2, 10, 6, then 3 and 7 level (the team's
+#: number orders them: they have not met), then 8, 4, 5 and 1 and 9 level, in either format.
+TEN = tuple(range(1, 11))
+TEN_PAIRS = {
+    1: ((1, 2), (3, 4), (5, 6), (7, 8), (9, 10)),
+    2: ((1, 3), (2, 4), (5, 7), (6, 8), (9, 10)),
+}
+TEN_WEEKS = weeks(
+    {
+        1: [(2, 1, 9), (3, 4, 5), (6, 5, 7), (7, 8, 5), (10, 9, 9)],
+        2: [(3, 1, 5), (2, 4, 6), (7, 5, 5), (6, 8, 5), (10, 9, 5)],
+    }
+)
+ORDER = [2, 10, 6, 3, 7, 8, 4, 5, 1, 9]
+
+
+def bracketed(field: int, rounds: int, h2h: str = ONE_WIN) -> lg.LeagueSpec:
+    """The ten teams with ``field`` of them in a bracket of ``rounds`` weeks after the two
+    regular ones, and the byes that bracket needs."""
+    own = lg.TIEBREAK_EACH if h2h == EACH_CATEGORY else lg.TIEBREAK
+    return lg.LeagueSpec(TEN, TEN_PAIRS, tuple(range(3, 3 + rounds)), CATS, playoff_teams=field,
+                         byes=2**rounds - field, tiebreak=own, h2h=h2h)  # fmt: skip
+
+
+def levels(spec: lg.LeagueSpec, totals) -> dict[int, list[float]]:
+    """Each of the bracket's weeks to every team's stake in it, in :data:`ORDER`."""
+    return {w: [stake.level(spec, totals, t, w) for t in ORDER] for w in spec.playoff_weeks}
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_top_seed_has_no_stake_in_the_week_of_its_bye(h2h):
+    """A week that decides nothing for a seat has no stake. Six in the field over three weeks:
+    the two top seeds sit out the bracket's first week, where their stake is 0, and play from
+    the second, where it is 1; the four other seeds play from the first. The seeds that sit
+    out are the ones the league's own bracket leaves unpaired."""
+    six = bracketed(6, 3, h2h)
+    assert six.byes == 2 and six.playoff_weeks == (3, 4, 5)
+    assert [r.team for r in stake.table_before(six, TEN_WEEKS, None)] == ORDER
+    inside, outside = [1.0] * 6, [0.0] * 4
+    assert levels(six, TEN_WEEKS) == {
+        3: [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, *outside],
+        4: [*inside, *outside],
+        5: [*inside, *outside],
+    }
+    assert [stake.has_bye(six, rank, 3) for rank in (1, 2, 3, 6)] == [True, True, False, False]
+    assert not any(stake.has_bye(six, rank, w) for rank in (1, 2) for w in (1, 2, 4, 5))
+    first = lg.season(six, TEN_WEEKS).playoffs.rounds[0]
+    assert sorted(seed for pair in first for seed in pair[:2]) == [3, 4, 5, 6]
+    assert sorted(seed for pair in lg.bracket(ORDER, 6, six.byes) for seed in pair) == [3, 4, 5, 6]
+    # In a regular week a top seed's stake is the formula's, as every seat's.
+    assert stake.level(six, TEN_WEEKS, 2, 2) == stake.swing(
+        stake.lead(stake.table_before(six, TEN_WEEKS, 2), six, 2) / math.sqrt(stake.variance(six)),
+        0,
+    )
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize(("field", "rounds"), [(4, 2), (8, 3)])
+def test_a_bracket_with_no_bye_is_as_it_was(field, rounds, h2h):
+    """A field of four over two weeks and one of eight over three have no bye: every seat
+    inside the field has a stake of 1 in every week of the bracket and every seat outside 0,
+    key for key what the rule gave before a bye was read."""
+    spec = bracketed(field, rounds, h2h)
+    assert spec.byes == 0 and len(spec.playoff_weeks) == rounds
+    row = [1.0] * field + [0.0] * (len(TEN) - field)
+    assert levels(spec, TEN_WEEKS) == dict.fromkeys(spec.playoff_weeks, row)
+    assert not any(stake.has_bye(spec, rank, w) for rank in range(1, 11) for w in range(1, 6))
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_bye_is_read_from_the_final_standings_and_no_week_of_the_bracket(h2h):
+    """No peek: the bye is the regular season's final standings' and the spec's. Whatever the
+    bracket's weeks hold, its first among them, no team's stake in any of them moves (so a
+    seat knocked out in a round keeps its stake in the weeks after: the module's limit); a
+    regular week's result does move who sits out."""
+    six = bracketed(6, 3, h2h)
+    before = levels(six, TEN_WEEKS)
+    upsets = weeks(
+        {
+            3: [(8, 6, 9), (7, 3, 9), (9, 2, 9), (1, 10, 9), (5, 4, 9)],
+            4: [(8, 2, 9), (7, 10, 9)],
+            5: [(8, 7, 9)],
+        }
+    )
+    assert levels(six, {**TEN_WEEKS, **upsets}) == before
+    # Team 6 takes all nine in week 1 and draws level with team 10 on the category wins, where
+    # the team's number puts it ahead: it sits out, and team 10 plays the first week.
+    turned = weeks({1: [(2, 1, 9), (3, 4, 5), (6, 5, 9), (7, 8, 5), (10, 9, 9)]})
+    other = levels(six, {**TEN_WEEKS, **turned})
+    assert other[3] == [0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0] != before[3]
 
 
 def test_a_tie_at_the_line_is_broken_as_the_league_breaks_it():
