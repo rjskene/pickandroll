@@ -64,7 +64,8 @@ SECOND: Mapping[str, Mapping[str, Any]] = {
 ABOVE, BELOW, FLIPS, NO_SIGN = "above", "below", "flips", "none"
 #: What a played value is, in its step's record.
 TAKEN = "taken"
-BEATEN = "above zero in every cell, and another value of the lever is ahead of it"
+BEATEN = "clears one SE with every cell above zero, and another value that clears is ahead of it"
+PASSED = "a larger mean than the value taken, passed over: it is not above one SE"
 WITHIN = "within one SE"
 NO_SE = "no SE (fewer than two paths stand in every cell)"
 NOTHING = "did nothing (both arms' counts and outcomes are equal on every path)"
@@ -83,10 +84,11 @@ SEARCH_RULE = (
     "current arm on the same paths, on every season and forecaster the search names; a value's "
     "difference (B less A) is the mean over those cells on the measure the league's standings "
     "count, its SE over the paths (a path's figure the mean over its cells), and it counts only "
-    "when every cell is above zero; the best value that counts (the largest difference; a tie "
-    "to the first in the lever's order) becomes the current one when its difference is above "
-    "one SE, else the lever stays; an oracle's cells and a season that fails espn's freeze check "
-    "are shown and not read"
+    "when every cell is above zero; a value is eligible when it counts and its difference is "
+    "above one SE; the lever takes the eligible value with the largest difference (a tie to the "
+    "first in the lever's order) and stays when none is eligible; a value with a larger "
+    "difference that is not above one SE is passed over, and the step says so; an oracle's "
+    "cells and a season that fails espn's freeze check are shown and not read"
 )
 #: What the current arm takes from a chosen value.
 CARRY_NOTE = (
@@ -518,33 +520,38 @@ def standing_of(result: Mapping[str, Any]) -> str:
         return FLAT_CELL
     if result["se"] is None:
         return NO_SE
-    return WITHIN if not result["clears"] else BEATEN
+    return BEATEN if result["clears"] else WITHIN
 
 
 def choose(values: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """A step's choice among a lever's played ``values`` (each its row's record with its
-    ``result``, in the lever's order; :data:`SEARCH_RULE`): the best of those that count is the
-    one with the largest mean among those above zero in every cell (a tie to the first in the
-    lever's order), and it is taken when its mean is above one SE; else none is. A value that
-    clears one SE behind a best that does not is not taken: the best is chosen first, and the
-    bar is the best's. With ``best`` (the best that counts, taken or not), each value's standing
-    by its key, and ``depends`` naming the values whose cells flip when the lever stays."""
-    counting = [
-        v for v in values if v["result"]["signs"] == ABOVE and not v["result"]["did_nothing"]
+    ``result``, in the lever's order; :data:`SEARCH_RULE`): a value is eligible when it counts
+    (every cell above zero) and its mean is above one SE; the eligible value with the largest
+    mean is taken (a tie to the first in the lever's order), and none when none is eligible. A
+    noisy value does not block a sure one: a value that counts with a larger mean than the one
+    taken, and not above one SE, is ``passed`` over and named. With each value's standing by its
+    key, and ``depends`` naming the values whose cells flip when the lever stays."""
+    eligible = [v for v in values if v["result"]["clears"] and not v["result"]["did_nothing"]]
+    taken = max(eligible, key=lambda v: v["result"]["mean"]) if eligible else None
+    passed = [
+        v["key"]
+        for v in values
+        if taken is not None
+        and v["result"]["signs"] == ABOVE
+        and not v["result"]["clears"]
+        and v["result"]["mean"] > taken["result"]["mean"]
     ]
-    best = max(counting, key=lambda v: v["result"]["mean"]) if counting else None
-    taken = best if best is not None and best["result"]["clears"] else None
     standings = {}
     for v in values:
         if taken is not None and v["key"] == taken["key"]:
             standings[v["key"]] = TAKEN
-        elif best is not None and v["key"] == best["key"]:
-            standings[v["key"]] = NO_SE if v["result"]["se"] is None else WITHIN
+        elif v["key"] in passed and v["result"]["se"] is not None:
+            standings[v["key"]] = PASSED
         else:
             standings[v["key"]] = standing_of(v["result"])
     return {
         "key": None if taken is None else taken["key"],
-        "best": None if best is None else best["key"],
+        "passed": passed,
         "standings": standings,
         "depends": [k for k, s in standings.items() if s in DEPENDS and taken is None],
     }
@@ -587,18 +594,19 @@ def step_words(step: Mapping[str, Any]) -> str:
     standings = step["choice"]["standings"]
     if step["choice"]["key"] is not None:
         taken = next(v for v in played if v["key"] == step["choice"]["key"])
-        return (
+        out = (
             f"{lever} moves from {at} to {sc.shown(taken['values']['b'])} ({taken['key']}): "
             f"{value_words(taken['result'])}, every cell above zero and the mean above one SE, "
-            "the best of the lever's values"
+            "the best of the values that clear"
         )
+        over = [v for v in played if v["key"] in step["choice"]["passed"]]
+        if over:
+            out += "; passed over, a larger mean that is not above one SE: " + ", ".join(
+                f"{v['key']} ({value_words(v['result'])})" for v in over
+            )
+        return out
     whys = "; ".join(f"{v['key']}: {standings[v['key']]}" for v in played)
-    best = step["choice"]["best"]
-    if best is None:
-        return f"{lever} stays at {at}: no value counts ({whys})"
-    return (
-        f"{lever} stays at {at}: the best value that counts, {best}, is not above one SE ({whys})"
-    )
+    return f"{lever} stays at {at}: no value counts and clears one SE ({whys})"
 
 
 # --------------------------------------------------------------------------- the final set
@@ -831,6 +839,7 @@ __all__ = [
     "NO_CONFIRMATION",
     "NO_SE",
     "NO_SIGN",
+    "PASSED",
     "PASSES",
     "RIVALS_WORDS",
     "RUN",

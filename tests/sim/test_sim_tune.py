@@ -459,7 +459,7 @@ def test_the_step_takes_the_best_value_that_counts_and_clears_one_se():
         value("pool-x", {cell: [3.0, -3.0, 0.0, 1.0]}),
     ]
     choice = tn.choose(values)
-    assert choice["key"] == choice["best"] == "pool-45-again" and choice["depends"] == []
+    assert choice["key"] == "pool-45-again" and choice["depends"] == choice["passed"] == []
     assert choice["standings"] == {
         "pool-45": tn.BEATEN,
         "pool-45-again": tn.TAKEN,
@@ -468,44 +468,51 @@ def test_the_step_takes_the_best_value_that_counts_and_clears_one_se():
     step = {"lever": "pool", "from": 30, "values": values, "choice": choice}
     assert tn.step_words(step) == (
         "pool moves from 30 to 60 (pool-45-again): matchup wins +2.500 (SE 0.289) over 1 cell, "
-        "every cell above zero and the mean above one SE, the best of the lever's values"
+        "every cell above zero and the mean above one SE, the best of the values that clear"
     )
     # A tie goes to the first in the lever's order.
     tie = tn.choose([values[0], {**values[0], "key": "pool-twin"}])
     assert tie["key"] == "pool-45"
 
 
-def test_the_best_is_chosen_first_and_the_bar_is_the_best_s():
-    """The value with the largest mean among those that count is the best, and it moves the
-    lever only when it is above one SE. A surer value behind it is not taken in its place: the
-    rule names the best before it looks at the bar, so nothing is picked after seeing which
-    values cleared."""
+def test_a_noisy_larger_mean_is_passed_over_for_the_surer_value_and_the_step_says_so():
+    """A value is eligible when it counts and clears one SE, and the lever takes the eligible
+    value with the largest mean. A value with a larger mean that does not clear does not block
+    it: the surer value is taken, and the larger mean is named as passed over."""
     cell = (2024, "prior")
     values = [
         value("pool-45", {cell: [1.0, 2.0, 1.0, 2.0]}, 45),
         value("pool-45-again", {cell: [9.0, -5.0, 9.0, -5.0]}, 60),
     ]
-    sure, best = (v["result"] for v in values)
-    assert sure["clears"] and best["mean"] > sure["mean"] and not best["clears"]
+    sure, noisy = (v["result"] for v in values)
+    assert sure["clears"] and noisy["mean"] > sure["mean"] and noisy["signs"] == tn.ABOVE
+    assert not noisy["clears"]
     choice = tn.choose(values)
     assert choice == {
-        "key": None,
-        "best": "pool-45-again",
-        "standings": {"pool-45": tn.BEATEN, "pool-45-again": tn.WITHIN},
+        "key": "pool-45",
+        "passed": ["pool-45-again"],
+        "standings": {"pool-45": tn.TAKEN, "pool-45-again": tn.PASSED},
         "depends": [],
     }
     step = {"lever": "pool", "from": 30, "values": values, "choice": choice}
     assert tn.step_words(step) == (
-        "pool stays at 30: the best value that counts, pool-45-again, is not above one SE "
-        f"(pool-45: {tn.BEATEN}; pool-45-again: within one SE)"
+        "pool moves from 30 to 45 (pool-45): matchup wins +1.500 (SE 0.289) over 1 cell, every "
+        "cell above zero and the mean above one SE, the best of the values that clear; passed "
+        "over, a larger mean that is not above one SE: pool-45-again (matchup wins +2.000 (SE "
+        "4.041) over 1 cell)"
     )
-    # One path has no SE: the best is named, and nothing is taken on it.
-    alone = tn.choose([value("pool-45", {cell: [1.0]}, 45)])
-    assert (alone["key"], alone["best"], alone["standings"]) == (
+    # With nothing eligible there is nothing to pass over: the noisy value alone is within one
+    # SE, and one path has no SE at all.
+    alone = tn.choose(values[1:])
+    assert (alone["key"], alone["passed"], alone["standings"]) == (
         None,
-        "pool-45",
-        {"pool-45": tn.NO_SE},
+        [],
+        {"pool-45-again": tn.WITHIN},
     )
+    assert tn.choose([value("pool-45", {cell: [1.0]}, 45)])["standings"] == {"pool-45": tn.NO_SE}
+    # A smaller mean that does not clear is within one SE, not passed over.
+    small = value("pool-x", {cell: [3.0, -3.0, 0.0, 1.0]})
+    assert tn.choose([values[0], small])["standings"]["pool-x"] == tn.WITHIN
 
 
 def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():
@@ -522,10 +529,10 @@ def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():
     choice = tn.choose(values)
     assert choice["key"] is None and choice["depends"] == ["pool-45"]
     step = {"lever": "pool", "from": 30, "values": values, "choice": choice}
-    assert choice["best"] is None
+    assert choice["passed"] == []
     assert tn.step_words(step) == (
-        f"pool stays at 30: no value counts (pool-45: depends on the season; pool-45-again: "
-        f"{tn.NOTHING})"
+        "pool stays at 30: no value counts and clears one SE (pool-45: depends on the season; "
+        f"pool-45-again: {tn.NOTHING})"
     )
     # A lever with no value to play stays too, each row with its reason.
     rows = [
@@ -533,7 +540,7 @@ def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():
         {"key": "pool-45", "status": sc.NOT_PLAYED, "why": tn.CURRENT},
     ]
     bare = {"lever": "pool", "from": 45, "values": rows, "choice": tn.choose([])}
-    assert tn.choose([]) == {"key": None, "best": None, "standings": {}, "depends": []}
+    assert tn.choose([]) == {"key": None, "passed": [], "standings": {}, "depends": []}
     assert tn.step_words(bare) == (
         "pool stays at 45: no value to play (faab_sizing: not read here (no budget); pool-45: "
         "not played (the current value))"

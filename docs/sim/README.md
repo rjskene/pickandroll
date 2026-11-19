@@ -1614,11 +1614,13 @@ when its folder is started, and no flag lets a caller pick after seeing a figure
   value that helps in one season and hurts in another does not count however large its mean, and
   the step says so: "depends on the season" ("depends on the forecaster" when it is one season's
   forecasters that disagree).
-- **The step.** The best value that counts (the largest mean; a tie to the first in the lever's
-  order) becomes the current one when its mean is above one SE; else the lever stays. The best
-  is named first and the bar is the best's: a surer value behind a best that does not clear is
-  not taken in its place. The record keeps each value's pair and the reason for the choice. A
-  value whose two arms played one season on every path "did nothing", as in a screen.
+- **The step.** A value is eligible when it counts and its mean is above one SE. The lever takes
+  the eligible value with the largest mean (a tie to the first in the lever's order); with none
+  eligible it stays. A noisy value does not block a sure one: a value with a larger mean that
+  is not above one SE is passed over, and the step says so in words. The step is lenient by
+  design, and the confirmation at the end is what guards it. The record keeps each value's
+  pair, its standing and the reason for the choice. A value whose two arms played one season on
+  every path "did nothing", as in a screen.
 - An oracle's cells and a season that fails `espn`'s freeze check are shown and not read, as in
   a replay's own verdict.
 - **What the current arm carries** is the lever's own value and nothing else. A value found on

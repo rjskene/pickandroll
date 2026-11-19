@@ -273,7 +273,7 @@ def test_the_search_takes_the_lever_built_to_help_and_leaves_the_one_built_to_do
     assert twice["signs"] == tn.ABOVE and twice["mean"] > twice["se"] > 0
     assert moved["choice"] == {
         "key": "pool-45-again",
-        "best": "pool-45-again",
+        "passed": [],
         "standings": {"pool-45": tn.BEATEN, "pool-45-again": tn.TAKEN},
         "depends": [],
     }
@@ -286,8 +286,8 @@ def test_the_search_takes_the_lever_built_to_help_and_leaves_the_one_built_to_do
     assert all(v["result"]["did_nothing"] and not v["result"]["clears"] for v in stayed["values"])
     assert stayed["choice"]["key"] is None
     assert stayed["why"] == (
-        f"weeks_ahead stays at 4: no value counts (weeks_ahead-6: {tn.NOTHING}; "
-        f"weeks_ahead-6-again: {tn.NOTHING})"
+        "weeks_ahead stays at 4: no value counts and clears one SE (weeks_ahead-6: "
+        f"{tn.NOTHING}; weeks_ahead-6-again: {tn.NOTHING})"
     )
     assert f"pass 1: {stayed['why']}" in out
     # Every pair carries every outcome, the title among them.
@@ -579,14 +579,14 @@ def test_a_lever_that_helps_in_one_season_and_hurts_in_another_is_left_and_named
     assert once["mean"] > 3 * once["se"] > 0 and not once["clears"] and not twice["clears"]
     assert step["choice"] == {
         "key": None,
-        "best": None,
+        "passed": [],
         "standings": {"pool-45": tn.DEPENDS_SEASON, "pool-45-again": tn.DEPENDS_SEASON},
         "depends": ["pool-45", "pool-45-again"],
     }
     assert step["change"] is None
     assert (
-        "pass 1: pool stays at 30: no value counts (pool-45: depends on the season; "
-        "pool-45-again: depends on the season)"
+        "pass 1: pool stays at 30: no value counts and clears one SE (pool-45: depends on the "
+        "season; pool-45-again: depends on the season)"
     ) in out
     assert rec["final"]["set"] == {} and rec["final"]["arm"] == BASE
     assert rec["confirmation"] == {"season": 2026, "status": tn.NOTHING_TO_CONFIRM, "look": None}
@@ -618,6 +618,33 @@ def test_a_later_pass_tries_a_lever_again_and_a_pass_that_moves_nothing_ends_the
     assert pair_of(data, "passes", "p2-pool-45")["specs"]["a"] == {**BASE, "pool": 60}
     assert not any(f.startswith("p3-") for f in files(data, "passes"))
     assert rec["final"]["set"] == {"pool": 60} and rec["spec"]["passes"] == 3
+
+
+def test_a_noisy_larger_mean_is_passed_over_and_the_run_says_so(data: Path):
+    """The pool's nudge again swings between the two paths around a larger mean, and its nudge
+    is a sure gain: the step takes the sure one and names the other as passed over."""
+
+    def world(a: rn.Arm, b: rn.Arm, season: int, path: int):
+        if pool(b) == 60:
+            return (9.0, -5.0)[path]
+        return (1.0, 2.0)[path]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(world))
+        code, out = tune(data, levers=("pool",), name="noisy", confirm="none")
+    assert code == 0, out
+    (step,) = record(data, "noisy")["steps"]
+    sure, noisy = (v["result"] for v in step["values"])
+    assert noisy["mean"] > sure["mean"] > sure["se"] and noisy["mean"] < noisy["se"]
+    assert step["choice"] == {
+        "key": "pool-45",
+        "passed": ["pool-45-again"],
+        "standings": {"pool-45": tn.TAKEN, "pool-45-again": tn.PASSED},
+        "depends": [],
+    }
+    assert step["change"] == {"pool": 45}
+    assert "passed over, a larger mean that is not above one SE: pool-45-again (" in out
+    assert f"pass 1: {step['why']}" in out
 
 
 def test_a_lever_at_its_nudge_s_target_is_listed_as_the_current_value_and_not_refused(data):
