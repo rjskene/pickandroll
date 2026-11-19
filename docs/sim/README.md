@@ -358,7 +358,7 @@ built:
 | `protection_floor` | any seat that moves (exact, surrogate, ranking) | a static seat makes no move |
 | `daily_cap` | exact, surrogate | the ranking tier queues one move a day, under any cap |
 | `horizon_weight` | exact executing `weighted` | any other arm |
-| `plan_floor_cats` | exact drawing and executing the week plan, in a categories league that counts every category; in such a FAAB run any exact or surrogate seat and a mirror rival (the typical gain until ten moves, PR Fb) | any other arm or league; in a one-win league nobody: the engine's plan floor is its own there (the format PR) |
+| `plan_floor_cats` | exact drawing and executing the week plan, in a categories league that counts every category; in such a FAAB run any exact or surrogate seat and a mirror rival (the typical gain on the three weeks until ten moves, PR Fb), unless the arm's `bid` gives the three weeks no weight (PR F2) | any other arm or league; in a one-win league nobody: the engine's plan floor is its own there (the format PR) |
 | `plan_floor_points` | the same, points | any other arm or league |
 | `season_weight` | exact, surrogate | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read; in a FAAB run also a seat that bids on an arm whose `bid` weighs the season (`bid.season` above 0), bracket read (PR F2) | no term and no such `bid`, or no bracket |
@@ -391,7 +391,12 @@ differs only on `plan_floor_points` is refused in a categories run and runs in a
 an arm that executes the plan; a pair that differs only on `faab_sizing` is refused without
 `--waivers faab` and runs with it, PR Fb; so is a pair that differs only on `bid`, compared as
 the policy in force, PR F2). Two arms alike in everything are a check that the difference is
-zero and run; an arm that names an empty `bid` and one that names none are alike.
+zero and run; an arm that names an empty `bid` and one that names none are alike. Two `bid`
+blocks apart only on a pace at `k` 0 (or one such block against none) are the same seat in a
+FAAB run too, refused by name: such a pace follows no path, whatever its `shape` and `reserve`.
+In a FAAB run a pair apart only on its league's plan floor is refused when both arms' `bid`
+gives the three weeks no weight and neither executes a week plan: a seat that bids reads the
+floor only as its typical gain on the three weeks ("The bid policy", who reads it).
 
 The `bid` block's row (`policy.bid_reads`) is in the payload's table for an arm that names one,
 beside its knobs' and its fields'.
@@ -1209,7 +1214,8 @@ Who bids, and how:
 - **A static seat** never claims.
 
 In a FAAB run `faab_sizing` is read by a seat that bids, and the plan floor of the league's scoring
-by the same seats (the typical gain until ten moves); in a one-win league that floor is the
+by the same seats (the typical gain on the three weeks until ten moves; not on an arm whose
+`bid` gives the three weeks no weight, "The bid policy"); in a one-win league that floor is the
 engine's own and `plan_floor_cats` is read by nobody (the format PR). The audit holds the bids to three rules in
 place of `claim_priority` and the counts count the dollars (below).
 
@@ -1345,7 +1351,9 @@ The family is one pure function, `bid_policy.amount`, of the block and of one fr
    decided. On the path `p` is 1 and the bid is the live rule's; ahead of it (more left than the
    path holds) the bid is more, behind it less. Where the path is 0 the pace has no bound: a claim
    worth more than nothing (item 1's value above 0) bids every dollar left (no `faab_sizing`;
-   then the caps and the clamp), and one worth nothing or less bids `routine`. With no `pace`
+   then the caps and the clamp), and one worth nothing or less bids `routine`. A pace so far
+   ahead of its path at so large a `k` that the power, or its product with the value, is beyond
+   a float has no bound either, and bids the same way. With no `pace`
    named, or at `k` 0, `p` is 1 and no calendar is read. In a league whose bracket is not read
    the whole season is the regular season: the path has no straight line and ends at `reserve`,
    so a reserve there is dollars never spent, the arm's own choice.
@@ -1388,7 +1396,14 @@ bids $0 whatever the block says, a market rival bids by its own rule, and outsid
 the block is named and read by nobody (`policy.bid_reads`; "What each knob reads"). The policy
 changes no seat's choice of moves, only what its claims bid. One knob gains a reader: an arm whose
 `bid` weighs the season reads `playoff_weight` in a FAAB league whose bracket is read, whatever
-its `season_weight`, since the season's figure counts a bracket game that many times.
+its `season_weight`, since the season's figure counts a bracket game that many times. And one
+can lose its reader: a seat that bids reads its league's plan floor only as its typical gain on
+the three weeks until ten moves, so on an arm whose `bid` gives the three weeks no weight
+(`week` and `season` sum to 1) the floor moves no bid of a move of the set. The reads table then
+says so, and the floor is read there only by an exact arm that draws and executes its week plan
+(the plan's own floor, and a step's bid, which keeps the live value). A pace at `k` 0 follows no
+path, so a block that names one bids as the block without it, whatever its `shape` and
+`reserve`; the record still lists the block as named.
 
 **The record.** A run whose arm names a `bid` lists it under `bid`, by the arm's key, every key of
 the block with its value in force, and says what the block is beside it (`bid_note`); a run whose
@@ -1427,11 +1442,14 @@ What the bid policy does not model, each plainly:
     gains there counts as one typical whatever it gains (item 1 of the family). The weight then
     only takes its share of the claim's value off the three weeks, and a block at a weight on the
     week bids as one at the same weight on the season wherever both gains are above 0. From its
-    tenth move the seat reads a size on each. On the tests' made-up seasons of six weeks a
-    surrogate seat on its two days a week makes its tenth move late in the season or not at all,
-    and never holds ten in a fortnight; on one found path of the command tests' league of three
-    weeks its seat does hold ten in one. A look at a real season says on which day its seat
-    makes its tenth move.
+    tenth move the seat reads a size on each. Two sizes can still round to one dollar: the two
+    weights then bid alike, and part only in the value their claims are sized on (`value_won`,
+    a count no decision reads). On the tests' made-up seasons of six weeks a surrogate seat on
+    its two days a week makes its tenth move late in the season or not at all, and never holds
+    ten in a fortnight; on one found path of the command tests' league of three weeks its seat
+    does hold ten in one, and there the two weights part in that value alone (no dollar parted
+    on the seeds tried). A look at a real season says on which day its seat makes its tenth
+    move.
 
 **Not yet.** The ruling of 2026-11-07
 makes the market rivals' add rate a parameter of the league shape, with a default written as a
@@ -1623,7 +1641,7 @@ added by the PR that builds it, and no flag invents a nudge.
 | `blend` | to 0.25 and to 0.75 | surrogate | `system: blend` (the mix at 0.5 when the baseline names none) |
 | `bid.week`, `bid.season` | one step (0.25) each way | surrogate | |
 | `bid.pace.k` | to 0.5 and to 1 | surrogate | a pace: the baseline's, or with none `k` 0 on the list's path (`shape` 1, `reserve` 0.2) |
-| `bid.pace.reserve` | one step (0.2) up | surrogate | a pace that follows its path: the baseline's, or with none (or at `k` 0) the list's at `k` 1 |
+| `bid.pace.reserve` | one step (0.2) up | surrogate | a pace that follows its path: the baseline's; the baseline's at the list's `k` 1 where it holds `k` 0; the list's (`shape` 1, `reserve` 0.2, `k` 1) where it names none |
 | `bid.routine` | flipped | surrogate | |
 | `bid.rival_cap` | to on | surrogate | |
 | `bid.shade` | to on, at `q` 0.9 once 10 wins are seen | surrogate | |
@@ -1632,7 +1650,9 @@ The last seven are the bid policy's (PR F2): keys of the arm's `bid` block, name
 path (`--levers bid.pace.k`) and read only in a FAAB run. A baseline that names no `bid` holds
 the default member. Where it names no pace, both arms of the pace's two rows hold the list's path
 (`shape` 1, `reserve` 0.2): at `k` 0 for `bid.pace.k`, where a pace reads no path, so arm A bids
-as the baseline does; at `k` 1 for `bid.pace.reserve`, since a reserve moves nothing at `k` 0. The
+as the baseline does; at `k` 1 for `bid.pace.reserve`, since a reserve moves nothing at `k` 0. A
+baseline that names a pace at `k` 0 keeps its own `shape` and `reserve` in the reserve's row, at
+the list's `k` 1 in both arms. The
 shade goes on at the list's block (`q` 0.9, `least` 10). The path's `shape` has no row.
 
 The tier each lever is played on, in both arms, whatever tier the baseline names (the cheapest
@@ -1686,7 +1706,8 @@ What a row can be:
   cap on, the shade at the list's block, a pace at `k` 0.5 or 1.
 - In a FAAB run a plan floor's row adds one sentence: a seat that bids also reads the floor as
   its typical gain until ten moves, on the surrogate tier too, and that is not what the row
-  screens.
+  screens. Under a baseline whose `bid` gives the three weeks no weight no seat's set reads the
+  floor that way, and the row adds nothing.
 
 **What a played row reports.** The paired difference B less A and its SE on every outcome the
 verdict knows (category wins, matchup wins, rank, playoff odds, title), by cell, and both arms'
@@ -1700,7 +1721,10 @@ mechanism counts.
   the two arms played one season, and its difference is zero by construction. Both arms play
   one world, so equal counts with an outcome that differs is a lever that changed which moves
   were made, not how many; it did something, and the row keeps both facts (`counts_equal`,
-  `outcomes_equal`).
+  `outcomes_equal`). One count is set aside in that comparison: `value_won`, what a seat's won
+  claims were sized on (`screen.SIZED_ON`, PR F2). A weight of the `bid` block moves it by
+  itself, whatever the arm then bids, so two arms apart in it alone placed the same claims at
+  the same bids and played one season. The record keeps it in both arms' rows.
 - The table prints every row in the list's order, then the survivors.
 
 **What a screen cannot say.** One season, one forecaster and forty-eight paths by default, and a
