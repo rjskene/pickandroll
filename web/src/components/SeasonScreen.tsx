@@ -1082,7 +1082,7 @@ function PicksBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Name
               <th className="num" title={rosHeadTitle(s.scoring)}>
                 ROS
               </th>
-              <th title="the day he plays from: a waiver claim's clear date">From</th>
+              <th title="the day the player plays from: a waiver claim's clear date">From</th>
             </tr>
           </thead>
           <tbody>

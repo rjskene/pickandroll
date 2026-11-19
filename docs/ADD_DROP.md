@@ -1220,7 +1220,7 @@ makes it, and the solver fills the adds left around it.
 - **The move.** `season.picks.forced`, on the roster the pending claims leave (#360): the pick
   takes its add's effective day (a claim's clear day) and one add of that day's week, the picks
   before it counted; a week with no add left skips it, and it waits for the next week's adds. Its
-  drop is the one the user named where he is mine, else the option (an open spot, a held-slot
+  drop is the one the user named where that player is mine, else the option (an open spot, a held-slot
   move, a drop or a churn) whose set with the picks before it scores best on the queue's score:
   the week plus `three_weight` times the three weeks, the matchup odds in a playoff week. The keep
   rule, Yahoo's can't-cut list, the held-slot logic, the stash threshold and the pending claims

@@ -2754,7 +2754,7 @@ export function realizedTitle(m: ScorecardMove, scoring: string | null | undefin
   return parts.join("; ");
 }
 
-/** A pick the solve made (#434), in words: the add, his drop (named by the user or the cheapest)
+/** A pick the solve made (#434), in words: the add, its drop (named by the user or the cheapest)
  * and the bid. */
 export function pickMoveText(m: Pick<PickMove, "add" | "drop" | "held" | "held_drop" | "named_drop" | "bid">, name: (id: number) => string): string {
   const basis = basisPhrase(addBasis({ drop: m.drop, held: m.held ?? null, held_drop: m.held_drop ?? null }, name));

@@ -2023,8 +2023,8 @@ export interface MovesPicks {
   skipped: PickSkipped[];
 }
 
-/** One of the user's picks (#434): its player, leagues (null: all), the drop to make where he is
- * mine (null: the cheapest), the bid (null: the bid policy's), its last day, who set it and when,
+/** One of the user's picks (#434): its player, leagues (null: all), the drop to make where that
+ * player is mine (null: the cheapest), the bid (null: the bid policy's), its last day, who set it and when,
  * and the leagues it has left (its player on a team there). */
 export interface PlayerPick {
   player: number;

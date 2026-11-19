@@ -383,7 +383,7 @@ function Picks({ title }: { title: (league: string) => string }) {
         Your picks
       </span>
       {picks.length === 0 ? (
-        <p className="dim small">No picks. Name a player to add him wherever he is available.</p>
+        <p className="dim small">No picks. Name a player to add wherever the player is available.</p>
       ) : (
         <ul className="small">
           {picks.map((x) => (
