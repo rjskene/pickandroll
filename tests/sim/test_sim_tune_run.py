@@ -64,19 +64,31 @@ READS: list[int] = []
 def small():
     """The clock pinned to business hours, and the league made small: the fixed shape two seats
     of six slots, and a season of three weeks (``run.replay_setup``'s ``weeks``). The commands'
-    reader of seasons (``cli.remembering``) is one for the module, and says what it is asked."""
+    reader of seasons (``cli.remembering``) is one for the module, and says what it is asked.
+    A made-up log is parsed once for the module too (``readers.replay_lines``): every tune that
+    confirms asks, before its first pair, what serves the season confirmed on (the season
+    before it, for ``prior``), and no test here writes a log."""
     real = rn.replay_setup
     kept = ss.remembering()
+    lines_of = reader.replay_lines
+    parsed: dict[tuple[str, int], tuple] = {}
 
     def read(data, season, *a, **k):
         READS.append(season)
         return kept(data, season, *a, **k)
+
+    def replay_lines(data, season):
+        key = (str(data), season)
+        if key not in parsed:
+            parsed[key] = lines_of(data, season)
+        return parsed[key]
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(ss, "now_local", lambda: BUSINESS_HOURS)
         mp.setitem(ss.GRIDS, "fixed", SMALL)
         mp.setattr(rn, "replay_setup", lambda *a, **k: real(*a, **{**k, "weeks": WEEKS}))
         mp.setattr(ss, "remembering", lambda: read)
+        mp.setattr(reader, "replay_lines", replay_lines)
         yield
 
 
