@@ -378,9 +378,9 @@ finite is refused like any knob's (the engine's own check passes a NaN).
   threshold keeps is refused, on the plain drop of an active player who is out and on a churn's
   held drop alike. The ranking tier does not search with the engine: its one swap is checked as
   before the reader (the threshold is taken off its problem), so it does not read the knob.
-- **Rivals keep None.** A mirror rival takes the arm whole but for this knob
-  (`policy.rival_knobs`, dropped when the rival is made): two arms that differ only in it face
-  one rival.
+- **Rivals keep None.** A mirror rival takes the arm's knobs and its four fields but for this
+  knob (`policy.rival_knobs`, dropped when the rival is made): two arms that differ only in it
+  face one rival.
 - **The morning a held player comes back.** A seat that plans with the engine (the exact and the
   surrogate tiers, a mirror rival) names who leaves, and the world checks it. Its decision
   carries, for each of its held players the three weeks' plan brings back, the player the plan
@@ -564,11 +564,23 @@ no-peek check holds with a stake. It reads the standings and no forecaster: a sp
 the figure any seat in its place would have.
 
 Both fields are the arm's own seat's. A rival stays on the block and reads no stake, a mirror
-rival too: it runs the surrogate on the arm's knobs and four fields, at the `season_weight` as
-the knob. In a run where an arm names `guard` the counts gain `sets_past_guard`, and where one
-names `stake`, `stake_mean` and `stake_weeks_above_half` ("The counts"). With neither named every
-decision, count and payload key is as before, with one exception: the scale's `paths_with_ratio`
-(above), which every run that has a scale now writes.
+rival too: it runs the surrogate on the arm's knobs (less the stash threshold, PR G) and four
+fields, at the `season_weight` as the knob. In a run where an arm names `guard` the counts gain
+`sets_past_guard`, and where one names `stake`, `stake_mean` and `stake_weeks_above_half` ("The
+counts"). With neither named every decision, count and payload key is as before, with one
+exception: the scale's `paths_with_ratio` (above), which every run that has a scale now writes.
+
+With a stash threshold (PR G, above). The threshold is part of a set's feasibility
+(`moves.stash_ok`), not of the season guard: under `off`, where no search is handed an allowed
+set, the engine still refuses a set that drops a returning player the threshold keeps. The names
+a seat makes for the morning a held player comes back (`policy.sends_of`) are made on the seat's
+problem, which neither field touches, with the decided set made. They read no season term: a
+stake reaches them only through the set it decides, and the names of a set decided past the
+guard are made as any other's. Where the plan charges that set's own add, the morning falls back
+to the least valuable active player, under either guard (limits, item 7). A run whose arms name
+a threshold and these fields counts `returning_dropped`, then `sets_past_guard`, then the
+stake's two. PR G's made-up days and one season on each tier hold this
+(`tests/sim/test_sim_guard.py`, its last section).
 
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters

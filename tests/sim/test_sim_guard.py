@@ -3,8 +3,9 @@ guard PR): an arm's ``guard`` (``block``, live's, or ``off``) and its ``stake`` 
 they are parsed and refused, the allowed set a tier's searches take, the season figure a stake
 splits at the running week's last day, the stake the runner sets once a week, the counts, the
 record, Rule 1, no peek and every league kind once. The pure stake is ``test_sim_stake.py``'s;
-the screen's two rows are held by ``test_sim_screen.py``'s list tests and the ones at the end
-here.
+the screen's two rows are held by ``test_sim_screen.py``'s list tests and the ones near the end
+here. Last, the two fields with PR G's stash threshold and the morning a held player comes back
+(``test_sim_stash.py``'s made-up days and its league with a held slot).
 
 Made-up leagues, fixed seeds. A test whose seat weighs runs in both head-to-head formats, or
 says why it names one."""
@@ -34,7 +35,7 @@ from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim import stake as stk
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, wk
-from pickandroll.sim.shapes import CONTINUOUS
+from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import Member, Waiting, initial
 from tests.sim.sim_league import (
     KNOBS,
@@ -44,11 +45,24 @@ from tests.sim.sim_league import (
     make_setup,
     of_format,
     rates,
+    recorded_lines,
     replay_of,
 )
 from tests.sim.test_no_peek import DAYS, SEED, WEIGHTS, recorded
+from tests.sim.test_sim_held_morning import found
 from tests.sim.test_sim_knobs import points_setup
 from tests.sim.test_sim_split import SOURCES, fixed_of, second_of
+from tests.sim.test_sim_stash import (
+    NEVER,
+    SHARE,
+    TEAM,
+    a_day,
+    held_league,
+    mornings_named,
+    next_morning,
+    return_day,
+)
+from tests.sim.test_sim_stash import SEASON as STASH_SEASON
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
 FORMATS = (ONE_WIN, EACH_CATEGORY)
@@ -1486,3 +1500,276 @@ def test_the_screen_s_two_rows_and_where_the_stake_is_read():
     assert already.status == sc.REFUSED and "lever guard: its nudge to off" in already.why
     half = {r.key: r.status for r in sc.rows_of({**base, "stake": 0.5}, ["stake"], [one], ctx)}
     assert half == {"stake-0.5": sc.REFUSED, "stake-1": sc.PLAY}
+
+
+# --------------------------------------------------------------------------- on PR G
+#: The two fields at each pair of values a seat can hold: the defaults, the guard off, a stake
+#: of 1, both.
+FIELD_PAIRS = ((policy.BLOCK, 0.0), (policy.OFF, 0.0), (policy.BLOCK, 1.0), (policy.OFF, 1.0))
+#: A season weight for PR G's made-up days: the term is alive there.
+A_WEIGHT = 0.0001
+#: The stash count, then the guard's and the stake's: the last keys of a row that has them all.
+TAIL = (*ct.STASH, *SEASON_KEYS)
+
+
+def charged(problem: mv.MoveProblem, moves=()) -> tuple[tuple[int, int], ...]:
+    """Whom the engine's plan charges for each held player of ``problem`` with ``moves`` made,
+    the engine asked directly (``moves.comebacks``: the three weeks' horizon first, then the
+    week's)."""
+    held = {k for k, _ in problem.held}
+    out: dict[int, int] = {}
+    for key in (policy.QUEUE_SET, "week"):
+        for c in mv.comebacks(problem, key, moves):
+            if c.player in held:
+                out.setdefault(c.player, c.drop)
+    return tuple(sorted(out.items()))
+
+
+def seat_on(day, tier: str, threshold, guard: str, stake: float, level: float = 1.0):
+    """Seat 1 on one of PR G's made-up days at a season weight: its problem as built, the same
+    as a seat with ``guard`` and ``stake`` decides on it in a week whose stake is ``level``, and
+    that seat's decision."""
+    setup, state, status, returns, *_ = day
+    state = replace(state, stakes={TEAM: level})
+    knobs = {**KNOBS, "stash_threshold": threshold, "season_weight": A_WEIGHT}
+    built = policy.problem_of(setup, state, TEAM, knobs, setup.projection, status, returns)
+    mine = policy.guarded(built, setup, state, guard, stake)
+    return built, mine, policy.decide(mine, tier, with_plan=False)
+
+
+def crossing_arm(name: str, tier: str, rivals: str, knobs: dict, **more) -> rn.Arm:
+    """An arm among ``rivals`` (market rivals at 0.3 a day, as PR G's seasons)."""
+    opponents = {"kind": rivals, **({"rate": 0.3} if rivals == "market" else {})}
+    return rn.arm_of({**spec(name, tier, knobs=knobs, **more), "opponents": opponents})
+
+
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_the_stash_threshold_holds_under_off_and_at_any_stake(tier):
+    """PR G's knob under this PR's fields, on PR G's made-up day (the star for a returning
+    player: the plain drop, and a churn's held drop). Under ``off`` no search is handed an
+    allowed set, and the engine still refuses a returning player's drop the threshold keeps: the
+    threshold is part of a set's feasibility (``moves.stash_ok``), which no guard switches off.
+    The fields do not touch the problem the threshold is read on. A mirror rival of such an arm
+    keeps no threshold, stays on the block and reads no stake. One format, as PR G's day: the
+    threshold's test reads season values, never the week's measure, and each decision is
+    compared with one made in the same run."""
+    for churn in (False, True):
+        day = a_day(churn)
+        setup, state, status, returns, star, gone, _ = day
+        plain = {t: seat_on(day, tier, t, policy.BLOCK, 0.0)[2] for t in (None, NEVER)}
+        assert plain[None].moves == (mv.Move(star, gone),)
+        assert [m.add for m in plain[NEVER].moves] == [star] and gone not in drops(plain[NEVER])
+        for guard, stake in FIELD_PAIRS[1:]:
+            for threshold in (None, NEVER):
+                built, mine, got = seat_on(day, tier, threshold, guard, stake)
+                assert (policy.allowed_of(mine) is None) is (guard == policy.OFF)
+                assert mine.problem is built.problem
+                assert mine.problem.stash_threshold == threshold
+                want = plain[threshold]
+                assert (got.moves, got.held, got.returning) == (
+                    want.moves,
+                    want.held,
+                    want.returning,
+                )
+        if tier != "surrogate":
+            continue
+        knobs = {"season_weight": A_WEIGHT, "stash_threshold": NEVER}
+        a = armed(opponents="mirror", knobs=knobs, guard="off", stake=1)
+        rival = rn.opponents_of(setup, a, 2)[TEAM]
+        assert rival.knobs["stash_threshold"] is None
+        staked = replace(state, stakes={TEAM: 1.0})
+        theirs = rival.decide(setup, staked, TEAM, setup.projection, status, returns, None)
+        assert theirs.moves == plain[None].moves and not theirs.past_guard
+        own = a.seat().decide(setup, staked, TEAM, setup.projection, status, returns, None)
+        assert own.moves == plain[NEVER].moves
+        # Two arms apart only in the threshold face one rival, whatever their guard and stake.
+        none = armed(opponents="mirror", knobs={"season_weight": A_WEIGHT}, guard="off", stake=1)
+        assert rn.opponents_of(setup, none, 2) == rn.opponents_of(setup, a, 2)
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_a_seat_s_names_are_the_engine_s_charge_on_its_own_problem_at_any_guard_and_stake(
+    tier, h2h
+):
+    """The morning a held player comes back (PR G) under this PR's fields, on PR G's made-up
+    days. The names are made on the seat's problem, which neither field touches, with the
+    decided set made: they read no season term, so the split figure a stake puts in force does
+    not reach them but through the set it decides.
+
+    The Tuesday (the keep rule moves the drop): at every pair of the two fields and at any
+    threshold the seat decides no set and names the player the engine's plan charges, the
+    surrogate on a day it does not solve; the morning sends him and the audit is clean.
+
+    The Monday with no threshold: on the block the seat decides no set and names the plan's
+    charge with none made. With the guard off it decides a set the block refuses, the decision
+    carries the mark and the names at once, and the names are the plan's charge with that set
+    made, here the set's own add (PR G's limit 7: he lands after the returns, so the morning
+    falls back to the least valuable active player). The roster is legal and the audit clean."""
+    setup, *rest = return_day(1)
+    tuesday = (of_format(setup, h2h), *rest)
+    _, _, _, _, back, low, nxt = tuesday
+    for guard, stake in FIELD_PAIRS:
+        for threshold in (None, NEVER):
+            built, mine, got = seat_on(tuesday, tier, threshold, guard, stake)
+            assert mine.problem is built.problem
+            figure = policy.StakedFigure if stake else policy.SeasonFigure
+            assert type(policy.season_figure_of(mine)) is figure
+            assert got.moves == () and not got.past_guard
+            assert got.sends == charged(built.problem) == ((back, nxt),)
+            assert got.solves == (0 if tier == "surrogate" else 1)
+            placed, out, status = next_morning(tuesday, got)
+            assert nxt in out.pool and low in out.active(TEAM) and back in out.active(TEAM)
+            assert found(tuesday[0], placed, out, status) == []
+    setup, *rest = return_day(0)
+    monday = (of_format(setup, h2h), *rest)
+    wire = set(monday[1].pool)
+    for stake in (0.0, 1.0):
+        built, _, blocked = seat_on(monday, tier, None, policy.BLOCK, stake)
+        assert blocked.moves == () and blocked.sends == charged(built.problem) == ((back, low),)
+        built, mine, got = seat_on(monday, tier, None, policy.OFF, stake)
+        assert len(got.moves) == 1 and got.past_guard and not policy.guard_of(built)(got.moves)
+        (move,) = got.moves
+        assert move.add in wire
+        assert got.sends == charged(built.problem, got.moves) == ((back, move.add),)
+        placed, out, status = next_morning(monday, got)
+        assert placed.sends == {TEAM: got.sends} and out.sends == {}
+        assert {low, move.drop} <= set(out.pool) and out.forced_by == {TEAM: 1}
+        assert {back, move.add} <= set(out.active(TEAM))
+        assert found(monday[0], placed, out, status) == []
+
+
+#: The crossing's two seasons (seed and path PR G's): the surrogate among mirror rivals where
+#: every add is a claim with a bid and every category counts; the exact tier among market
+#: rivals in the plain one-win league.
+CROSSINGS = (
+    ("surrogate", "mirror", ("categories", "faab", CONTINUOUS, EACH_CATEGORY)),
+    ("exact", "market", ("categories", "none", DROPPED, ONE_WIN)),
+)
+
+
+@pytest.mark.parametrize(("tier", "rivals", "kind"), CROSSINGS, ids=lambda x: str(x))
+def test_a_season_with_a_threshold_under_off_and_under_a_stake_plays_clean(
+    tier, rivals, kind, monkeypatch
+):
+    """The two PRs in one run, in PR G's league with a held slot: a pair whose arms both name a
+    stash threshold, A with the guard off and B with a stake of 1, at a season weight of the
+    size of the league's scale. The audit is clean. Each arm's row ends with the stash count,
+    then the guard's and the stake's, and the command's note says the four; a mirror rival has
+    the stash count and none of this PR's, a market rival neither figure.
+
+    Every decision's names, a rival's too, are the engine's charge on the problem the seat
+    decided on with the decided set made (``moves.comebacks`` asked directly). Under ``off`` a
+    morning takes the seat's name, and on the exact tier a set past the guard is named. Under
+    the stake some decision made on the split figure (a week whose ``L`` is above 0) names a
+    drop with a set made, the set moves the name, and a morning takes one. A mirror rival is
+    made without the threshold, decides on the block with no stake, and names too."""
+    scoring, waivers, rule, h2h = kind
+    setup = of_format(held_league(scoring, waivers, rule), h2h)
+    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *STASH_SEASON)
+    knobs = {"season_weight": scale_weight(setup, w), "stash_threshold": SHARE}
+    a = crossing_arm("A", tier, rivals, knobs, guard="off")
+    b = crossing_arm("B", tier, rivals, knobs, stake=1)
+    made: list[tuple[policy.Built, policy.Decision]] = []
+    real = policy.decide
+
+    def spy(built, *args, **kw):
+        out = real(built, *args, **kw)
+        made.append((built, out))
+        return out
+
+    monkeypatch.setattr(policy, "decide", spy)
+    seen: dict[int, list[rn.DayRecord]] = {0: [], 1: []}
+    got = rn.paired(setup, w, a, b, 1, on_day=lambda r: seen[r.variant].append(r))
+    assert got["breaches"] == []
+    # The counts, side by side.
+    for name in "ab":
+        row = got["counts"][name]
+        assert tuple(row)[-4:] == ct.metrics_in([row])[-4:] == TAIL
+        assert row["returning_dropped"] is not None
+    assert got["counts"]["a"]["sets_past_guard"] >= 1
+    assert got["counts"]["b"]["sets_past_guard"] == 0.0 < got["counts"]["b"]["stake_mean"] <= 1
+    others = got["counts"]["rivals"]
+    assert not set(SEASON_KEYS) & set(others)
+    assert (others["returning_dropped"] is not None) is (rivals == "mirror")
+    key = {"season": 2024, "forecaster": "prior"}
+    task = {"seat": 1, "unprojected": {"a": {}, "b": {}}}
+    block = ss.paired_blocks([key], [{**got, **task}], {"a": a, "b": b}, 1, waivers=waivers)
+    assert tuple(block["counts"]["note"])[-4:] == TAIL
+    assert tuple(block["counts"]["by_season"]["2024"]["prior"]["a"])[-4:] == TAIL
+    in_room = {"scale": {}, "by_arm": {}, "counts": got["counts"], "unprojected": {}}
+    note = ss.room_blocks(
+        [key], [in_room], ["a", "b"], waivers=waivers, counted=rn.counted_of([a, b])
+    )["counts"]["note"]
+    assert tuple(note)[-4:] == TAIL
+    # The names.
+    assert all(d.sends == charged(x.problem, d.moves) for x, d in made)
+    mine = [(x, d) for x, d in made if x.team == 1]
+    off = [(x, d) for x, d in mine if x.guard == policy.OFF]
+    staked = [(x, d) for x, d in mine if x.stake > 0]
+    assert len(off) == len(seen[0]) and len(staked) == len(seen[1])
+    assert len(mine) == len(off) + len(staked)
+    assert any(d.sends for _, d in off) and mornings_named(seen[0])
+    if tier == "exact":
+        assert any(d.past_guard and d.sends for _, d in off)
+    live = [(x, d) for x, d in staked if x.level > 0 and d.moves and d.sends]
+    assert live and all(type(policy.season_figure_of(x)) is policy.StakedFigure for x, _ in live)
+    assert any(d.sends != charged(x.problem) for x, d in live)
+    assert mornings_named(seen[1])
+    # The rivals.
+    theirs = [(x, d) for x, d in made if x.team != 1]
+    if rivals == "market":
+        assert not theirs
+        return
+    assert theirs and not any(d.past_guard for _, d in theirs)
+    assert {(x.guard, x.stake, x.level, x.problem.stash_threshold) for x, _ in theirs} == {
+        (policy.BLOCK, 0.0, 0.0, None)
+    }
+    assert any(mornings_named(seen[v], t) for v in (0, 1) for t in setup.teams if t != 1)
+    none = crossing_arm("N", tier, rivals, {"season_weight": knobs["season_weight"]}, stake=1)
+    assert rn.opponents_of(setup, none, 1) == rn.opponents_of(setup, b, 1)
+
+
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_no_peek_with_a_threshold_the_guard_off_and_a_stake(tier):
+    """Rule 3 for the two PRs together, in PR G's league with a held slot: a seat that names a
+    stash threshold, the guard off and a stake of 1, at a season weight of the league's scale.
+    A second season that agrees with the first through a Thursday and differs after gives the
+    same day records through that day: the state's names and its stake, the decisions' names,
+    their reading and their mark among them. One format (the league's own, one win): what is
+    asked is what the seat could know, not what it weighs."""
+    setup = held_league()
+    lines = recorded_lines(setup, 11)
+    day = setup.start + timedelta(17)
+    assert day.weekday() == 3
+    weight = scale_weight(setup, rn.replay_world(setup, lines, 1, *STASH_SEASON))
+    knobs = {"season_weight": weight, "stash_threshold": SHARE}
+    a = crossing_arm("A", tier, "market", knobs, guard="off", stake=1)
+
+    def records(lines):
+        w = rn.replay_world(setup, lines, 1, *STASH_SEASON)
+        days: list[rn.DayRecord] = []
+        variant = {**{t: op.Market(0.3) for t in setup.teams}, 1: a.seat()}
+        (res,) = rn.simulate(
+            setup,
+            w,
+            [variant],
+            on_day=days.append,
+            stash=rn.stash_named([a]),
+            counted=[rn._counted([a], {1: a})],
+        )
+        assert res.breaches == ()
+        return {(r.day, r.variant): nopeek.digest(r) for r in days}, days
+
+    base, seen = records(lines)
+    through = [r for r in seen if r.day <= day]
+    # The check is of something: by the day the seat has named a drop, read a returning
+    # player, decided a set past the guard and held a stake above 0.
+    assert any(r.state.sends.get(1) for r in through)
+    assert any(r.decisions[1].returning for r in through)
+    assert any(r.decisions[1].past_guard for r in through)
+    assert any(r.state.stakes[1] > 0 for r in through)
+    got, _ = records(nopeek.perturb(lines, rn.game_days_of(setup), day, 5))
+    first = nopeek.first_difference(base, got)
+    assert first is not None and first[0] > day
+    assert all(base[key] == got[key] for key in base if key[0] <= day)
