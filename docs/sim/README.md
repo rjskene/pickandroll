@@ -382,22 +382,30 @@ finite is refused like any knob's (the engine's own check passes a NaN).
 - **The morning a held player comes back.** A seat that plans with the engine (the exact and the
   surrogate tiers, a mirror rival) names who leaves, and the world checks it. Its decision
   carries, for each of its held players the three weeks' plan brings back, the player the plan
-  drops for him then (`policy.sends_of`: `moves.comebacks` on the seat's own problem with the
-  decided set made, so the keep rule, which never sends a kept player while another can go, and
-  the threshold, which leaves a returning player it keeps out of the choice while another can
-  go, `moves.guarded_pool`, are the seat's own; nothing of either is written in the simulator).
+  drops for him then (`policy.sends_of`: `moves.comebacks` on the seat's own problem with what
+  the seat queues that night made, so the keep rule, which never sends a kept player while
+  another can go, and the threshold, which leaves a returning player it keeps out of the choice
+  while another can go, `moves.guarded_pool`, are the seat's own; nothing of either is written
+  in the simulator).
   The names live one night on the state (`SimState.sends`). The morning (`policy.arrive`) takes a
   team's named player when its held player's status has cleared, its active roster is over the
   spots and the named player is still one of its active players (the returning player himself,
   when the plan named him); with no name, or one who is not on the roster (he has left, or he
-  is the set's own add, who lands after the returns), and for every seat that names none (a
+  is a queued move's own add, who lands after the returns), and for every seat that names none (a
   static, a market or a ranking seat), the rule before PR G: the least valuable active player
   by the day's values. The roster is legal either way and the audit holds it to the same
   rules. The surrogate names on every day, its solve days or not (it builds its problem every
   day; no solve is added), since a player comes back on any morning.
-  The names are made with the whole decided set made and nothing else: not what the day's cap
-  or the week's adds then leave of it in the queue, and not the week plan's steps an arm that
-  executes its plan queues beside it (limits, item 7, says what follows from each).
+  The names are made with what the seat means to queue that night made (PR E's refit of the
+  names): the decided set's moves; with them, for an arm that executes its plan, the plan's
+  steps due (a step dated tomorrow, or in a waiver league by its add's clear date,
+  `policy.due_by`'s rule); or, under the queue's rule on a day a plan leads, that plan's steps
+  due and nothing of the set, which is not queued. It is one rule, written once where the queue
+  is gathered: `policy.gathered` is the list the executor queues from, and `policy.named` makes
+  the names with it. The engine's charge leaves a dropped player out, so a named player is
+  never the drop of a move queued for the same morning. The list is what the seat means to
+  queue, not what the day's cap, the week's adds or the claim rules then leave of it (limits,
+  item 7, says what follows, and the one case the refit leaves).
 - **Whose date.** The engine dates a return by its own reading (an `O` is back next Monday, or
   on his return date when later); the world brings him back the morning after his told date. So
   the seat names every held player its plan charges inside the three weeks, whatever day the plan
@@ -534,6 +542,23 @@ due (dated tomorrow, or in a waiver league by the add's clear date) and nothing 
 step dated later waits, the state carries no plan, and the next day's queue is made of the next
 day's own decision. The caps are the executor's, as for any move.
 
+**Who leaves when a held player comes back.** The seat names him (PR G, **The stash threshold
+and the morning a held player comes back**), with what it queues that night made. On a day a
+plan leads that is the plan's steps due and nothing of the set, which is not queued; on a day
+none leads, the set's moves. An arm that executes its streaming plan beside its set
+(`execute_plan` under `three` or `weighted`) names with the set's moves and the plan's steps due
+made. It is one rule for both, written once where the queue is gathered: `policy.gathered` is the
+list the executor queues from, by `policy.due_by`'s reading of the day a step is due, and
+`policy.named` makes the names with that list by the engine's own charge (`moves.comebacks`; no
+rule of the engine is written again). A decision carries the names for an arm that queues its
+plan's steps and for one that does not, and the executor keeps the ones that match what it
+queues. So a named player is never the drop of a move queued for the same morning: the step
+lands on the roster it was planned on, where PR G's names, made with the set alone, could send a
+queued step's own drop. One case stays a limit (limits, item 7): when the engine's plan, with
+the queue made, charges a queued move's own add, he has not arrived when the held player returns
+(the adds land after the returns), so the morning falls to the rule before, the least valuable
+active player. No rule of the seat's own is written for it.
+
 **The floor** is the engine's (`plans.gate_floor`): the knob of the league's kind
 (`plan_floor_cats` where every category counts, `plan_floor_points` in a points league), in a
 one-win league the engine's own floor in the matchup's odds, and in a playoff week its playoff
@@ -583,7 +608,8 @@ What the rule does not mirror, each plainly:
 4. **The season tie-break** live hands its recommended sets is not passed, as for `three`.
 5. **The activation's choice.** Live chooses whom a cleared player's activation drops on the
    queue's own score (`moves.choose_activation`); the simulator's executor has its return rule
-   and plays no such choice, on any tier.
+   (the player the seat named with its queue made, above, else the least valuable) and plays
+   no such choice, on any tier.
 6. **A step that waits.** Live holds a step that does not stand without an earlier step not yet
    queued (`plans.waits_on`). The simulator queues every due step in the plan's order under its
    caps; a step whose drop is not there the morning it lands is gone, and counted.
@@ -1377,8 +1403,9 @@ What a replay with them does not model, each plainly:
    comes back over the spots, the player who leaves is the one the seat's plan charged
    (`policy.sends_of`, `moves.comebacks` on the seat's problem), checked by the world
    (`policy.arrive`): the keep rule and the stash threshold reach the morning through the seat's
-   choice, and in the plain case (the whole set queued, no plan step beside it, the charged
-   player on the roster) the seat's queue lands on the roster it was planned on. A seat that
+   choice, and in the plain case (everything the seat means to queue is queued, the set's
+   moves and the plan's steps due alike since PR E, and the charged player is on the roster)
+   the seat's queue lands on the roster it was planned on. A seat that
    names none (a static, a market or a ranking seat), and a name that is not on the roster, get
    the rule before: the least valuable active player by the day's per-game values, him included,
    a tie broken by the id as text as the engine breaks it. Still not seen, each plainly:
@@ -1393,23 +1420,18 @@ What a replay with them does not model, each plainly:
      his told date. The name is used on the world's morning, whatever day the plan gave it;
    - **an add with no drop queued for the morning a held player comes back** meets the morning's
      order: he takes the open spot first and the add is gone;
-   - **the plan can charge the set's own add**, who is on the roster the plan weighs and not on
-     the one the morning finds (the adds land after the returns): the name is then not on the
-     roster, the rule before applies, and another player leaves than the plan charged;
-   - **the queue can land less than the set.** The names are made with the whole decided set
-     made; the queue keeps what the day's cap and the week's adds allow. On a day the cap cuts
-     the set the name is the engine's charge on a roster the morning does not find (it can be
-     the returning player himself, where with the queued moves alone another would go);
-   - **a plan step queued beside the set.** For an arm that executes its week plan the names are
-     still made with the set alone, and both the plan and the charge pick among the players the
-     keep rule does not keep. So a name can be the drop of a plan step queued for the same
-     morning: he leaves as the forced drop and the step finds its drop gone (counted in `gone`),
-     where the rule before sent the least valuable player and landed the step when he was
-     another. When, with the step made, the engine's plan charges the step's own add (who would
-     come and go), the roster the morning leaves is the one that plan charges, by a move that
-     is not made; when it charges a third player, that player stays and the add does not come.
-     PR E, which builds what the exact tier queues, is to make the names with what the seat
-     queues that morning made;
+   - **the plan can charge a queued move's own add** (the set's, or a plan step's for an arm
+     that executes its plan or takes the queue's rule), who is on the roster the plan weighs
+     and not on the one the morning finds (the adds land after the returns). He has not
+     arrived when the held player returns, so the name is not on the roster and the morning
+     falls to the rule before: the least valuable active player leaves, who may be another
+     than the plan charged, and may be a queued move's drop (that move then finds its drop
+     gone, counted in `gone`). No rule of the seat's own is written for it;
+   - **the queue can land less than the seat meant.** The names are made with everything the
+     seat means to queue made; the queue keeps what the day's cap, the week's adds and the
+     claim rules allow. On a day they cut the list the name is the engine's charge on a roster
+     the morning does not find (it can be the returning player himself, where with the queued
+     moves alone another would go);
    - **the season's last week**: no `O` is named there ("Whose date", above), so a held player
      told back in it comes back to the rule before.
 

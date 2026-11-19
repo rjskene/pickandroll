@@ -95,9 +95,13 @@ brings back, the drop the plan charges (:func:`sends_of`, ``moves.comebacks`` on
 problem, so the keep rule and the threshold are the seat's), the state keeps the names one night
 (``SimState.sends``), and :func:`arrive` takes a named player who is still active when the roster
 is over its spots; with no name, or one who is not on the roster, the least valuable active player
-leaves, as before. The world reads neither the knob nor the keep rule. The day's choice of an
-activation's drop (``moves.choose_activation``, #360) is not made here: no problem a seat decides
-on holds a cleared player.
+leaves, as before. The world reads neither the knob nor the keep rule. The names are made with
+what the seat queues that night made (PR E, :func:`named`): the set's moves, with the plan's
+steps due for an arm that executes its plan, or a leading plan's steps due under the queue's
+rule. What is queued is gathered in one place (:func:`gathered`), which the executor and the
+names both read, so a named player is never the drop of a move queued for the same morning. The
+day's choice of an activation's drop (``moves.choose_activation``, #360) is not made here: no
+problem a seat decides on holds a cleared player.
 
 **The queue's rule** (PR E, an exact arm that executes ``queue``). The live queue does not simply
 take the three weeks' set: it also draws the week plans and takes a plan when it beats the set
@@ -402,8 +406,10 @@ class Decision:
     #: holds no gain in the engine's units (ranking), whose claims bid $0.
     basis: Basis | None = None
     #: Whom each of the seat's held players sends when he comes back (PR G, :func:`sends_of`):
-    #: (the held player, the drop the engine's plan charges him), by player. Only a seat that
-    #: plans with the engine names any (the exact and the surrogate tiers, a mirror rival).
+    #: (the held player, the drop the engine's plan charges him), by player, with what the seat
+    #: queues tonight made (:func:`named`, PR E): the set's moves, or the steps due of a plan
+    #: that leads. Only a seat that plans with the engine names any (the exact and the surrogate
+    #: tiers, a mirror rival).
     sends: tuple[tuple[int, int], ...] = ()
     #: The seat's players the engine read as returning on the day (PR G, :func:`returning_of`),
     #: for the count of those it then drops; a tier's decision made by :func:`decide` has it.
@@ -414,6 +420,11 @@ class Decision:
     #: three weeks' set, the day's recommended moves (the record's, and the fortnight's typical
     #: gain's, as live's). False everywhere else.
     plan_leads: bool = False
+    #: ``sends`` for an arm that executes its plan beside the set (PR E, :func:`named`): the
+    #: names with the set's moves and the plan's steps due tonight made. None where no plan
+    #: stands beside the set (none drawn, or the plan leads and ``sends`` is its own). The
+    #: executor keeps the one that matches what it queues (:func:`queue`).
+    plan_sends: tuple[tuple[int, int], ...] | None = None
 
 
 NONE = Decision()
@@ -444,9 +455,11 @@ def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tu
     is a later week. The week's pass adds to it in the season's last week alone, where there is
     none, and only a held player the engine reads as back inside the week (a ``GTD`` in an
     ``IL+`` slot): an ``O`` is out for the rest of the week to the engine, so in the last week
-    its plan charges nobody for him and he is not named (the README's limits). ``moves`` is the
-    decided set, whole: not what the queue then keeps of it within the day's cap and the week's
-    adds, and not the week plan's steps an arm that executes its plan queues beside it."""
+    its plan charges nobody for him and he is not named (the README's limits). ``moves`` is
+    what the seat means to queue tonight, whole (:func:`named`: the set's moves and the plan's
+    steps due that go with them or instead of them), not what the queue then keeps of it within
+    the day's cap, the week's adds and the claim rules. A player those moves drop is never
+    charged; one of their adds can be (the README's limits)."""
     held = {k for k, _ in problem.held}
     if not held:
         return ()
@@ -456,6 +469,64 @@ def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tu
             if c.player in held:
                 out.setdefault(c.player, c.drop)
     return tuple(sorted(out.items()))
+
+
+def gathered(
+    decision: Decision, execute_plan: bool, due: Callable[[int], date]
+) -> tuple[list[mv.Move], list[tuple[mv.Move, int]]]:
+    """What a seat means to queue tonight of ``decision`` (#172, PR E), before the day's cap,
+    the week's adds and the claim rules cut it: the set's moves in order, none when a plan leads
+    (the queue's rule queues the plan instead of the set); and the plan's steps due, each with
+    its place in the plan, when the arm executes its plan (``execute_plan``) or the plan leads:
+    a step dated at or before ``due`` of its add, the latest day a step of that add may be dated
+    to be queued today (:func:`due_by`). The one place the queue's moves are gathered: the
+    executor queues from it (:func:`queue`), and the names of who leaves when a held player
+    comes back are made with it (:func:`named`), so both read one list."""
+    moves = [] if decision.plan_leads else list(decision.moves)
+    steps: list[tuple[mv.Move, int]] = []
+    if execute_plan or decision.plan_leads:
+        steps = [
+            (m, j) for j, m in enumerate(decision.plan) if m.day is None or m.day <= due(m.add)
+        ]
+    return moves, steps
+
+
+def due_on(problem: mv.MoveProblem) -> Callable[[int], date]:
+    """:func:`due_by` as the seat's problem holds it: each candidate's effective day
+    (``MoveProblem.effective``, which :func:`problem_of` sets by the same reading of the state
+    the executor then queues on: tomorrow, or his clear date when he is on waivers and it is
+    later). What :func:`named` hands :func:`gathered`, where the executor hands it the state's."""
+    tomorrow = problem.first_day + LANDS_AFTER
+    return lambda add: problem.effective.get(add, tomorrow)
+
+
+def named(problem: mv.MoveProblem, decision: Decision) -> Decision:
+    """``decision`` with the names of who leaves when one of the seat's held players comes back
+    (PR G, :func:`sends_of`), made with what the seat queues tonight made (PR E, the refit of
+    PR G's names): the one rule for every seat that plans with the engine, written here and
+    read off :func:`gathered`, the list the executor queues from.
+
+    - ``sends``: with the set's moves made, what an arm that does not execute a plan beside its
+      set queues; or, under the queue's rule when a plan leads, with that plan's steps due made
+      and none of the set's, since the plan is queued instead of the set.
+    - ``plan_sends``: for an arm that executes its plan beside the set, with the set's moves
+      and the plan's steps due made. None where no plan stands beside the set.
+
+    A step dated later is queued on a later day and named with then. So a named player is never
+    the drop of a move the seat queues for the same morning (the engine's charge leaves a
+    dropped player out). He can be one of those moves' own adds, who has not arrived when the
+    held player comes back: the morning then falls to the rule before (:func:`_activate`), and
+    no rule of the seat's own is written for it (the README's limits)."""
+    if not problem.held:
+        return decision
+    due = due_on(problem)
+
+    def of(execute_plan: bool) -> tuple[tuple[int, int], ...]:
+        moves, steps = gathered(decision, execute_plan, due)
+        return sends_of(problem, [*moves, *(m for m, _ in steps)])
+
+    beside = bool(decision.plan) and not decision.plan_leads
+    return replace(decision, sends=of(False), plan_sends=of(True) if beside else None)
 
 
 def gains_of(ev: mv.Valued, key: str, moves: Sequence[mv.Move]) -> tuple[float, ...]:
@@ -992,7 +1063,7 @@ def exact(
             plan, taken = planned.steps, planned
         solves += 1
     basis = basis_of(built, ev, moves, taken)
-    return Decision(tuple(moves), held, plan, solves, "exact", basis, sends_of(p, moves))
+    return named(p, Decision(tuple(moves), held, plan, solves, "exact", basis))
 
 
 # --------------------------------------------------------------------------- the queue's rule
@@ -1103,7 +1174,8 @@ def queue_rule(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
     basis = three.basis
     if basis is not None:
         basis = replace(basis, plan=step_bids(chosen, drawn.weight))
-    return Decision(three.moves, held, steps, solves, "exact", basis, three.sends, plan_leads=True)
+    led = Decision(three.moves, held, steps, solves, "exact", basis, plan_leads=True)
+    return named(built.problem, led)
 
 
 def _games(built: Built, member: mv.Member, from_day: date) -> int:
@@ -1141,7 +1213,7 @@ def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
     )
     basis = basis_of(built, plain, moves)
     held = tuple(mv.held_used(p, moves))
-    return Decision(tuple(moves), held, (), 1, "surrogate", basis, sends_of(p, moves))
+    return named(p, Decision(tuple(moves), held, (), 1, "surrogate", basis))
 
 
 def ranking(built: Built) -> Decision:
@@ -1213,7 +1285,7 @@ def _decide(
         return exact(built, executes, with_plan, fields)
     if tier == "surrogate":
         if built.problem.first_day.weekday() not in fields.surrogate_days:
-            return Decision(source="surrogate", sends=sends_of(built.problem))
+            return named(built.problem, Decision(source="surrogate"))
         return surrogate(built, fields)
     if tier == "ranking":
         return ranking(built)
@@ -1598,7 +1670,10 @@ def queue(
     setup: Setup | None = None,
 ) -> SimState:
     """The moves of ``decision`` that may land tomorrow, within the day's cap and the week's
-    adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans.
+    adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans
+    (:func:`gathered`, the one place they are gathered; the names of who leaves when a held
+    player comes back were made with the same list, :func:`named`, and the ones that match
+    ``execute_plan`` are kept for the morning).
     Under the queue's rule (PR E) a plan that leads (``decision.plan_leads``) is queued instead
     of the set: its steps due tomorrow (:func:`due_by`), in the plan's order, and none of the
     set's moves, whatever ``execute_plan``; a later step is not queued early, and the seat draws
@@ -1634,21 +1709,17 @@ def queue(
     nobody dropped lately it clears tomorrow, on a dropped player on his clear date, by the same
     rules; nothing is queued to land as a free agent."""
     tomorrow = state.day + timedelta(1)
-    moves = list(decision.moves)
+    # What the seat means to queue (:func:`gathered`): under the queue's rule a leading plan's
+    # steps and none of the set's moves. The set's gains stay the day's recommended moves' for
+    # the fortnight's typical gain (below).
+    moves, due = gathered(decision, execute_plan, lambda add: due_by(state, add, tomorrow))
     basis = decision.basis if setup is not None and setup.bidding else None
-    scaled = list(basis.gains) if basis is not None else [0.0] * len(moves)
-    if decision.plan_leads:
-        # The queue's rule: the plan's steps are queued, not the set's moves. The set's gains
-        # stay the day's recommended moves' for the fortnight's typical gain (below).
-        moves, scaled = [], []
-    if execute_plan or decision.plan_leads:
-        due = [
-            (m, j)
-            for j, m in enumerate(decision.plan)
-            if m.day is None or m.day <= due_by(state, m.add, tomorrow)
-        ]
-        moves += [m for m, _ in due]
-        scaled += [basis.plan[j] if basis is not None and basis.plan else 0.0 for _, j in due]
+    if basis is None or decision.plan_leads:
+        scaled = [0.0] * len(moves)
+    else:
+        scaled = list(basis.gains)
+    moves += [m for m, _ in due]
+    scaled += [basis.plan[j] if basis is not None and basis.plan else 0.0 for _, j in due]
     waiting = setup is not None and setup.waiting
     continuous = setup is not None and setup.continuous
     used = int(state.adds_used.get(team, 0))
@@ -1748,10 +1819,15 @@ def queue(
         placed.append(Claim(mv.Move(m.add, m.drop), state.day, clears, number, (), churn, bid(i)))
     pending = dict(state.pending)
     pending[team] = tuple(kept)
-    # Whom the seat's returning held players send (PR G), for tomorrow morning alone.
+    # Whom the seat's returning held players send (PR G), for tomorrow morning alone: the
+    # names made with what was gathered above made (:func:`named`, PR E), the plan's steps
+    # beside the set when the arm executes its plan.
+    names = decision.sends
+    if execute_plan and decision.plan_sends is not None:
+        names = decision.plan_sends
     sends = {t: x for t, x in state.sends.items() if t != team}
-    if decision.sends:
-        sends[team] = decision.sends
+    if names:
+        sends[team] = names
     need = sum(1 for m in kept if m.drop is None or m.drop in held_keys)
     free = 0
     if spots is not None:
@@ -1815,8 +1891,10 @@ def _activate(
     none (a static, a market or a ranking seat), the rule before PR G: the least valuable active
     player by ``value`` leaves, the returning player included, a tie broken as the engine breaks
     it. The world reads no knob and no keep rule here: both reach the morning only through the
-    seat's own choice. It does not read the team's queue either: a named player a move queued
-    for this morning also drops leaves here, and that move then finds its drop gone
+    seat's own choice. It does not read the team's queue either, and need not for a named
+    player: the names are made with the queue made (:func:`named`, PR E), so none is the drop
+    of a move queued for this morning. The rule before is blind to the queue as it always was:
+    the player it sends can be a queued move's drop, and that move then finds its drop gone
     (:func:`land`). The players who left."""
     back: list[int] = []
     for i, (k, slot) in enumerate(roster):
