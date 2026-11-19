@@ -972,7 +972,9 @@ class SeasonService:
             if older is None or older[0][3] != today:
                 budget = season_queue.moves_budget_s(self.data_dir)
                 return {"solving": {"reason": SOLVING_REASON, "budget_s": budget}}
-            inputs = max((ns for _, ns in stamp), default=None)
+            # The newest input file's time: the stamp's file entries only, never the open claims'
+            # entry (#360), whose second half is the claims, not a time (#438).
+            inputs = max((ns for _, ns in stamp if isinstance(ns, int)), default=None)
             stale = {
                 "built_at": _iso(self._moves_at.get(older[0])),
                 "inputs_at": None
