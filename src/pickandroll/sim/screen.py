@@ -10,7 +10,8 @@ This module is the list and the rules, and touches no file:
   the PR that builds it; no flag invents a nudge.
 - :func:`rows_of`, the pairs a baseline arm gives: for each lever, arm A is the baseline on the
   cheapest tier that reads the lever, set to whatever else makes it read, and arm B is A with the
-  one nudge. A lever the run's league does not read (``policy.reads``, ``policy.field_reads``) is
+  one nudge. A lever the run's league does not read (``policy.reads``, ``policy.field_reads``,
+  and for the guard and the stake ``policy.season_reads``) is
   listed with the reason and not played; a nudge the knob's own bounds refuse, or the grid has no
   step for, is listed and not played; a nudge equal to the baseline's value is refused by name.
 - :func:`result_of`, what a played pair's figures say: the paired difference on the measure the
@@ -248,6 +249,17 @@ def _blend(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step
     )
 
 
+def _guard(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    return (Step("off", "to off", {"guard": policy.OFF}),)
+
+
+def _stake(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    return (
+        Step("0.5", "to 0.5", {"stake": 0.5}),
+        Step("1", "to 1", {"stake": 1.0}),
+    )
+
+
 #: The list (Rule 2: written before any result), one row a lever, in the order the table prints.
 #: A floor's step is the Monday step's own grid: the protection floor's a game by scoring
 #: (``FLOOR_STEP``), a plan floor's times and divided by :data:`PLAN_STEP`, never above
@@ -334,6 +346,10 @@ LEVERS: tuple[Lever, ...] = (
         _plain(_system),
     ),
     Lever("blend", "surrogate", "to 0.25 and to 0.75", _blend, "system blend"),
+    # The guard PR's two: the season guard off, and the stake (read only where the baseline has
+    # a season weight to scale, in a league whose bracket is read).
+    Lever("guard", "surrogate", "the block to off", _plain(_guard)),
+    Lever("stake", "surrogate", "to 0.5 and to 1", _plain(_stake)),
 )
 #: The levers' names, in the list's order.
 NAMES: tuple[str, ...] = tuple(lever.name for lever in LEVERS)
@@ -377,7 +393,10 @@ def shown(value: Any) -> str:
 def read_why(name: str, arm: rn.Arm, shapes: Sequence[policy.Shape]) -> str | None:
     """Why the run's league does not read lever ``name`` on ``arm`` in any of ``shapes``; None
     when it does in one. A knob and a field by the reads table (``policy.reads``,
-    ``policy.field_reads``; a mirror's rivals read what the surrogate reads). The three spec
+    ``policy.field_reads``; a mirror's rivals read what the surrogate reads). The guard and the
+    stake by theirs (``policy.season_reads``); the stake must be read in every shape, since an
+    arm with a stake is refused in a run that holds a league whose bracket is not read. The
+    three spec
     keys by what they are: ``executes`` is read on the exact tier; a week plan only recorded
     changes no season, so ``with_plan`` is read only by an arm that executes the plan and
     ``execute_plan`` only by one that draws it."""
@@ -386,6 +405,11 @@ def read_why(name: str, arm: rn.Arm, shapes: Sequence[policy.Shape]) -> str | No
         whys = [policy.reads(arm, shape, mirror)[name] for shape in shapes]
     elif name in policy.FIELDS:
         whys = [policy.field_reads(arm, mirror)[name]]
+    elif name in policy.SEASON_FIELDS:
+        whys = [policy.season_reads(arm, shape)[name] for shape in shapes]
+        unread = [w for w in whys if w != policy.READ]
+        if name == "stake" and unread:
+            return unread[0]
     elif arm.tier != "exact":
         whys = [f"only the exact tier reads {name}"]
     elif name == "with_plan" and not arm.execute_plan:

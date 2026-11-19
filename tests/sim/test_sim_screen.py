@@ -55,7 +55,7 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
     return (
         {k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]}
         | {f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)}
-        | {k for k in ARM_KEYS if getattr(a, k) != getattr(b, k)}
+        | {k for k in (*ARM_KEYS, *policy.SEASON_FIELDS) if getattr(a, k) != getattr(b, k)}
     )
 
 
@@ -80,6 +80,8 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "execute_plan",
         "system",
         "blend",
+        "guard",
+        "stake",
     )
     exact = {lever.name for lever in sc.LEVERS if lever.tier == "exact"}
     assert exact == {
