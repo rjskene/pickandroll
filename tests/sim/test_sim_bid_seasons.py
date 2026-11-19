@@ -239,10 +239,9 @@ def test_the_screen_s_week_pair_and_its_season_pair_part_from_the_seat_s_tenth_m
     less, which counts nothing). From the tenth move each values the claim on its own horizon's
     gain over its own typical, and the two part: the two rows are two levers.
 
-    (The screen's command does not show this on its tests' small league of three weeks: on
-    the three seeds tried in both formats its seat placed six claims at most, short of a tenth
-    move, so its ``bid.week`` pair and its ``bid.season`` pair differed by a gain's sign in the
-    value won, or in nothing.)"""
+    (In the command's small league of three weeks the two pairs part on a found path too,
+    ``test_sim_screen_run.py``; there the seat's ten moves are inside one fortnight, which the
+    live rule's fortnight reads as well. The last ten moves past a fortnight are this test's.)"""
     spec = {
         "name": "U",
         "tier": "surrogate",

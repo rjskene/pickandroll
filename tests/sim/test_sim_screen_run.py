@@ -735,6 +735,40 @@ def test_a_bid_lever_s_pair_is_played_by_faab_and_is_the_same_pair_run_by_replay
     assert f"bid policy, arm B (B:bid.routine-flipped): {bp.of({'routine': 1}).label()}" in out
 
 
+@pytest.mark.parametrize("h2h", [ONE_WIN, EACH_CATEGORY])
+def test_the_bid_s_week_pair_and_its_season_pair_part_by_a_size_on_a_found_path(data: Path, h2h):
+    """The screen's ``bid.week`` row and its ``bid.season`` row are two levers in the command
+    (the lead's ask of 2026-11-19), on a found path: seed 7, where the seat of one path
+    recommends ten moves early and so reads a size on each horizon. On this file's own seed 5
+    it never makes a tenth move, and the two pairs part by a gain's sign at most.
+
+    Arm A is the baseline in both pairs and plays one season. The two arms B, one step up on
+    the week and one on the season, win as many claims at the same dollars and value them
+    apart, by no whole number of steps: before a seat's tenth move the two weights part by one
+    step for each claim whose gain has another sign on the two horizons, and by nothing else,
+    so a part of a step is a size read.
+
+    Here the seat's ten moves are inside one fortnight, which the live rule's fortnight reads
+    too; a seat's last ten moves past a fortnight are ``test_sim_bid_seasons.py``'s."""
+    flags = ("--waivers", "faab", "--waiver-rule", "continuous", "--h2h", h2h, "--seed", "7")
+    name = f"bid-weights-{h2h}"
+    code, out = screen(data, *flags, levers=("bid.week", "bid.season"), name=name)
+    assert code == 0, out
+    rows = rows_of(record(data, name))
+    assert [rows[f"bid.{k}-down"]["status"] for k in ("week", "season")] == [sc.NOT_PLAYED] * 2
+    week, season = (
+        rows[f"bid.{k}-up"]["result"]["cells"]["2024"]["prior"]["counts"]
+        for k in ("week", "season")
+    )
+    assert week["a"] == season["a"]
+    for key in ("claims_won", "dollars_spent"):
+        assert week["b"][key] == season["b"][key] and week["b"][key]["mean"] > 0
+    paths = 2
+    apart = week["b"]["value_won"]["mean"] - season["b"]["value_won"]["mean"]
+    steps = apart * paths / sc.WEIGHT_STEP
+    assert abs(steps - round(steps)) > 0.05, apart
+
+
 def test_a_bid_lever_is_listed_and_not_played_where_waivers_carry_no_bid(data: Path):
     """By priority a ``bid`` is read by nobody: each of its levers is one row, not read here,
     with the block's own reason, and the list has no pair to play."""
