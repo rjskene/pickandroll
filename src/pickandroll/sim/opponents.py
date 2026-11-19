@@ -41,7 +41,10 @@ OUT = wk.OUT_ALL | wk.OUT_THIS_WEEK
 
 
 class Strategy(Protocol):
-    """What a seat does on a day: a decision from the problem's inputs."""
+    """What a seat does on a day: a decision from the problem's inputs. A strategy whose
+    decision reads the value of this week says so (``reads_week``, PR bracket: a :class:`Seat`
+    that ``policy.reads_week``); the runner then keys its decisions on the team's week view
+    too. One that does not say is keyed on the state alone, as every rival here is."""
 
     kind: str
 
@@ -232,6 +235,12 @@ class Seat:
     fields: policy.Fields = policy.DEFAULT_FIELDS
     forecaster: str | None = None
     kind: str = "seat"
+
+    @property
+    def reads_week(self) -> bool:
+        """Whether this seat's decision reads the week's opponent and totals so far
+        (``policy.reads_week``): the runner's decision cache then keys on them (PR bracket)."""
+        return policy.reads_week(self.tier, self.executes, self.with_plan)
 
     def decide(
         self,

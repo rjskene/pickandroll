@@ -93,7 +93,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from statistics import median
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from . import bids
 from .engine import (
@@ -482,6 +482,42 @@ def opponent_of(setup: Setup, state: SimState, me: int, week: int) -> int | None
     return next((b if a == me else a for a, b in pairs if me in (a, b)), None)
 
 
+class WeekView(NamedTuple):
+    """What a team's problem reads of this week beyond ``SimState.key()`` (:func:`week_view`):
+    its opponent, and each side's totals so far this week as the week's span takes them (a
+    points league's as its score). ``so_far_theirs`` is None with no opponent. It is hashable:
+    the runner's decision cache keys a strategy that reads the week on it."""
+
+    opponent: int | None
+    so_far: tuple[tuple[str, float], ...]
+    so_far_theirs: tuple[tuple[str, float], ...] | None
+
+
+def week_view(setup: Setup, state: SimState, me: int, week: int) -> WeekView:
+    """``me``'s view of ``week`` on ``state``: whom it plays (:func:`opponent_of`) and both
+    sides' totals so far. The one source of the week's opponent and totals: :func:`problem_of`
+    builds the week's span from it, and the runner's decision cache keys on it for a strategy
+    that reads the week (:func:`reads_week`), so a decision is never shared across two views
+    the problem tells apart, a round's pairs included."""
+    points = dict(setup.points) if setup.scoring == "points" and setup.points else None
+
+    def so_far_of(team: int) -> tuple[tuple[str, float], ...]:
+        totals = dict(state.totals.get(week, {}).get(team, {}))
+        return tuple(({wk.FPTS: fpts(totals, points)} if points else totals).items())
+
+    other = opponent_of(setup, state, me, week)
+    return WeekView(other, so_far_of(me), so_far_of(other) if other is not None else None)
+
+
+def reads_week(tier: str, executes: str = QUEUE_SET, with_plan: bool = True) -> bool:
+    """Whether a seat's decision reads the value of this week, so its opponent and the week's
+    totals so far (:func:`week_view`): the exact tier when it executes the weighted set or
+    draws the week's plan (:func:`exact`). The surrogate, the ranking and the exact tier's
+    recommended set on the three weeks search no week: their decisions are the same whatever
+    the view (held by behaviour, ``tests/sim/test_sim_bracket_run.py``)."""
+    return tier == "exact" and (executes == WEIGHTED or with_plan)
+
+
 def problem_of(
     setup: Setup,
     state: SimState,
@@ -493,10 +529,10 @@ def problem_of(
     weeks_ahead: int = WEEKS_AHEAD,
 ) -> Built | None:
     """The move problem for ``me`` on ``state.day``; None with no week left. Mirrors
-    ``api.season_moves.build`` from in-memory inputs. This week is played against
-    :func:`opponent_of`: the pairing's opponent, or in a round of the bracket the round's (PR
-    bracket), projected on the same beliefs from its active roster with both sides' totals so
-    far, and against nobody for a team in no pair. Every later week is against the whole field,
+    ``api.season_moves.build`` from in-memory inputs. This week is read through
+    :func:`week_view`: against the pairing's opponent, or in a round of the bracket the round's
+    (PR bracket), projected on the same beliefs from its active roster with both sides' totals
+    so far, and against nobody for a team in no pair. Every later week is against the whole field,
     a bracket week too, as the live route builds them."""
     knobs = check_knobs(knobs)
     day = state.day
@@ -524,17 +560,14 @@ def problem_of(
             members, beliefs, days, setup.schedule, slots, value, this_week, points=points
         )
 
-    def so_far_of(team: int) -> dict[str, float]:
-        totals = dict(state.totals.get(this.number, {}).get(team, {}))
-        return {wk.FPTS: fpts(totals, points)} if points else totals
-
-    other = opponent_of(setup, state, me, this.number)
+    view = week_view(setup, state, me, this.number)
+    other = view.opponent
     week_span = mv.WeekSpan(
         tuple(days0),
         True,
         (project(other, days0, True),) if other is not None else (),
-        so_far_of(me),
-        (so_far_of(other),) if other is not None else (),
+        dict(view.so_far),
+        (dict(view.so_far_theirs),) if view.so_far_theirs is not None else (),
         None,
     )
     field_teams = [t for t in setup.teams if t != me]

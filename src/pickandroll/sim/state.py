@@ -305,10 +305,10 @@ class SimState:
         """What a decision depends on: two arms with the same key share one solve. In a waiver
         league also who is on waivers until when, the claims placed and the churns' held drops
         due (#172, PR Fa); the priority is read by no decision. The round's pairs (``seeded``,
-        PR bracket) are left out as the week's totals are: a static, a market and a mirror
-        rival, the strategies two variants hold alike in one seat, do not decide on the week's
-        opponent, and with the pairs in the key two variants that seed different pairs would
-        stop sharing their rivals' decisions."""
+        PR bracket) are left out as the week's totals are: a rival's decision reads neither,
+        and with them in the key two variants that seed different pairs would stop sharing
+        their rivals' decisions. A strategy that does read the week is keyed on its team's view
+        of it besides (``run.decision_key``, ``policy.week_view``)."""
         base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),

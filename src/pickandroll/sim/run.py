@@ -662,6 +662,27 @@ class _Tables:
         return self._mixed[key]
 
 
+def decision_key(
+    setup: Setup, state: SimState, team: int, strat: op.Strategy, week: int
+) -> tuple[Any, ...]:
+    """What two variants must hold alike on a day to share ``team``'s decision: the team, the
+    strategy in its seat (its ``repr``) and ``SimState.key()``; and for a strategy that reads
+    the week (``reads_week``: a seat on the exact tier that executes the weighted set or draws
+    a plan), the team's view of the week too (``policy.week_view``: its opponent, a round's
+    included, and both sides' totals so far), which the state's key does not hold (PR bracket).
+    Before it, two arms of one name apart only in their rivals or in ``execute_plan`` held one
+    ``repr`` in the seat, and once their states agreed again one variant was handed the decision
+    made on the other's week. Every other strategy's key is as it was: its decision is the same
+    whatever the view."""
+    view = policy.week_view(setup, state, team, week) if _reads_week(strat) else None
+    return (team, repr(strat), state.key(), view)
+
+
+def _reads_week(strat: op.Strategy) -> bool:
+    """A strategy that does not say (a rival, a test's double) does not read the week."""
+    return bool(getattr(strat, "reads_week", False))
+
+
 def simulate(
     setup: Setup,
     w: World,
@@ -762,7 +783,7 @@ def simulate(
                 strat = variants[vi].get(team)
                 if strat is None or strat.kind == "static":
                     continue
-                key = (team, repr(strat), state.key())
+                key = decision_key(setup, state, team, strat, week.number)
                 if key in cache:
                     decision = cache[key]
                     shared[vi] += decision.solves
