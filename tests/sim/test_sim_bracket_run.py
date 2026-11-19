@@ -447,6 +447,79 @@ def test_it_bites_a_finalist_that_weighs_the_week_queues_on_its_opponent_in_the_
     assert bit, "no finalist queued differently in the final than with the pairs emptied"
 
 
+def week_value(setup, rec, me: int, knobs) -> float:
+    """What this week is worth in ``me``'s problem on the record's day, with no move made."""
+    built = policy.problem_of(setup, rec.state, me, knobs, rec.beliefs, rec.status, rec.returns)
+    return mv.Evaluator(built.problem).base["week"]
+
+
+@pytest.mark.parametrize("waivers", ["none", "faab"])
+def test_it_bites_a_plan_is_drawn_and_executed_in_the_final_and_its_step_bids_on_the_week(
+    waivers,
+):
+    """An arm that draws and executes the week's plan, in the seat whose roster is weakened (it
+    reaches the final), against the blind season. A blind week is worth nothing whatever is
+    done, so no path of the stream beats its set and no plan is drawn there; against the
+    final's opponent the week has a value, a plan is drawn and its step is executed (a found
+    path, seed 5). Without waivers the step is queued; in a FAAB league under continuous
+    waivers it is a claim, whose sealed bid is the live rule's on the step's week gain, which is
+    not 0, and (the found path) the bid is above $0. One format, every category, the plan floor
+    under zero: under one win no plan of a made-up league clears the engine's floor in the
+    matchup's odds (``test_sim_knobs.py``'s note on its cases). About 2 s each."""
+    me = 1
+    setup = weakened(final_league("each_category"))
+    if waivers == "faab":
+        setup = replace(setup, waivers="faab", waiver_days=2, waiver_rule=CONTINUOUS)
+    knobs = {**KNOBS, "plan_floor_cats": -1.0}
+    seat = op.Seat("P", "exact", knobs, with_plan=True)
+    variant = {**{t: op.Static() for t in setup.teams}, me: seat}
+    w = replay_of(setup, 5, 0)
+    (seeded,), recs = played(setup, w, [variant], [True])
+    (blind,), before = played(setup, w, [variant], [True], blind=True)
+    assert not seeded.breaches
+    final = setup.calendar.weeks[-1]
+    ((pair,),) = end_pairs(seeded.result)
+    assert me in pair
+    for (day, vi), rec in recs.items():
+        if day < final.start:
+            assert rec == before[(day, vi)], day
+    days = sorted(day for day, _ in recs if final.contains(day))
+    for day in days:
+        assert not before[(day, 0)].decisions[me].plan
+        assert week_value(setup, before[(day, 0)], me, knobs) == 0.0
+        assert week_value(setup, recs[(day, 0)], me, knobs) > 0.0
+    bids = []
+    for day in days:
+        rec, decision = recs[(day, 0)], recs[(day, 0)].decisions[me]
+        claims = {(c.move.add, c.move.drop): c for c in rec.claims.get(me, ())}
+        placed = {(m.add, m.drop) for m in rec.queued.get(me, ())} | set(claims)
+        own = {(m.add, m.drop) for m in decision.moves}
+        for j, step in enumerate(decision.plan):
+            at = (step.add, step.drop)
+            if at not in placed or at in own:
+                continue
+            # A step of the plan, executed: the blind season's seat placed nothing like it.
+            mine = before[(day, 0)]
+            assert at not in {(m.add, m.drop) for m in mine.queued.get(me, ())}
+            assert at not in {(c.move.add, c.move.drop) for c in mine.claims.get(me, ())}
+            if waivers == "faab":
+                basis = decision.basis
+                gain = basis.plan[j]
+                assert gain != 0.0
+                fortnight = [x for _, x in rec.state.recent[me]]
+                assert claims[at].bid == policy.live_bid(
+                    gain, fortnight, basis.floor, rec.state.dollars[me], basis.sizing
+                )
+            bids.append(claims[at].bid if at in claims else None)
+    assert bids, "no step of a plan was executed in the final"
+    if waivers == "faab":
+        assert max(bids) > 0
+    else:
+        assert bids == [None] * len(bids)
+    # A step landed: the seat made a move in the final that the blind season's seat did not.
+    assert not blind.breaches and seeded.executed > blind.executed
+
+
 # --------------------------------------------------------------------------- the pairs, played
 def end_pairs(result) -> tuple:
     """The rounds the season's end played, as the state holds a round: team ids, higher seed
@@ -464,9 +537,10 @@ def test_the_pairs_a_season_seeds_are_the_rounds_its_end_plays(shape, reseed):
     """Through the runner, on each bracket shape, reseeded and fixed, two variants whose seasons
     differ: the pairs each state holds at the season's end are the rounds its own season's end
     played, a round a week; and on every day of a round every team's opponent is its pair's
-    other team, and none for a team on a bye, out of the field or knocked out. The seats are the
-    ranking's and a market's (no solve): the pairs are the league's, whoever decides. One
-    format: the bracket is played alike in both. About 1 s each."""
+    other team, and none for a team on a bye, out of the field or knocked out (on a round's
+    first morning the problem built for each team holds that one opponent's week, or none). The
+    seats are the ranking's and a market's (no solve): the pairs are the league's, whoever
+    decides. One format: the bracket is played alike in both. About 1 s each."""
     teams, playoff_teams, rounds = SHAPES[shape]
     setup = make_setup(
         teams=teams, weeks=3 + rounds, playoff_weeks=rounds, playoff_teams=playoff_teams
@@ -495,6 +569,12 @@ def test_the_pairs_a_season_seeds_are_the_rounds_its_end_plays(shape, reseed):
             other = {a: b for a, b in pairs} | {b: a for a, b in pairs}
             for t in setup.teams:
                 assert policy.opponent_of(setup, rec.state, t, number) == other.get(t), (day, t)
+                if vi or day != setup.calendar.weeks[number - 1].start:
+                    continue
+                # The problem's own week on the round's first morning: one opponent's week for
+                # a team in a pair, none for a team that sits the round out.
+                built = policy.problem_of(setup, rec.state, t, KNOBS, rec.beliefs, rec.status, {})
+                assert len(built.problem.horizons["week"][0].opponents) == (t in other), (day, t)
         # Somebody sat out each round that has a bye or a team knocked out.
         assert all(len(pairs) * 2 < teams for pairs in due)
     assert results[0].result != results[1].result
