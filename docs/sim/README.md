@@ -366,7 +366,7 @@ built:
 | `horizon_weight` | exact executing `weighted` | any other arm |
 | `plan_floor_cats` | exact drawing and executing the week plan, or executing `queue` (the gate a week plan clears, PR E), in a categories league that counts every category; in such a FAAB run any exact or surrogate seat and a mirror rival (the typical gain until ten moves, PR Fb) | any other arm or league; in a one-win league nobody: the engine's plan floor is its own there (the format PR) |
 | `plan_floor_points` | the same, points | any other arm or league |
-| `season_weight` | exact, surrogate; under `queue` on the three weeks' set and in the guard, not in the plans' gate (the payload's `notes`) | the ranking tier holds no odds |
+| `season_weight` | exact, surrogate; under `queue` on the three weeks' set only, not in the plans' gate and not in the season guard, which never reads it (the payload's `notes`) | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read | no term, or no bracket |
 | `three_weight` | exact executing `queue` (PR E): the weight of the three weeks in the queue's score, 0 in a week of the bracket | any other arm: nothing else weighs a week plan against a set |
 | `system` | the arm's own seat, on a replay that names the two sources' stand-ins | a run without stand-ins |
@@ -412,7 +412,7 @@ three weeks do not count. An arm's `executes` names which of three things its ex
 | `executes` | the seat queues | it reads |
 |---|---|---|
 | `three` (the default) | the recommended set on the three weeks' horizon; with `execute_plan`, the streaming plan's due steps beside it | `with_plan`, `execute_plan`, and the plan floor when it executes the plan |
-| `weighted` | the strategy route's weighted set | `horizon_weight` |
+| `weighted` | the strategy route's weighted set; with `execute_plan`, the streaming plan's due steps beside it, as under `three` | `horizon_weight`; `with_plan`, `execute_plan`, and the plan floor when it executes the plan |
 | `queue` | the live queue's rule: the week plan that leads, else the three weeks' set | `three_weight`, the plan floor |
 
 `queue` is the exact tier's: on another tier it is refused by name, and so is `with_plan` or
@@ -457,30 +457,32 @@ floor.
 **The season term's place.** The library's functions do not take the season wrapper:
 `policy.Seasoned` holds no matchup odds, which a playoff week's gate asks for, and
 `plans.held_out` builds the engine's plain evaluators itself. So the gate is the library's own
-score, and at a `season_weight` above 0 the term reaches the choice in two places only: the
-three weeks' set (step 1) and the guard. The week's set, the swaps, the streaming plan, every
-plan's value and the gate that weighs a plan against the set are the engine's, without the
-term. A set the term chose can therefore be worth little on the engine's score, and a plan then
-passes it; the guard holds every plan all the same. The reads table says so beside
-`season_weight` for an arm that executes `queue`, and the count of the days the queue took a
-plan (below) is where a run shows it. At `season_weight` 0 the rule is the library's choice on
-the plain set.
+score, and at a `season_weight` above 0 the term reaches the choice in one place only: the
+three weeks' set (step 1). The week's set, the swaps, the streaming plan, every plan's value and
+the gate that weighs a plan against the set are the engine's, without the term. The season guard
+does not read the term either (**The knobs, the fields and the season term**): it admits or
+refuses every set and every plan on the engine's own season figure, the same at any weight. A
+set the term chose can therefore be worth little on the engine's score, and a plan then passes
+it; the guard holds every plan all the same. The reads table says so beside `season_weight` for
+an arm that executes `queue`, and the count of the days the queue took a plan (below) is where a
+run shows it. At `season_weight` 0 the rule is the library's choice on the plain set.
 
 **The bids.** In a FAAB league a step of the plan the queue took bids on its score, the week
 increment plus the queue's weight times its three weeks' increment (`plans.step_score`,
 `policy.step_bids`), as the live queue bids it; in a week of the bracket on the week increment
 alone. The fortnight's typical gain keeps the day's recommended moves, the three weeks' set's,
 as live keeps it on a day a plan leads. A streaming plan beside a set (`execute_plan` under
-`three`) bids on its week increment, as before.
+`three` or `weighted`) bids on its week increment, as before.
 
 **The counts.** In a run where an arm names `queue`, every seat's row carries `plan_days` and
 `plan_steps` (**The audit and the counts**).
 
-**The cost.** The rule solves three times a decision day (the three weeks' set, the week's set,
-the streaming plan), then builds and values every plan and weighs them: a path under `queue`
-costs more than one under `three`. No constant holds that cost. A run times one task of its own
-arms before it estimates (`replay` one task, the slowest by its league; `screen` one task of
-each pair), so the estimate of a run with a `queue` arm is measured on a `queue` task.
+**The cost.** The rule counts three solves a decision day (`solves`): the three weeks' set; the
+week's set with its streaming plan, counted as one as under `three`; and the plans' search, in
+which the engine builds and values every plan and weighs them against the set. A path under
+`queue` costs more than one under `three`. No constant holds that cost. A run times one task of
+its own arms before it estimates (`replay` one task, the slowest by its league; `screen` one
+task of each pair), so the estimate of a run with a `queue` arm is measured on a `queue` task.
 
 What the rule does not mirror, each plainly:
 
@@ -1273,7 +1275,7 @@ Who bids, and how:
 
   | input | here | live |
   |---|---|---|
-  | `gain` | the move's own gain on the judging horizon from the seat's own solve: the set's value less the set without it (`policy.gains_of`), on the engine's evaluator without the season term; a week-plan step's week increment (`stream.step_gains`) | the logged gain on `three` (`marginal`, the same difference); a plan step's score, its week increment plus the queue's weight times its three weeks' increment (`plans.step_score`) |
+  | `gain` | the move's own gain on the judging horizon from the seat's own solve: the set's value less the set without it (`policy.gains_of`), on the engine's evaluator without the season term; a streaming plan's step beside a set, its week increment (`stream.step_gains`); a step of the plan the queue took (an arm that executes `queue`, PR E), its score at the queue's weight (`plans.step_score`, `policy.step_bids`) | the logged gain on `three` (`marginal`, the same difference); a plan step's score, its week increment plus the queue's weight times its three weeks' increment (`plans.step_score`) |
   | `typical` | `typical_gain` over the gains of the moves the seat recommended in the last 14 days, today's included: the plan floor until ten (the engine's, `stream.floor_of`: the knob, or in a one-win league its own floor in the matchup's odds, the format PR) | `typical_gain` over `season_queue.recent_gains`, the last 14 days' recommended three weeks' sets, today's included |
   | `budget` | the seat's dollars left that day | `season_queue.budget_of`, the league's FAAB balance |
   | `flag` | none: the live rule's flags are not modelled, and the payload says so | the day's flag on the player |

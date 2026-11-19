@@ -94,9 +94,10 @@ weeks' (in a bracket week on the matchup's odds, the weight 0 and the floor the 
 trim are the engine's (``season.plans`` through the door). :func:`queue_rule` makes the decision:
 the plan's steps, dated, when a plan leads (:attr:`Decision.plan_leads`), else the set, and
 :func:`queue` then places only the steps due today; the seat decides again tomorrow. The season
-term is on the three weeks' set and in the guard; the plans and the gate are the engine's own
-score (the library's functions do not take the term's wrapper: a bracket week's gate reads the
-matchup's odds, which it has not).
+term is on the three weeks' set only; the plans and the gate are the engine's own score (the
+library's functions do not take the term's wrapper: a bracket week's gate reads the matchup's
+odds, which it has not), and the season guard, which does not read the term, admits or refuses
+every plan all the same.
 """
 
 from __future__ import annotations
@@ -970,13 +971,13 @@ def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
        (:func:`in_bracket`);
     4. ``plans.held_out``, ``plans.every_plan`` and ``plans.for_queue``, each given the guard.
 
-    The guard is the arm's season guard (:func:`guard_of`), taken once here for every call. The
-    plans and the gate are valued on the engine's plain evaluator: the season term reaches the
-    choice through the three weeks' set and the guard only (``plans.matchup`` reads the
-    evaluator's odds and ``plans.held_out`` builds evaluators of its own, so the library does not
-    take :class:`Seasoned`). Two things the live route has that this does not: the pool's adds
-    from the guard's list (#424) and the searches' tie-break on the season, neither of which the
-    simulator's ``three`` has either."""
+    The guard is the arm's season guard (:func:`guard_of`), taken once here for every call; it
+    is the engine's own season figure and does not read the season term. The plans and the gate
+    are valued on the engine's plain evaluator: the season term reaches the choice through the
+    three weeks' set only (``plans.matchup`` reads the evaluator's odds and ``plans.held_out``
+    builds evaluators of its own, so the library does not take :class:`Seasoned`). Two things
+    the live route has that this does not: the pool's adds from the guard's list (#424) and the
+    searches' tie-break on the season, neither of which the simulator's ``three`` has either."""
     p = built.problem
     three = exact(built, QUEUE_SET, False, fields)
     ev = mv.Evaluator(p)
@@ -1306,8 +1307,9 @@ ONLY_QUEUE = "only the exact tier executing queue reads it"
 #: What the reads table says beside its rows for an arm that executes ``queue`` (PR E), by knob:
 #: where the season term stands in the queue's rule (:func:`read_notes`).
 QUEUE_SEASON = (
-    "under queue the season term is on the three weeks' set and in the guard; the week plans "
-    "and the gate that weighs them against the set are the engine's own score, without the term"
+    "under queue the season term is on the three weeks' set only; the week plans and the gate "
+    "that weighs them against the set are the engine's own score, without the term; the season "
+    "guard does not read the term and admits or refuses every plan all the same"
 )
 #: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
 NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"

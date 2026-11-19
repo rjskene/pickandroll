@@ -448,14 +448,18 @@ def adds(moves) -> set[int]:
     return {m.add for m in moves}
 
 
-def test_the_season_term_is_on_the_set_and_the_gate_is_the_engine_s_own_score():
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_the_season_term_is_on_the_set_and_the_gate_is_the_engine_s_own_score(h2h):
     """The term's place (the brief's second choice: the library does not take the wrapper).
     In the league where the three weeks and the season disagree, at a ``season_weight`` above 0
     the three weeks' set is the one the term chose, the week's inputs and the plans' values are
     the plain evaluator's, and the gate weighs that set on the engine's own score: the set the
     term chose is passed over for a plan, the guard holding. At weight 0 the same case is the
-    library's choice on the plain set."""
+    library's choice on the plain set. In both formats: with one win a matchup the gate's floor
+    is the engine's own, and where every category counts it is the knob's (:data:`FLOORS`)."""
     setup, _, strong, dead = flip_setup()
+    if h2h == EACH_CATEGORY:
+        setup = every_category(setup)
     plain = built_on(setup, day=3, three_weight=0.0)
     termed = built_on(setup, day=3, three_weight=0.0, season_weight=1.0)
     a = check_parity(plain, 0.0, False)
@@ -472,6 +476,25 @@ def test_the_season_term_is_on_the_set_and_the_gate_is_the_engine_s_own_score():
     assert a.chosen is None and b.chosen is not None
     assert strong not in adds(b.chosen.moves)
     assert mv.admitted(termed.problem, list(b.chosen.moves), policy.guard_of(termed))
+    # The guard does not read the term: its figure for every single swap of the day and its
+    # verdict on each set and on the plan are the same at both weights. So the term stands in
+    # one place, the three weeks' set, and the record's note says that and no more.
+    ros_plain, ros_termed = policy.ros_of(plain), policy.ros_of(termed)
+    singles = [
+        mv.Move(add, g.drop)
+        for swaps in (a.swaps, b.swaps, mv.single_swaps(ev, policy.QUEUE_SET))
+        for add, gains in swaps.items()
+        for g in gains
+    ]
+    assert singles and [ros_plain(m) for m in singles] == [ros_termed(m) for m in singles]
+    assert any(ros_plain(m) is not None and ros_plain(m) < 0 for m in singles)
+    for moves in (a.three.moves, b.three.moves, b.chosen.moves, *([m] for m in singles)):
+        assert mv.admitted(plain.problem, list(moves), policy.guard_of(plain)) == mv.admitted(
+            termed.problem, list(moves), policy.guard_of(termed)
+        )
+    assert "on the three weeks' set only" in policy.QUEUE_SEASON
+    assert "does not read the term" in policy.QUEUE_SEASON
+    assert "in the guard" not in policy.QUEUE_SEASON
     decision = policy.decide(termed, "exact", policy.QUEUE)
     assert decision.plan_leads and decision.moves == b.three.moves
     # The wrapper is not what the library takes: it has no odds for a bracket week's gate.
