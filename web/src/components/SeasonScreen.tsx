@@ -26,6 +26,8 @@ import {
   addsNote,
   LIFT_TITLE,
   liftText,
+  reserveLine,
+  reserveText,
   ageLabel,
   availabilityLabel,
   claimLine,
@@ -1224,6 +1226,8 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
       )}
       {returns && <p className="muted small">{returns}</p>}
       <SeasonGuardNote set={set} h={h} s={s} name={name} />
+      {reserveLine(set.reserve, h) && <p className="muted small">{reserveLine(set.reserve, h)}</p>}
+      {reserveText(m.reserve, name) && <p className="muted small">{reserveText(m.reserve, name)}</p>}
     </div>
   );
 }
@@ -1251,9 +1255,9 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
     const line = planShortLine(m.plan, name, s.scoring);
     const steps = guardSteps(m.plan, name);
     const refused = m.plan?.guard?.ros;
-    const which = m.plan?.reason === "season" ? "season" : "three-week";
+    const which = m.plan?.reason === "season" ? "season guard" : m.plan?.reason === "reserve" ? "reserve" : "three-week guard";
     return line ? (
-      <p className="muted small" title={steps ? `the plan the ${which} guard refused: ${steps}${refused ? `; to the season's end ${rosLabel(refused, s.scoring)} on the set` : ""}` : undefined}>
+      <p className="muted small" title={steps ? `the plan the ${which} refused: ${steps}${refused ? `; to the season's end ${rosLabel(refused, s.scoring)} on the set` : ""}` : undefined}>
         {line}
       </p>
     ) : null;

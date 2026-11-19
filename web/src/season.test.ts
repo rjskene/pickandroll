@@ -163,6 +163,8 @@ import {
   queueMoveText,
   pickLine,
   liftText,
+  reserveLine,
+  reserveText,
   pickMoveText,
   pickSkipText,
   queueNamer,
@@ -1883,6 +1885,10 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(queueStateText({ ...e, outcome: "gone", outcome_reason: null }, now), "gone: another team had him first");
   assert.equal(queueStateText({ ...e, queued: false, reason: "below the noise floor", floor: { ...floor, below: "scored" } }, now), "below the scored floor");
   assert.equal(queueStateText({ ...e, queued: false, reason: "over the day's cap" }, now), "over the day's cap");
+  // The add reserve and the re-cut rule (#436): the move's worth against the price.
+  const reserve = { worth: 0.2, price: 0.3, days: 3 };
+  assert.equal(queueStateText({ ...e, queued: false, reason: "held for the week's reserve", reserve }, now), "held for the week's reserve: gains 0.20, the price is 0.30");
+  assert.equal(queueStateText({ ...e, queued: false, reason: "added within the re-cut days", reserve }, now), "added within 3 days: gains 0.20, the price is 0.30");
   assert.equal(bidLabel(e), "$4 claim");
   assert.equal(bidLabel({ ...e, bid_struck: true }), "$0 claim (the $4 bid struck)");
   assert.equal(bidLabel({ ...e, availability: "FA" }), "free agent, $0");
@@ -2629,4 +2635,24 @@ test("a lifted move says its flag's factor and level (#435)", () => {
   assert.equal(liftText({ factor: 1.2, level: "add" }), "lifted by its flag (x1.2, add)");
   assert.equal(liftText({ factor: 1.15, level: "must-add" }), "lifted by its flag (x1.15, must-add)");
   assert.equal(liftText({ factor: 1.5, level: "watch" }), "lifted by its flag (x1.5, watch)");
+});
+
+test("the add reserve and the re-cut rule say what they hold (#436)", () => {
+  const name = (id: number) => `P${id}`;
+  const r = {
+    knobs: { reserve_adds: 1, reserve_release: "friday", reserve_price: null, recut_days: 3 },
+    week: { start: "2026-11-16", end: "2026-11-22", adds: 2 },
+    reserved: 1,
+    price: 0.3,
+    exempt: [],
+    recent: { "7": "2026-11-18", "8": "2026-11-17" },
+    out: [8],
+  };
+  assert.equal(reserveText(r, name), `One add held for the week's reserve until Fri; P7 added ${dayLabel("2026-11-18")} (only for more than 0.30).`);
+  assert.equal(reserveText({ ...r, week: null, recent: {} }, name), null);
+  assert.equal(reserveText(undefined, name), null);
+  const held = { held_back: true, gain: { week: 0.5, three: 1.25 }, forgone: { week: 0.1, three: -0.2 }, rule: "reserve" as const };
+  assert.match(reserveLine(held, "three") ?? "", /^The add reserve held back a set that gains .* over the three weeks; this one forgoes 0\.20\.$/);
+  assert.match(reserveLine({ ...held, rule: "recut" }, "week") ?? "", /^The re-cut rule held back/);
+  assert.equal(reserveLine({ held_back: false }, "week"), null);
 });
