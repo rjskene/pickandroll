@@ -3583,11 +3583,13 @@ GATE_RULE = (
     f"search's gain over its {vg.SURROGATE_OF} league-days, every one of them compared. A day's "
     "gain is a set's worth by the exact tier's own objective less standing still's "
     "(detail.records); each tier's is summed over the days (detail.gain), then the two sums are "
-    "compared, surrogate >= share x exact, with no division: an exact tier that stood still asks "
-    "only that the surrogate lose nothing, and a surrogate that found more passes. detail.kept is "
-    "the surrogate's gain over the exact search's (null when the exact gain is not above 0). The "
-    "days on which the two sets are equal are counted (detail.matched) and do not decide. The "
-    "gate passes when every seat does"
+    "compared, surrogate >= share x exact, with no division and less a tolerance "
+    f"({vg.EPS:g} of gain), so a float's last bits never decide: an exact tier that stood still "
+    "asks only that the surrogate lose nothing, and a surrogate that found more passes. An exact "
+    "gain below 0, which the exact search does not give, is held to itself and not to a share of "
+    "it, so the same sets never fail. detail.kept is the surrogate's gain over the exact "
+    "search's (null when the exact gain is not above 0). The days on which the two sets are "
+    "equal are counted (detail.matched) and do not decide. The gate passes when every seat does"
 )
 #: The forecaster gate 5's replay is drafted on and believes by, when ``--forecaster`` names none.
 GATE_FORECASTER = "prior"
@@ -3688,18 +3690,35 @@ def record_line(seat: int, r: Mapping[str, Any]) -> str:
     )
 
 
-def share_words(x: float) -> str:
-    """A share as a percentage cut, not rounded, to a tenth: a seat a hair under gate 5's bar
-    never reads as at it."""
-    return f"{math.floor(x * 1000 + 1e-6) / 10:.1f}%"
+def share_tenths(x: float) -> int:
+    """A share in tenths of a percent, cut, not rounded: 0.9499 is 949. (A last bit under a whole
+    tenth, as a product of floats can leave, does not cut it to the tenth below.)"""
+    return math.floor(x * 1000 + 1e-6)
+
+
+def kept_words(d: Mapping[str, Any]) -> str:
+    """The share a seat's surrogate kept as gate 5's line says it, from the row's detail: cut to
+    a tenth of a percent (:func:`share_tenths`), then held to the rule's verdict on the two gains
+    (``validate.keeps``). The rule's tolerance is on the gain (``validate.EPS``) and the cut's is
+    on the share, so within that tolerance of the bar the cut alone can read as the share needed
+    for a seat the rule fails, or under it for one the rule passes. Held, a seat that fails by
+    the gain never reads as at the share needed and one that keeps it never reads under it. A
+    seat that fails only for a day left out is not held under the bar: its share is what it kept
+    on the days compared."""
+    tenths, bar = share_tenths(d["kept"]), d["needs"] * 1000
+    if vg.keeps(d["gain"]["exact"], d["gain"]["surrogate"], d["needs"]):
+        tenths = max(tenths, math.floor(bar + 1e-6))
+    else:
+        tenths = min(tenths, math.ceil(bar - 1e-6) - 1)
+    return f"{tenths / 10:.1f}%"
 
 
 def seat_line(d: Mapping[str, Any]) -> str:
     """What gate 5 prints for a seat after its verdict, from the row's detail: the share of the
-    exact search's gain its surrogate kept, with the two gains to four decimals and the share
-    needed (the two gains alone when the exact gain is not above 0, where there is no share);
-    then the days on which the two sets are equal, which do not decide; and, for a seat with a
-    day left out, that a seat needs every day. No player is named."""
+    exact search's gain its surrogate kept (:func:`kept_words`), with the two gains to four
+    decimals and the share needed (the two gains alone when the exact gain is not above 0, where
+    there is no share); then the days on which the two sets are equal, which do not decide; and,
+    for a seat with a day left out, that a seat needs every day. No player is named."""
     gain = d["gain"]
     if d["kept"] is None:
         kept = (
@@ -3708,7 +3727,7 @@ def seat_line(d: Mapping[str, Any]) -> str:
         )
     else:
         kept = (
-            f"the surrogate kept {share_words(d['kept'])} of the exact search's gain "
+            f"the surrogate kept {kept_words(d)} of the exact search's gain "
             f"({gain['surrogate']:.4f} of {gain['exact']:.4f}; needs {d['needs']:.0%})"
         )
     line_ = f"{kept}; equal sets on {d['matched']} of {d['of']} league-days"

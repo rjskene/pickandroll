@@ -1398,7 +1398,10 @@ run.
       surrogate's gain is not below 0;
     - a surrogate that found more than the exact tier passes. It happens: both searches are
       heuristics, each over a pool of its own; the exact tier's pool is ranked before the
-      season guard is asked, and the surrogate's can hold an add it lacks.
+      season guard is asked, and the surrogate's can hold an add it lacks;
+    - an exact gain below 0, which the exact search does not give, is the one case the
+      inequality is not applied to as written: the surrogate is held to that gain itself, not
+      to a share of it, so the same sets never fail (`validate.keeps`).
   - A seat with a day left out (fewer than five compared) fails.
   - The rule it replaced asked for the identical set on four of the five days. That was
     stricter than what the gate is for, which is whether the fast seat can stand in for the
@@ -1419,12 +1422,23 @@ run.
     three worths are what the rule reads.
   - A day left out says why instead: outside the calendar's weeks, or no problem built.
 
-  `validate` prints a line for each seat: its verdict, the share of the exact search's gain its
-  surrogate kept (cut, not rounded, to a tenth of a percent, so a seat a hair under the bar
-  never reads as at it) with the two gains to four decimals and the share needed, then the
-  days with equal sets. Under it, a line for each of the seat's days: equal or not, and the two
-  worths to four decimals. It names no player. `validate`'s exit code is what it was: 0 for a
-  gate that ran, whatever it said (the record's `passed` holds the verdict).
+  `validate` prints a line for each seat (`cli.seat_line`): its verdict, `passed` or `FAILED`,
+  the share of the exact search's gain its surrogate kept with the two gains to four decimals
+  and the share needed, then the days with equal sets.
+  - The share is cut, not rounded, to a tenth of a percent, then held to the rule's verdict on
+    the two gains (`cli.kept_words`). The rule's tolerance is on the gain and the cut's is on
+    the share, so within that tolerance of the bar the cut alone could read as the share needed
+    for a seat the rule fails, or as under it for one the rule passes. The line says neither: a
+    seat that fails by the gain never reads as at the share needed, and one that keeps it never
+    reads under it. The record's `kept` is the share itself, not cut.
+  - Where the exact search made no gain there is no share to print: the line says so and gives
+    the two gains.
+  - A seat with a day left out also says how many of the five days were compared, and that a
+    seat needs every one. The share it prints is what it kept on the days compared.
+
+  Under a seat's line, a line for each of its days: equal or not, and the two worths to four
+  decimals, or why the day is left out. It names no player. `validate`'s exit code is what it
+  was: 0 for a gate that ran, whatever it said (the record's `passed` holds the verdict).
 - The format (the format PR): `--h2h one_win|each_category`, default `one_win`. Gate 5 builds its
   league in the format named, so the two tiers solve the problem the seats play and the worths,
   and so the gain kept, are in its measure (the matchup's odds by default). Under
