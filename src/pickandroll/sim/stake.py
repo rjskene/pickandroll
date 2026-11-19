@@ -2,8 +2,19 @@
 
 ``L``, between 0 and 1, is read by an arm that names a ``stake`` (``policy.season_weight_of``):
 the season weight in force that week is ``season_weight x (1 - stake x L)``, so a seat whose week
-decides its season trades less of it for later. The ruling fixes the idea (the gap to the cut
-line against the weeks left, and full in the playoffs); the formula is a working default.
+decides its season weighs the rest of the season less. The ruling fixes the idea (the gap to the
+cut line against the weeks left, and full in the playoffs); the formula is a working default.
+
+**What that moves, and a limit.** The set a seat queues is searched on the weeks after the
+running one (``policy.QUEUE_SET``; a move lands the day after it is decided), so of that set's
+score the season term is the only part that counts the rest of the running week. A stake
+therefore does not make a seat play for the week whose stake it reads: it moves weight from the
+season to the weeks after that week, and takes away the one term that counted the week itself.
+In the bracket's last week no week comes after, and a seat inside the field at a stake of 1
+decides no set, where at a stake of 0 it still adds for the final. ``L`` is also the stake of
+the week the day is in, while a move decided that day lands the next: on a week's last day it
+is the ending week's. Both are stated in the README's passage and pinned in
+``tests/sim/test_sim_guard.py`` as limits of the formula, not as its aim.
 
 **In a regular week** (:func:`level`). The standings are the league's own
 (``league.standings`` over ``league.week_results``) of the regular weeks finished before this

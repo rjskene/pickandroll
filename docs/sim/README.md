@@ -354,8 +354,9 @@ key is in every run that has a scale, whatever its arms name; no figure moves wi
 
 **The season guard and the week's stake** (the guard PR; `policy.allowed_of`,
 `policy.season_weight_of`, `sim/stake.py`). Two fields of an arm, both about how a seat trades the
-weeks at hand against the rest of the season. Live runs the hard block and reads no stake. Both
-are here to be measured, and a result here changes nothing live without the user.
+weeks its queued set is scored on (the three after the running one) against the rest of the
+season. Live runs the hard block and reads no stake. Both are here to be measured, and a result
+here changes nothing live without the user.
 
 - **`guard`**: `block` (the default) or `off`. Under `block` every search of the arm's tier is
   handed the engine's season guard (`moves.season_guard`: a set whose rest of the season is below
@@ -405,6 +406,32 @@ against the weeks left, and full in the playoffs), not the formula.
 In the bracket's weeks `L` is 1 for a seat inside the field by the regular season's final
 standings and 0 for a seat outside. Who has been knocked out inside the bracket is not read (a
 limit: a seat that lost its first round still has `L` 1 in the weeks after).
+
+**What a stake moves, and its limit.** The set a seat queues is searched on `three`, the weeks
+after the running one: no day of the running week is in that key, and a move lands the day after
+it is decided. Of a queued set's score the season term is then the only part that counts the
+rest of the running week (`ROS_w` runs from the day the move lands to the season's end). So a
+stake does not make a seat play for the week whose stake it reads. It moves weight from the
+season to the three weeks after that week, and takes away the one term that counted the week
+itself:
+
+- In the bracket's last week no week comes after, and the key is empty. A seat inside the field
+  at `stake` 1 (`L` 1, a weight in force of 0) decides no set there, on either tier, where the
+  same seat at `stake` 0 still adds a player who plays the final.
+- In a regular week whose `L` is 1 (the last, for a seat level with the line), a free agent who
+  plays only the rest of that week is added at `stake` 0 and not at `stake` 1: his add gains
+  nothing on the weeks after.
+- `L` is the stake of the week the day is in, and a move decided that day lands the next. On a
+  week's last day the weight reads the ending week's stake for moves that can only play from
+  Monday (the exact tier decides every day; the default surrogate, on Mondays and Thursdays,
+  does not meet it). The roster that starts the bracket's first round was set by moves decided
+  in the last regular week, at that week's `L`, not the bracket's.
+
+An exact arm that executes its week plan still plays the running week through the plan, which
+takes no season term and reads no stake. This is how the formula meets the key the engine
+queues on. It is not the ruling's idea, a seat that plays for the week that decides its season,
+and it is stated here as a limit (pinned in `tests/sim/test_sim_guard.py`): a result on `stake`
+is read with it, and in the bracket's last week it measures a seat that stops adding.
 
 `Φ` is from `math.erf`, and `L` is rounded to twelve decimals before anything reads it, so two
 machines decide alike. The runner computes it once a week for each seat that reads or counts one,

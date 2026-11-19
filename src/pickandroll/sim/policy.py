@@ -850,7 +850,8 @@ def season_weight_of(built: Built) -> float:
     reader of the weight calls: the arm's ``season_weight`` times ``1 - stake x L``, ``L`` the
     week's stake for the seat (``Built.level``, 0 to 1). At ``stake`` 0 the knob itself, no
     arithmetic on it. The season scale (:func:`scale_of`) is measured without the term and does
-    not read it."""
+    not read it. What a smaller weight leaves is the key the set is searched on, the weeks after
+    the running one, never the running week itself (``sim/stake.py``, the stated limit)."""
     weight = float(knob(built.knobs, "season_weight"))
     if built.stake == 0:
         return weight

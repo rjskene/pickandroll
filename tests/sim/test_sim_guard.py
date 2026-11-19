@@ -672,9 +672,10 @@ def test_a_season_in_which_the_stake_changes_what_the_seat_queues(h2h):
     regular weeks after this one, so the week's stake is the formula's at a lead of 0. The season
     weight is one at which the seat trades the three weeks for the late player, close above one
     at which it does not; a stake of 1 takes the weight in force below that, and the seat adds
-    the player of the three weeks instead: it stops trading the weeks at hand for later. The
-    runner's figure is the pure function's every day, the same all week, and the counts are
-    its mean and the weeks above a half."""
+    the player of the three weeks instead: it stops trading the three weeks after this one for
+    the weeks after them (not the running week, which the key it queues on does not hold: the
+    stated limit's test, below). The runner's figure is the pure function's every day, the same
+    all week, and the counts are its mean and the weeks above a half."""
     setup = disagreeing(teams=4, h2h=h2h)
     w = replay_of(setup, 2, 0)
     level = stk.swing(0.0, 4)
@@ -710,6 +711,95 @@ def test_a_season_in_which_the_stake_changes_what_the_seat_queues(h2h):
         assert row["stake_weeks_above_half"] == float(sum(1 for x in levels if x > 0.5))
         assert "sets_past_guard" not in row
     assert not set(SEASON_KEYS) & set(got["counts"]["rivals"])
+
+
+# --------------------------------------------------------------------------- the stake's limit
+#: A made-up free agent who plays every day of one week and never after.
+NOW = 104
+
+
+def on_monday(setup, week, knobs=None, **state):
+    """Seat 1's problem on ``week``'s Monday at a season weight of 1, and the day's state."""
+    at = replace(initial(setup), day=week.start, **state)
+    weighted = {**KNOBS, "season_weight": 1.0, **(knobs or {})}
+    built = policy.problem_of(setup, at, 1, weighted, setup.projection, {}, {})
+    assert built is not None
+    return built, at
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_stated_limit_the_set_is_scored_on_no_day_of_the_week_whose_stake_is_read(h2h):
+    """The stake's limit starts here: the key both tiers queue on holds the weeks after the
+    running one and no day of it, fewer as the season runs out and none in its last week. A
+    move lands the day after it is decided, so of a queued set's score the season term alone
+    counts the rest of the running week."""
+    setup = disagreeing(teams=4, h2h=h2h)
+    weeks = setup.calendar.weeks
+    held = []
+    for week in weeks:
+        built, _ = on_monday(setup, week)
+        days = [d for span in built.problem.horizons[policy.QUEUE_SET] for d in span.days]
+        assert all(d > week.end for d in days)
+        held.append(len(days))
+    assert held == [21, 21, 21, 14, 7, 0]
+    assert weeks[-1].number in setup.spec.playoff_weeks
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_a_stated_limit_in_the_final_a_seat_with_a_stake_of_one_decides_no_set(tier, h2h):
+    """A stated limit, pinned so that a change of it is seen (the README's "What a stake moves,
+    and its limit"): the stake takes away the only term that counts the running week. On the
+    final's Monday a seat inside the field has a week's stake of 1 ("full in the playoffs"). At
+    a season weight and no stake it adds the player who plays the final; at a stake of 1 its
+    weight in force is 0, the key it queues on is empty, and it decides no set, on either tier,
+    the exact tier's week plan drawn or not."""
+    setup = disagreeing(teams=4, h2h=h2h)
+    final = setup.calendar.weeks[-1]
+    # Every regular week a tie: the league's own order puts seat 1 inside the field of two.
+    tied: dict = {w: {} for w in setup.spec.regular_weeks}
+    assert stk.level(setup.spec, tied, 1, final.number) == 1.0
+    built, state = on_monday(setup, final, totals=tied)
+    assert built.problem.horizons[policy.QUEUE_SET] == ()
+    plain = policy.decide(built, tier, with_plan=False)
+    assert adds(plain) == {LATE} and drops(plain) == {DEAD}
+    staked = policy.guarded(built, setup, state, stake=1.0)
+    assert staked.level == 1.0 and policy.season_weight_of(staked) == 0.0
+    assert policy.decide(staked, tier, with_plan=False).moves == ()
+    assert policy.decide(staked, tier).moves == ()
+    # A seat outside the field reads no stake there, and adds him as before.
+    out = policy.guarded(built, setup, replace(state, stakes={1: 0.0}), stake=1.0)
+    assert policy.decide(out, tier, with_plan=False).moves == plain.moves
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_a_stated_limit_a_decisive_regular_week_s_own_games_are_not_played_for(tier, h2h):
+    """The same limit in a regular week: a free agent plays every day of the last regular week
+    and never after. His add gains nothing on the key the seat queues on and a good deal on
+    the running week. At a season weight the seat adds him (the term counts his games this
+    week); in a week whose stake is 1, at a stake of 1, it does not."""
+    base = disagreeing(teams=4, h2h=h2h)
+    week = base.calendar.weeks[4]
+    assert week.number == base.spec.regular_weeks[-1]
+    schedule = {d: set(t) for d, t in base.schedule.items()}
+    for d in week.days():
+        schedule[d].add("NNN")
+    setup = replace(
+        base,
+        players={**base.players, NOW: Member(NOW, "Now", "NNN", ("PG",))},
+        projection={**base.projection, NOW: rates(2.5)},
+        schedule={d: frozenset(t) for d, t in schedule.items()},
+        pool=(NOW,),
+    )
+    built, state = on_monday(setup, week, stakes={1: 1.0})
+    plain = policy.decide(built, tier, with_plan=False)
+    assert adds(plain) == {NOW}
+    ev = mv.Evaluator(built.problem)
+    assert ev.gain(policy.QUEUE_SET, plain.moves) == 0.0 and ev.gain("week", plain.moves) > 0.01
+    staked = policy.guarded(built, setup, state, stake=1.0)
+    assert policy.season_weight_of(staked) == 0.0
+    assert NOW not in adds(policy.decide(staked, tier, with_plan=False))
 
 
 # --------------------------------------------------------------------------- no peek, a split seat
