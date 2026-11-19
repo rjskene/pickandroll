@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from pickandroll.sim import bid_policy as bp
+from pickandroll.sim import counts as ct
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
@@ -196,6 +197,21 @@ def test_a_plan_floor_is_screened_on_the_exact_tier_executing_the_plan():
     # A baseline that draws no plan is set to draw one.
     drawn = rows(base(with_plan=False), "plan_floor_cats")["plan_floor_cats-up"]
     assert drawn.both == {"tier": "exact", "with_plan": True, "execute_plan": True}
+
+
+def test_a_plan_floor_s_row_adds_no_note_where_the_bid_gives_the_three_weeks_no_weight():
+    """The note a plan floor's row adds in a FAAB run says a seat that bids also reads the floor,
+    as its typical gain until ten moves. Under a baseline whose ``bid`` gives the three weeks
+    no weight no seat's set reads that typical (``policy.reads``, PR F2), so the row adds
+    nothing; at any weight above 0 on the three weeks it adds the note."""
+    for block, note in (
+        ({"week": 1}, None),
+        ({"week": 0.5, "season": 0.5}, None),
+        ({"week": 0.75}, sc.PLAN_FAAB_NOTE),
+        ({}, sc.PLAN_FAAB_NOTE),
+    ):
+        r = rows(base(bid=block), "plan_floor_cats")["plan_floor_cats-up"]
+        assert r.status == sc.PLAY and r.note == note, block
 
 
 def test_the_daily_cap_moves_by_one_inside_the_knob_s_bounds():
@@ -632,6 +648,30 @@ def test_a_lever_did_nothing_when_both_arms_played_one_season_on_every_path():
     assert sc.result_words(one) == "matchup wins +0.900 (SE 0.100) over 4 paths; survives"
     # An outcome a path does not have (no bracket read) is no difference.
     assert sc.result_of(flat, [path(delta=None)], "matchup_wins")["did_nothing"]
+
+
+def test_a_pair_apart_only_in_the_value_its_claims_were_sized_on_did_nothing():
+    """``value_won`` (PR F2) is what a seat's won claims were sized on, in typicals: for the
+    bid's weight on the week or on the season it restates the lever's own setting, whatever the
+    arm then bids. A pair whose two arms place the same claims at the same bids, win the same
+    ones and finish alike played one season, and is marked "did nothing" (found in review: the
+    count alone kept the mark off). Every other count of the bids still tells two seasons apart,
+    and so does the value won beside one of them."""
+    flat = pair({("2024", "prior"): {}})
+    bids = {"claims_won": 3.0, "dollars_spent": 7.0, "dollars_at_bracket": 40.0}
+    a, b = {**bids, "value_won": 2.5}, {**bids, "value_won": 3.25}
+    got = sc.result_of(flat, [path(), path(a=a, b=b)], "matchup_wins")
+    assert got["counts_equal"] and got["outcomes_equal"] and got["did_nothing"]
+    assert not got["survives"] and sc.result_words(got).startswith("did nothing (")
+    assert sc.SIZED_ON == ("value_won",) and set(sc.SIZED_ON) <= set(ct.BIDS)
+    # The record keeps the count in both arms' rows, as every other.
+    assert set(got["cells"]["2024"]["prior"]["counts"]) == {"a", "b"}
+    for key, count in bids.items():
+        moved = sc.result_of(flat, [path(a=a, b={**b, key: count + 1})], "matchup_wins")
+        assert not moved["counts_equal"] and not moved["did_nothing"], key
+    # An outcome that differs is a lever that did something, whatever the counts.
+    odd = sc.result_of(flat, [path(a=a, b=b, delta=1.0)], "matchup_wins")
+    assert odd["counts_equal"] and not odd["outcomes_equal"] and not odd["did_nothing"]
 
 
 def test_a_result_keeps_every_outcome_and_both_arms_counts_by_cell():

@@ -62,7 +62,8 @@ SCALE_NOTE = (
     "season term is the week gain's size); measured once, before any pair, and kept with the "
     "screen so a later piece uses the same figure"
 )
-#: The one sentence a plan floor's row adds in a FAAB run.
+#: The one sentence a plan floor's row adds in a FAAB run, unless the baseline's ``bid`` gives
+#: the three weeks no weight (PR F2: no seat's set then reads the floor, ``policy.NO_THREE``).
 PLAN_FAAB_NOTE = (
     "in a FAAB run a seat that bids also reads this floor as its typical gain until ten moves, "
     "on the surrogate tier too; that is not what this row screens, which is the plan's floor on "
@@ -86,6 +87,12 @@ RULE = (
     "construction) and does not survive; advisory: a survivor is a candidate for the tune, not "
     "a finding"
 )
+#: The counts "did nothing" sets aside (:func:`result_of`): what a seat's bids were sized on,
+#: not what its season did. ``value_won`` (PR F2, ``counts.PACING``) is the summed value in
+#: typicals of the claims a seat won, which a weight of the bid block moves by itself, whatever
+#: the arm then bids: two arms apart in it alone placed the same claims at the same bids and
+#: played one season. The record keeps it in both arms' rows as every other count.
+SIZED_ON = ("value_won",)
 #: The measures by name, for the table.
 MEASURE_WORDS = {"matchup_wins": "matchup wins", "category_wins": "category wins"}
 
@@ -294,7 +301,8 @@ def _pace_k(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Ste
 
 def _pace_reserve(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
     """The path's reserve one step up, on a pace that follows the path in both arms: the
-    baseline's, or the list's where it names none or holds ``k`` 0."""
+    baseline's; the baseline's own ``shape`` and ``reserve`` at the list's ``k`` where it holds
+    ``k`` 0; the list's path (:data:`PACE_PATH`) where it names none."""
     named = (base.bid or bp.DEFAULT).pace
     follows = named is not None and named.k > 0
     block = _pace_of(base) if follows else _pace_of(base, PACE_PATH["k"])
@@ -408,7 +416,10 @@ LEVERS: tuple[Lever, ...] = (
         "surrogate",
         "one step up",
         _pace_reserve,
-        "a pace that follows its path: the baseline's, or with none (or at k 0) the list's",
+        (
+            "a pace that follows its path: the baseline's, at the list's k 1 where it holds "
+            "k 0; the list's where it names none"
+        ),
     ),
     Lever(f"{BID}routine", "surrogate", "flipped", _plain(_routine)),
     Lever(
@@ -553,7 +564,8 @@ def _lever_rows(
     a = rn.arm_of(a_spec)
     both = {k: value_of(a, k) for k in ("tier", *sets) if value_of(a, k) != value_of(plain, k)}
     floor = lever.name in ("plan_floor_cats", "plan_floor_points")
-    note = PLAN_FAAB_NOTE if floor and ctx.waivers == "faab" else None
+    typical = (a.bid or bp.DEFAULT).three > 0
+    note = PLAN_FAAB_NOTE if floor and ctx.waivers == "faab" and typical else None
 
     def row(key: str, nudge: str, status: str, **more: Any) -> Row:
         return Row(
@@ -644,7 +656,8 @@ def result_of(
     its standing paths' task results (``standing``: those the audit did not void): by cell, the
     paired difference B less A with its SE on every outcome and whether it clears one SE on
     ``measure``, and both arms' counts; whether every standing path's counts are equal between
-    the two arms and whether its outcomes are; whether the lever did nothing (both: the two arms
+    the two arms (:data:`SIZED_ON` set aside: a value a bid was sized on is no count of what a
+    season did) and whether its outcomes are; whether the lever did nothing (both: the two arms
     played one season on every path, as far as a record tells); and whether it survives
     (:data:`RULE`). Both arms play one world, so equal counts with an outcome that differs is a
     lever that changed which moves were made, not how many: it did something."""
@@ -662,7 +675,11 @@ def result_of(
         }
         for t, by_label in payload["results"].items()
     }
-    counts = all(r["counts"]["a"] == r["counts"]["b"] for r in standing)
+
+    def lived(row: Mapping[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in row.items() if k not in SIZED_ON}
+
+    counts = all(lived(r["counts"]["a"]) == lived(r["counts"]["b"]) for r in standing)
     outcomes = all(all(not v for v in r["delta"].values()) for r in standing)
     nothing = counts and outcomes
     return {
@@ -770,6 +787,7 @@ __all__ = [
     "RULE",
     "SCALE_NOTE",
     "SCREEN_VERSION",
+    "SIZED_ON",
     "Context",
     "Lever",
     "Row",
