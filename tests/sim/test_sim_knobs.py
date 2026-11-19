@@ -50,6 +50,10 @@ def test_the_twelve_knobs_are_the_live_ten_and_the_simulators_two():
         ({"season_weight": None}, ValueError, "season_weight None is not a number"),
         ({"playoff_weight": "twice"}, ValueError, "playoff_weight 'twice' is not a number"),
         ({"playoff_weight": float("inf")}, ValueError, "playoff_weight inf is not a finite"),
+        # The engine's own check passes a NaN (it is below no minimum), and the stash threshold
+        # has no maximum; it is read since PR G, so the simulator refuses both.
+        ({"stash_threshold": float("nan")}, ValueError, "stash_threshold nan is not a finite"),
+        ({"stash_threshold": float("inf")}, ValueError, "stash_threshold inf is not a finite"),
         ({"rival_claim_rate": 0.3}, ValueError, "knob 'rival_claim_rate' is not a knob"),
     ],
 )

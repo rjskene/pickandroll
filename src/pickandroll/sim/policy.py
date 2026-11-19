@@ -215,7 +215,10 @@ def knob_refused(name: str, value: Any) -> str | None:
     """Why knob ``name`` may not take ``value``; None when it may. A live knob by the engine's
     own check (``progress.refused``: its choices, a number, a whole one for a count, its minimum
     and its maximum), and None only where the engine's default is None (:data:`TAKES_NONE`); the
-    simulator's two are numbers, 0 or more."""
+    simulator's two are numbers, 0 or more. No knob takes a number that is not finite: the
+    engine's check compares a number with its bounds, which a NaN passes, and the stash
+    threshold, which has no maximum, is read since PR G (a NaN there keeps every returning
+    player, and a record cannot hold it)."""
     if name in SIM_KNOBS:
         if isinstance(value, bool) or not isinstance(value, int | float):
             return f"{name} {value!r} is not a number"
@@ -226,6 +229,8 @@ def knob_refused(name: str, value: Any) -> str | None:
         return None
     if value is None:
         return None if name in TAKES_NONE else f"{name} is None: the engine takes a value for it"
+    if isinstance(value, float) and not math.isfinite(value):
+        return f"{name} {value!r} is not a finite number"
     return refused(name, value)
 
 
