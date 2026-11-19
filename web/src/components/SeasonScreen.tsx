@@ -1048,7 +1048,7 @@ function Moves({
         </div>
       )}
       <p className="dim small">
-        {searchPoolText(m.search)} Each move&apos;s prices are re-solves: the set without his add, and the set keeping his drop.
+        {searchPoolText(m.search)} Each move&apos;s prices are re-solves: the set without its add, and the set keeping its drop.
       </p>
     </>
   );
