@@ -27,6 +27,7 @@ import pytest
 
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
+from pickandroll.sim import league as lg
 from pickandroll.sim import nopeek, policy, shapes
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
@@ -34,7 +35,7 @@ from pickandroll.sim import screen as sc
 from pickandroll.sim import stake as stk
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, wk
 from pickandroll.sim.shapes import CONTINUOUS
-from pickandroll.sim.state import Member, initial
+from pickandroll.sim.state import Member, Waiting, initial
 from tests.sim.sim_league import (
     KNOBS,
     NINE,
@@ -403,18 +404,24 @@ def test_a_mirror_rival_stays_on_the_block_and_reads_no_stake(monkeypatch):
 
 
 # --------------------------------------------------------------------------- the stake in force
-def by_hand(built: policy.Built, move: mv.Move, share: float, playoff: float = 1.0) -> float:
-    """A move's season figure split by hand (nobody away): each player's season value above a
-    dead spot times his team's games from the day the move counts to the running week's last
-    day, plus ``share`` times his games after it, a bracket day's game counted ``playoff``
-    times in both parts; the add's less the drop's."""
+def by_hand(
+    built: policy.Built, move: mv.Move, share: float, playoff: float = 1.0, back=None
+) -> float:
+    """A move's season figure split by hand: each player's season value above a dead spot times
+    his team's games from the day he counts to the running week's last day, plus ``share``
+    times his games after it, a bracket day's game counted ``playoff`` times in both parts;
+    the add's less the drop's. A player counts from the day the move does, or from the day he
+    is ``back`` when he is away and that is later (nobody away when it names nobody)."""
     p = built.problem
     day = mv.day_of(p, move)
-    players = {**dict(p.candidates), **dict(p.roster)}
+    players = {**dict(p.candidates), **dict(p.held), **dict(p.roster)}
 
     def worth(key: int) -> float:
         team = players[key].nba_team
-        days = [d for d, teams in p.schedule.items() if team in teams and day <= d <= p.season_end]
+        since = max(day, (back or {}).get(key, day))
+        days = [
+            d for d, teams in p.schedule.items() if team in teams and since <= d <= p.season_end
+        ]
         games = {d: playoff if d in built.bracket else 1.0 for d in days}
         this = sum(g for d, g in games.items() if d <= built.week.end)
         return (p.season_value[key] - p.dead) * (this + share * (sum(games.values()) - this))
@@ -470,6 +477,65 @@ def test_a_stake_splits_the_season_figure_at_the_running_week_s_last_day():
     for m in (mv.Move(LATE, DEAD), mv.Move(LATE, mine[0])):
         assert figure.move(m) == pytest.approx(by_hand(heavy, m, 0.5, playoff=2.0), abs=1e-9)
         assert figure.move(m) != pytest.approx(by_hand(heavy, m, 0.5), abs=1e-9)
+
+
+def test_a_player_who_counts_from_after_the_running_week_has_no_part_in_it():
+    """The split is at the day each player counts from, not the day the move is decided. A
+    claim that clears after the running week lands after it, and a player of the seat's who is
+    away, on the roster or in a held slot, counts from his return. A move whose players all
+    count from after the week has no part in it: its figure is scaled whole, and is exactly
+    nothing at a share of 0. Dropping a player who is back after the week for one who lands in
+    it takes only his share off: the add's games this week stay in full. Each of them has games
+    between the week's end and the day he counts from, which a split at any other day would
+    count. One format: the figure is a value times games and weighs nothing by format."""
+    base = make_setup(teams=4, pool=4, held_slots=("IL",))
+    setup = replace(base, waivers="priority", waiver_days=2)
+    week, third = setup.calendar.weeks[0], setup.calendar.weeks[2]
+    claimed, wire, stashed = sorted(setup.pool)[:3]
+    away, here = (k for k, _ in setup.rosters[1][:2])
+    clears, returns = week.end + timedelta(3), week.end + timedelta(4)
+    heals = third.start + timedelta(2)
+    back = {away: returns, stashed: heals}
+    state = replace(
+        initial(setup),
+        rosters={**setup.rosters, 1: (*setup.rosters[1], (stashed, "IL"))},
+        pool=frozenset(setup.pool) - {stashed},
+        waivers={claimed: Waiting(clears, 2)},
+    )
+    knobs = {**KNOBS, "season_weight": 1.0}
+    status = {away: "O", stashed: "INJ"}
+    built = policy.problem_of(setup, state, 1, knobs, setup.projection, status, back)
+    p = built.problem
+    assert built.week == week and dict(p.held).keys() == {stashed}
+    players = {**dict(p.candidates), **dict(p.held), **dict(p.roster)}
+    whole = policy.SeasonFigure(built, 1.0)
+    later = week.end + timedelta(1)
+    # The premise: the claim lands on its clear date and the two who are away count from their
+    # returns, each after the week, and each one's team plays between the split day and then.
+    assert mv.day_of(p, mv.Move(claimed, here)) == clears > week.end
+    assert mv.day_of(p, mv.Move(wire, here)) == state.day + timedelta(1) <= week.end
+    for key, since in ((claimed, clears), (away, returns), (stashed, heals)):
+        assert mv.back_from(p, key, players[key]) == since > week.end
+        team = players[key].nba_team
+        assert whole.games(team, later) > whole.games(team, since) > 0
+    none = [mv.Move(claimed, here), mv.Move(claimed, away), mv.Move(claimed, stashed)]
+    some = [mv.Move(wire, away), mv.Move(wire, stashed)]
+    assert all(whole.move(m) not in (None, 0.0) for m in (*none, *some))
+    for share in (0.0, 0.3, 1.0):
+        figure = policy.StakedFigure(built, 1.0, share)
+        assert figure.later == later
+        for m in (*none, *some):
+            assert figure.move(m) == pytest.approx(by_hand(built, m, share, back=back), abs=1e-9)
+        for m in none:
+            assert figure.move(m) == pytest.approx(share * whole.move(m), abs=1e-9)
+        for m in some:
+            # The add's games this week in full; the rest of the move at its share.
+            kept = by_hand(built, mv.Move(m.add), 0.0)
+            assert kept > 0 and figure.move(m) == pytest.approx(
+                kept + share * (whole.move(m) - kept), abs=1e-9
+            )
+    nothing = policy.StakedFigure(built, 1.0, 0.0)
+    assert all(nothing.move(m) == 0.0 for m in none)
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
@@ -850,11 +916,15 @@ def on_day(setup, day, knobs=None, **state):
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-def test_the_key_a_seat_queues_on_holds_no_day_of_the_running_week(h2h):
-    """Why the stake splits the figure and does not scale it whole: the key both tiers queue on
-    holds the weeks after the running one and no day of it, fewer as the season runs out and
-    none in its last week. A move lands the day after it is decided, so of a queued set's
-    score the season term alone counts the rest of the running week."""
+def test_a_premise_of_the_split_the_key_a_seat_queues_on_holds_no_day_of_the_running_week(h2h):
+    """A tripwire on a premise, not a test of the guard PR's change: it reads only what
+    ``policy.problem_of`` builds, which that PR did not touch, and it passes on the code
+    before it. It is kept because the split rests on it. Why the stake splits the figure and
+    does not scale it whole: the key both tiers queue on holds the weeks after the running
+    one and no day of it, fewer as the season runs out and none in its last week. A move
+    lands the day after it is decided, so of a queued set's score the season term alone
+    counts the rest of the running week. A change that moves that key fails this, and the
+    README's reason for the split ("What a stake moves, and its limit") is then read again."""
     setup = disagreeing(teams=4, h2h=h2h)
     weeks = setup.calendar.weeks
     held = []
@@ -933,6 +1003,57 @@ def test_in_a_decisive_regular_week_a_seat_still_adds_the_player_who_plays_only_
 
 @pytest.mark.parametrize("h2h", FORMATS)
 @pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_the_block_reads_the_whole_season_at_any_stake(tier, h2h):
+    """The season guard's figure is the engine's own, the whole rest of the season, and reads
+    no stake: under the block a stake chooses among the sets the block allows, and cannot take
+    one that gains the decisive week and loses the season. A free agent plays four days of the
+    last regular week and never after; the seat's six spots are full, so he comes in only for
+    one of its players, a swap that gains this week's part of the term and loses the season as
+    a whole. In a week whose stake is 1, at a stake of 1, the seat takes it under ``off`` (a
+    set past the guard) and decides nothing under the block, as with no stake."""
+    base = make_setup(teams=4, spots=6, pool=0, weeks=6, playoff_teams=2)
+    week = base.calendar.weeks[4]
+    assert week.number == base.spec.regular_weeks[-1]
+    schedule = {d: set(t) for d, t in base.schedule.items()}
+    for d in list(week.days())[1:5]:
+        schedule[d].add("NNN")
+    projection = {**base.projection, NOW: rates(1.0)}
+    setup = of_format(
+        replace(
+            base,
+            players={**base.players, NOW: Member(NOW, "Now", "NNN", ("PG",))},
+            projection=projection,
+            schedule={d: frozenset(t) for d, t in schedule.items()},
+            pool=(NOW,),
+            market=wk.per_game_values(projection, NINE, None),
+        ),
+        h2h,
+    )
+    built, state = on_day(setup, week.start, stakes={1: 1.0})
+    guard = policy.guard_of(built)
+    whole = policy.SeasonFigure(built, 1.0)
+    seats = {
+        (g, stake): policy.guarded(built, setup, state, g, stake)
+        for g in policy.GUARDS
+        for stake in (0.0, 1.0)
+    }
+    assert seats[policy.BLOCK, 0.0] is built
+    got = {k: policy.decide(b, tier, with_plan=False) for k, b in seats.items()}
+    taken = got[policy.OFF, 1.0]
+    assert adds(taken) == {NOW} and None not in drops(taken)
+    part = policy.season_figure_of(seats[policy.OFF, 1.0])
+    assert whole.of(taken.moves) < 0 < part.of(taken.moves)
+    assert not guard(taken.moves) and taken.past_guard
+    # The stake is what makes the set worth taking, and the block what refuses it: the guard
+    # of a staked seat is the guard of the seat with none, on the whole figure.
+    assert got[policy.OFF, 0.0].moves == ()
+    assert got[policy.BLOCK, 1.0].moves == got[policy.BLOCK, 0.0].moves == ()
+    staked = policy.allowed_of(seats[policy.BLOCK, 1.0])
+    assert staked is not None and not staked(taken.moves)
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
 def test_a_stated_limit_a_move_decided_on_a_week_s_last_day_is_scaled_whole(tier, h2h):
     """A stated limit, pinned by name (the README's "What a stake moves, and its limit"): a
     move decided on a Sunday lands in the next week, so it has no part in the running week and
@@ -970,6 +1091,77 @@ def test_a_stated_limit_a_move_decided_on_a_week_s_last_day_is_scaled_whole(tier
     monday, at = on_day(setup, sunday + timedelta(1), stakes={1: 1.0})
     after = policy.season_figure_of(policy.guarded(monday, setup, at, stake=1.0))
     assert after.share == 0.0 and after.move(soon) > 0 and after.move(late) == 0.0
+
+
+# --------------------------------------------------------------------------- a bye
+#: The made-up free agents of :func:`bye_league`.
+SITS, PLAYS = 105, 106
+
+
+def bye_league(h2h: str):
+    """Six seats, three in the field over two bracket weeks, so the top seed sits out the first
+    of them (``spec.byes`` 1). Free agent ``SITS`` plays every day of that week and never
+    after; ``PLAYS``, as good, every day of the week after, the final. Seat 1 holds a spot that
+    plays nothing (``DEAD``)."""
+    base = make_setup(teams=6, spots=5, pool=0, weeks=7, playoff_weeks=2, playoff_teams=3)
+    first, final = base.calendar.weeks[5:]
+    schedule = {d: set(t) for d, t in base.schedule.items()}
+    for week, team in ((first, "HHH"), (final, "RRR")):
+        for d in week.days():
+            schedule[d].add(team)
+    players = {
+        **base.players,
+        SITS: Member(SITS, "Sits", "HHH", ("PG",)),
+        PLAYS: Member(PLAYS, "Plays", "RRR", ("PG",)),
+        DEAD: Member(DEAD, "Dead", "ZZZ", ("PG",)),
+    }
+    projection = {**base.projection, SITS: rates(1.0), PLAYS: rates(1.0)}
+    projection[DEAD] = {s: 0.05 * x for s, x in rates(0.1).items()}
+    setup = replace(
+        base,
+        players=players,
+        projection=projection,
+        schedule={d: frozenset(t) for d, t in schedule.items()},
+        rosters={**base.rosters, 1: (*base.rosters[1], (DEAD, base.rosters[1][-1][1]))},
+        pool=(SITS, PLAYS),
+        market=wk.per_game_values(projection, NINE, None),
+    )
+    return of_format(setup, h2h)
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("tier", policy.GUARDED_TIERS)
+def test_a_stated_limit_a_seat_with_a_bye_reads_a_full_stake_in_the_week_it_sits_out(tier, h2h):
+    """A stated limit, pinned by name (the README's "What a stake moves, and its limit"): in
+    the bracket's weeks ``L`` is 1 for every seat inside the field, and which of them plays a
+    week is not read. A top seed with a bye plays no matchup in the bracket's first week and
+    its ``L`` that week is 1 all the same. At a stake of 1 its term then keeps that week's
+    games, which decide nothing for it, and holds none of the round it will play: it fills the
+    spot that plays nothing with the player of its bye week, where with no stake it takes the
+    player of its round for it. A working default, as the bracket's ``L`` is: a rule that gave
+    a seat ``L`` 0 in the week of its bye would turn this test round."""
+    setup = bye_league(h2h)
+    spec_ = setup.spec
+    assert (spec_.playoff_teams, spec_.byes, spec_.playoff_weeks) == (3, 1, (6, 7))
+    # Every regular week a tie: the league's own order makes seat 1 the top seed, and the
+    # bracket's first week pairs the other two of the field.
+    tied: dict = {w: {} for w in spec_.regular_weeks}
+    played = lg.season(spec_, tied).playoffs
+    assert played.seeds[1] == 1 and [pair[:2] for pair in played.rounds[0]] == [(2, 3)]
+    assert stk.level(spec_, tied, 1, 6) == stk.level(spec_, tied, 1, 7) == 1.0
+    first = setup.calendar.weeks[5]
+    assert first.number == 6
+    built, state = on_day(setup, first.start, totals=tied)
+    staked = policy.guarded(built, setup, state, stake=1.0)
+    assert staked.level == 1.0 and policy.later_share(staked) == 0.0
+    whole, part = policy.SeasonFigure(built, 1.0), policy.season_figure_of(staked)
+    sits, plays = mv.Move(SITS, DEAD), mv.Move(PLAYS, DEAD)
+    assert part.move(sits) == whole.move(sits) > 0
+    assert whole.move(plays) > 0 and part.move(plays) == 0.0
+    plain = policy.decide(built, tier, with_plan=False)
+    got = policy.decide(staked, tier, with_plan=False)
+    assert plays in plain.moves
+    assert got.moves == (sits,)
 
 
 # --------------------------------------------------------------------------- no peek, a split seat

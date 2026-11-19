@@ -40,7 +40,12 @@ is small early, rises as the weeks run out for a seat near the line and falls to
 seat far from it, ahead or behind.
 
 **In the bracket's weeks** it is 1 for a seat inside the field by the regular season's final
-standings and 0 for a seat outside. Who is knocked out inside the bracket is not read (a limit).
+standings and 0 for a seat outside. Who is knocked out inside the bracket is not read (a limit),
+nor which seat plays the week: a top seed with a bye has ``L`` 1 in the bracket's first week,
+which it sits out. Under the split a stake then keeps that seat's term on the games of a week
+that decides nothing for it and takes the term off the rounds it will play, the reverse of the
+idea for that seat in that week (a limit and a working default, stated in the README's passage
+and pinned by name in ``tests/sim/test_sim_guard.py``).
 
 ``Phi`` is from ``math.erf``, and ``L`` is rounded to :data:`DECIMALS` places before anything
 reads it, so two machines whose ``erf`` differs in the last bit decide alike (the lesson of
@@ -135,8 +140,10 @@ def level(
     """``L``, the stake of week ``week`` for ``team``, from the weeks' ``totals`` (week to team to
     totals; only the regular weeks finished before ``week`` are read). In one of the bracket's
     weeks: 1 for a team inside the field by the regular season's final standings, 0 for one
-    outside. In any other week the module's formula (:func:`swing` of the lead and the regular
-    weeks after this one); 0 in a league with no cut line, where no win moves the field."""
+    outside, whether or not it plays a matchup that week (a bye and a lost round are not read:
+    the module's limits). In any other week the module's formula (:func:`swing` of the lead and
+    the regular weeks after this one); 0 in a league with no cut line, where no win moves the
+    field."""
     if week in spec.playoff_weeks:
         final = table_before(spec, totals, None)
         inside = {row.team for row in final if row.rank <= spec.playoff_teams}
