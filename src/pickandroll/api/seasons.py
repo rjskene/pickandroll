@@ -578,6 +578,9 @@ class SeasonService:
         #: One writer of the ESPN ids the scorecards match.
         self._ids_lock = threading.Lock()
         self.moves_cache = season_moves.MovesCache()
+        #: The armed leagues' recommended gains up to yesterday, by (today, scoring): the add
+        #: reserve's price (#436). Yesterday's logs are closed, so a day's pool never changes.
+        self._typicals: dict[tuple[date, str], list[float]] = {}
         #: When each kept moves answer was made, by its cache key (#240).
         self._moves_at: dict[tuple[Any, ...], datetime] = {}
         #: The page solves started and not done, by key: at most one a key (#240).
@@ -913,8 +916,9 @@ class SeasonService:
                     "moves of league %s solve without the lift: its flags failed: %s", league, exc
                 )
                 flags = {}
+            typical = self._typical(base.scoring, today, knobs)
             return season_moves.build(
-                season, today, self.data_dir, system, knobs, claims, picks, flags
+                season, today, self.data_dir, system, knobs, claims, picks, flags, typical
             )
 
         built = self.moves_cache.get(key, make)
@@ -1307,6 +1311,30 @@ class SeasonService:
         return self.autopilot(league)
 
     # ------------------------------------------------------------------ the moves executor
+    def _typical(self, scoring: str, today: date, knobs: Mapping[str, Any] | None) -> float:
+        """The typical recommended gain of ``scoring``'s armed leagues up to yesterday, the add
+        reserve's price (#436): the queue's pool (``build_queue``) of the days before ``today``,
+        else the plan floor of ``knobs``. Not in the moves stamp: today's logged solves never move
+        a solve's price."""
+        key = (today, scoring)
+        gains = self._typicals.get(key)
+        if gains is None:
+            gains = []
+            yesterday = today - timedelta(days=1)
+            for league, mode in sorted(self._modes(leagues.MOVES).items()):
+                if mode.get("private") or mode["mode"] == "off":
+                    continue
+                try:
+                    base, _ = base_settings(self.data_dir, league)
+                    if base.scoring != scoring:
+                        continue
+                    entries = season_decisions.load(season_dir(self.data_dir, league), yesterday)
+                except Exception:  # noqa: BLE001, S112 - a league that does not read adds no gains
+                    continue
+                gains.extend(season_queue.recent_gains(entries, yesterday))
+            self._typicals[key] = gains
+        return qa.typical_gain(gains, season_queue.plan_floor(knobs, scoring))[0]
+
     def _modes(self, kind: str) -> dict[str, dict[str, Any]]:
         """Every league's mode of an executor (``leagues.LINEUPS``, ``leagues.MOVES``); a folder
         that does not read is left out."""

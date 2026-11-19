@@ -16,7 +16,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from . import lift
+from . import lift, reserve
 from .moves import PROTECTION_FLOOR
 from .plans import THREE_WEIGHT
 from .stream import DAILY_CAP, PLAN_FLOOR_CATS, PLAN_FLOOR_POINTS
@@ -42,7 +42,8 @@ LIVE_KNOBS = (*KNOBS, "three_weight")
 #: (#435, ``season.lift.KNOBS``). The lift's stay out of :data:`LIVE_KNOBS` and :data:`DEFAULTS`
 #: (the simulator's arms name every live knob; the lift's are tuned there later, #172): the solve
 #: reads each from the file or else ``season.lift.DEFAULTS``, and the Monday step never steps them.
-FILE_KNOBS = (*LIVE_KNOBS, *lift.KNOBS)
+#: The add reserve's and the re-cut rule's (#436, ``season.reserve.KNOBS``) likewise.
+FILE_KNOBS = (*LIVE_KNOBS, *lift.KNOBS, *reserve.KNOBS)
 #: The lowest value a knob may take, from section 6's table (#150): the protection floor never
 #: below its default, so no setting lets the engine drop a player worth more than the best add
 #: over the rest of the season; the blend weight and the daily move cap at their bounds' low end.
@@ -164,6 +165,8 @@ def refused(knob: str, value: Any) -> str | None:
     """Why ``knob`` may not take ``value``: not one of its choices, not a number (a whole one
     for a count) for a knob that is one, under its minimum (#150) or over its maximum (#152);
     None when it may, an unset value among them."""
+    if knob in reserve.KNOBS:
+        return reserve.refused(knob, value)
     if value is None:
         return None
     if knob in lift.KNOBS:

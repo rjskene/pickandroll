@@ -1353,7 +1353,9 @@ export type QueueReason =
   | "a later step of the week plan: queued at its day's build"
   | "an earlier step of the week plan is not queued"
   | "its drop is on a claim already placed"
-  | "a claim on the add is already placed";
+  | "a claim on the add is already placed"
+  | "held for the week's reserve"
+  | "added within the re-cut days";
 
 /** An execute pass's outcome for one entry: ``gone`` when another team had the add first. */
 export type MoveOutcome = "would_claim" | "claimed" | "added" | "skipped" | "failed" | "gone";
@@ -1410,6 +1412,9 @@ export interface QueueEntry {
   waits?: QueueWait | null;
   flag: FlagLevel | null;
   floor: QueueFloor & { below: "plan" | "scored" | null };
+  /** What the add reserve or the re-cut rule held back (#436): what the move's bid scales by,
+   * the price it did not clear and the re-cut days; only on such a move. */
+  reserve?: { worth: number | null; price: number; days: number | null };
   /** Null in a standard-waivers league (#261): a claim goes by waiver priority, no bid. */
   bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string } | null;
   /** "priority" for a standard league's waiver claim; absent from a server before #261. */
@@ -1766,6 +1771,19 @@ export interface MovesLift {
   lifted: Record<string, MoveLift>;
 }
 
+/** The add reserve and the re-cut rule in force (#436): the week whose last adds are held and
+ * how many, the price, the adds that may use them whatever they gain, my players added within
+ * the re-cut days (by player, the day added) and those of them out. Absent when neither applies. */
+export interface MovesReserve {
+  knobs: { reserve_adds: number; reserve_release: string; reserve_price: number | null; recut_days: number };
+  week: { start: string; end: string; adds: number | null } | null;
+  reserved: number;
+  price: number;
+  exempt: number[];
+  recent: Record<string, string>;
+  out: number[];
+}
+
 export interface MoveCandidate {
   from: string;
   /** Null when no move with him fits (no adds left, no drop). */
@@ -1837,6 +1855,20 @@ export interface RecommendedSet {
   ros?: RosTotal | null;
   /** The season guard on the set (#164); null where none ran (no scorer or season end). */
   season_guard?: SeasonGuard | null;
+  /** The add reserve and the re-cut rule on the set (#436); absent where neither applies. */
+  reserve?: ReserveHeld;
+}
+
+/** What the add reserve or the re-cut rule held back from a set (#436): the set without them,
+ * what it gains and what this one forgoes, the rule and the move that refused it, the price. */
+export interface ReserveHeld {
+  held_back: boolean;
+  moves?: RecommendedMove[];
+  gain?: Record<MoveHorizon, number>;
+  forgone?: Record<MoveHorizon, number>;
+  rule?: "reserve" | "recut" | null;
+  refused?: { add: number; drop: number | null; adds: number } | null;
+  price?: number;
 }
 
 /** A streamer valued to the season's end as kept there: the later step that drops him (#151). */
@@ -1882,8 +1914,9 @@ export interface StreamPlan {
   floor: number;
   /** Why it is not recommended: under the floor, or the plan with the best week would clear it
    * but costs the three weeks after, which the planner never trades (``guard``), or the season
-   * (``season``, the season guard, #164). */
-  reason: "short" | "guard" | "season" | null;
+   * (``season``, the season guard, #164), or the add reserve or the re-cut rule (``reserve``,
+   * #436). */
+  reason: "short" | "guard" | "season" | "reserve" | null;
   guard: PlanGuard | null;
 }
 
@@ -2101,6 +2134,8 @@ export interface MovesPayload {
   picks?: MovesPicks;
   /** The breakout lift in force (#435); absent with no lifted candidate. */
   lift?: MovesLift;
+  /** The add reserve and the re-cut rule in force (#436); absent when neither applies. */
+  reserve?: MovesReserve;
   /** ``seconds``: the whole solve's (#221 part 2), absent before. The budget (#306): its
    * seconds, whether it ran out (``cut``), the searches finished of those begun, and ``note``
    * when it ran out; absent before. */

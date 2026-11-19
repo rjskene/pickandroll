@@ -1361,6 +1361,58 @@ that drops one of my marginal players or nobody:
   carries the flags' inputs, so a new buzz day or past-days export solves again. A flag read that
   fails leaves the solve without the lift.
 
+### The add reserve and the re-cut rule (#436)
+
+The user ruled on 2026-11-19 that adds and recent adds should not go cheaply: six of nine public
+leagues had used the week's adds by Thursday when a breakout came free. Two rules
+(`season/reserve.py`) hold with the season guard in every search, re-solve, streaming plan, week
+plan and strategy weight (`reserve.both`, the `allowed` they already take):
+
+- **The reserve.** Before the week's release day (`reserve_release`, a weekday; from that day on
+  the reserve is free) a set may use the week's last `reserve_adds` adds only through moves that
+  add more than the price to the set on the queue's own score (the week plus `three_weight` times
+  the three weeks; the matchup odds in a playoff week), or whose add carries an `add` or
+  `must-add` flag. A move lifted by a `watch` flag (#435) gets no exemption. The moves that use
+  the held adds are the set's lowest-scoring ones of the week, so the rule reads the same in any
+  order. The user's picks (#434) are folded before the search and count toward the week's adds;
+  they are never refused.
+- **No quick re-cut.** A move dropping a player I added within `recut_days` days (my adds in the
+  league's transactions, `moves.when_date`) is allowed only when it adds more than the price, or
+  when that player is out (an O, a status that keeps a player out of every week, or a held slot).
+  A pick's drop is never refused. A set's own earlier add counts as added on its move's day
+  (the master's review): a streaming chain's or week plan's later step dropping it within the
+  days pays the price too, so a plan never counts on a chain the queue refuses on the later
+  step's day. A move a later step needs (its add is that step's drop) is worth what it adds to
+  the moves before its day.
+- **What a move adds.** The set's value on the queue's score less the set's without the move
+  (`reserve.worths`); the solve and the queue compare the same number to the price.
+- **The price.** `reserve_price` when set, else the typical recommended gain the bid policy scales
+  by (`autopilot.typical_gain`): the armed public leagues of the same scoring, their logged
+  recommended moves of the fortnight up to yesterday (`SeasonService._typical`, cached a day; not
+  in the moves stamp, so today's logged solves never move it), the plan floor until ten such
+  moves exist.
+- **The knobs**, the master's first guesses as the code's defaults (`reserve.DEFAULTS`):
+  `reserve_adds` 1 (0 to 3), `reserve_release` `friday` (its solves place claims that land on
+  Saturday), `reserve_price` none (the typical gain), `recut_days` 3 (0 to 14). Like the lift's,
+  they stay out of `LIVE_KNOBS` (the simulator tunes them later, #172), and the Monday step never
+  steps them. `reserve_adds` and `recut_days` both 0 apply nothing: the moves as before #436.
+- **The record.** The payload and the decision log entry gain `reserve` (the knobs, the week held
+  and its adds, how many are held, the price, the exempt adds, my players added within the
+  re-cut days and those of them out) only when a rule applies (`recut_days` above 0 is enough).
+  A horizon whose set a rule held back carries `reserve` with the set without the rules
+  (`held_back`, its moves, its gain, what this one forgoes, the rule and the move that refused
+  it, the price). The log's three sets and the week plan the queue takes carry `reserve.adds`,
+  each move's worth as the solve computed it, with the held-back set when there is one. A streaming plan the rules refuse says so (`reason` `reserve`). The
+  Moves card says what is held ("One add held for the week's reserve until Fri; P added Wed Nov
+  18 (only for more than 0.30)") and what was held back.
+- **The queue.** The build reads the solve's logged `reserve` and leaves out, after the noise
+  floor, a move that would use one of the week's held adds (its week's adds left at or under the
+  held count) or re-cut a recent add who is not out, for no more than the price, on the move's
+  logged `adds` (what its bid scales by, a three-weeks move's gain or a plan step's score, only
+  for an entry logged without it); it counts the adds left on its own. Reasons `held for the week's
+  reserve` and `added within the re-cut days`, the entry's `reserve` giving its worth, the price
+  and the days. A pick's own entry is never refused, and its add counts first.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a
