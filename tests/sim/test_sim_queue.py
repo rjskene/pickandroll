@@ -1701,3 +1701,17 @@ def test_a_pair_s_rows_carry_the_queue_s_counts_only_when_an_arm_names_queue():
     apart = rn.paired_apart(setup, w, setup, w, three, queue_arm(), 1)
     assert apart["counts"]["a"]["plan_days"] == 0.0 and apart["counts"]["b"] == rows["b"]
     assert set(ct.PLANS) <= set(apart["counts"]["rivals"])
+
+
+def test_the_replay_s_reason_says_the_queue_s_rule():
+    """The record's reason holds this PR's words under their own number: a payload read later
+    says whether an arm could execute ``queue``, and that the names of who leaves were made
+    with what the seat queues. The sentence stands before the guard PR's. A later version's
+    sentence goes before this one, so the number is held from below here and exactly by the
+    payload tests that read it."""
+    why = ss.REPLAY_VERSION_WHY
+    assert ss.REPLAY_VERSION >= 17 and "17: the queue's rule: " in why
+    mine = why.split("17: the queue's rule: ")[1].split("16: the season guard ")[0]
+    for said in ("plans.for_queue", "plan_days", "plan_steps", "three_weight", "guard off"):
+        assert said in mine, said
+    assert "with what the seat queues that night made" in mine

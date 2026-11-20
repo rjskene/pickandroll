@@ -1423,7 +1423,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 16 since the season guard as an arm's choice and the
+#: The replay's version in its payload: 17 since the queue's rule (#172, PR E), 16 since the
+#: season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
 #: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
 #: (PR Fd),
@@ -1441,8 +1442,26 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 16
+REPLAY_VERSION = 17
 REPLAY_VERSION_WHY = (
+    "17: the queue's rule: an exact arm's executes may name queue, the live queue's rule (the "
+    "three weeks' set as three finds it, then the week plan the engine's plans.for_queue takes "
+    "instead of it: the plan with the highest score that beats the set by the plan floor, the "
+    "score the week's gain plus the arm's three_weight times the three weeks' gain, the weight 0 "
+    "in a week of the bracket), its steps queued on the days they are due and the plan drawn "
+    "again every day; queue is refused off the exact tier, and with_plan or execute_plan beside "
+    "it; no rival takes it; under FAAB a step of the plan the queue took bids on its score at the "
+    "queue's weight; three_weight is read by the exact tier executing queue and a plan floor "
+    "there too; a run with a queue arm counts plan_days and plan_steps in every seat's row and "
+    "its reads table carries a note on the season term (on the three weeks' set only: not in the "
+    "plans' gate, and the season guard does not read it); under an arm's guard off every call of "
+    "the rule is handed no allowed set, the plans and the queue's choice too; the names of who "
+    "leaves when a held player comes back are made with what the seat queues that night made (the "
+    "set's moves and the plan's steps due that can land together, or a leading plan's steps due), "
+    "so in a league with held slots an arm that executes its plan may play another season than "
+    "version 16's; with no arm naming queue and none executing a plan in a league with held "
+    "slots, the figures and the counts are version 16's, and the reads table's reason for "
+    "three_weight changes in words. "
     "16: the season guard as an arm's choice and a season term that reads the week's stake: an "
     "arm's spec may name guard (block, the season guard on every search of its tier, live's and "
     "the default; or off, no search of the tier is handed an allowed set) and stake (0 to 1, 0 by"

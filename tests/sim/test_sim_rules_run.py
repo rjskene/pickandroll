@@ -115,7 +115,7 @@ def test_with_nothing_named_nothing_moves(wire: Path):
     assert {k: v for k, v in one.items() if k not in WHEN} == {
         k: v for k, v in two.items() if k not in WHEN
     }
-    assert one["replay_version"] == 16
+    assert one["replay_version"] == 17
     assert one["league"]["rules"] == {
         "scoring": "categories",
         "points": None,
@@ -371,7 +371,7 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
     assert f"league rules, on every path: {rules.label()}" in out
     assert rules.label().endswith(", waivers by priority after 3 days")
     p = written(out)
-    assert p["replay_version"] == 16
+    assert p["replay_version"] == 17
     assert p["league"]["rules"] == {
         "scoring": "points",
         "points": dict(shapes.POINTS_DEFAULT),
@@ -403,7 +403,7 @@ def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):
     rules = shapes.LeagueRules(waivers="faab", budget=50, rival_scale=2.0)
     assert f"league rules, on every path: {rules.label()}" in out
     p = written(out)
-    assert p["replay_version"] == ss.REPLAY_VERSION == 16
+    assert p["replay_version"] == ss.REPLAY_VERSION == 17
     assert p["league"]["rules"] == {
         "scoring": "categories",
         "points": None,
@@ -479,7 +479,7 @@ def test_a_continuous_run_records_its_rule_its_model_its_notes_and_its_audit(wir
     rules = shapes.LeagueRules(waivers="faab", waiver_rule="continuous")
     assert f"league rules, on every path: {rules.label()}" in out and "continuous waivers" in out
     p = written(out)
-    assert p["replay_version"] == 16 and "12: continuous waivers" in p["replay_version_why"]
+    assert p["replay_version"] == 17 and "12: continuous waivers" in p["replay_version_why"]
     assert p["league"]["rules"] == {**rules.payload(), "waiver_rule": "continuous"}
     assert p["league"]["faab_note"] == ss.FAAB_NOTE_CONTINUOUS
     assert p["league"]["waiver_rule_note"] == ss.WAIVER_RULE_NOTE
