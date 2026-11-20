@@ -1,7 +1,8 @@
 """What gate 5 is fed (#172, PR 2b; on a replay since PR D3), pure: the surrogate's set against
 the exact set on sampled league-days of a world, and since PR D4a2 what was compared: the two sets
-and their worth by the exact tier's own objective. ``validate.surrogate_gate`` scores the list and
-the command (``cli.gate_surrogate``) builds the replay it runs on.
+and their worth by the exact tier's own objective. ``validate.surrogate_gate`` scores a seat's
+records (since PR g5 by the worths: the gain the surrogate keeps) and the command
+(``cli.gate_surrogate``) builds the replay it runs on.
 """
 
 from __future__ import annotations
@@ -36,12 +37,13 @@ def surrogate_records(
     """What gate 5 compared on each of ``days`` (#172, PR D4a2), from day one's rosters, both
     tiers with ``fields`` (an arm's; the live route's by default) on the day's belief: the exact
     tier's set and the surrogate's (``exact``, ``surrogate``: the add and the drop by id), whether
-    they are equal as sets of moves (``equal``, the gate's input), and each set's worth by the
-    exact tier's own objective on that day's problem (``worth``): the value one evaluator of the
-    exact tier's gives it on the key the exact tier searches (``policy.QUEUE_SET``, with the
-    season term when the knobs carry one, ``policy.seasoned``), beside the worth of standing
-    still (``standing``, the empty set's). A day outside the calendar's weeks, or one with no
-    problem built, is listed with ``left_out`` saying why; on every other ``left_out`` is None."""
+    they are equal as sets of moves (``equal``, which the gate counts), and each set's worth by
+    the exact tier's own objective on that day's problem (``worth``, the gate's input since PR
+    g5): the value one evaluator of the exact tier's gives it on the key the exact tier searches
+    (``policy.QUEUE_SET``, with the season term when the knobs carry one, ``policy.seasoned``),
+    beside the worth of standing still (``standing``, the empty set's). A day outside the
+    calendar's weeks, or one with no problem built, is listed with ``left_out`` saying why; on
+    every other ``left_out`` is None."""
     out: list[dict[str, Any]] = []
     base = initial(setup)
     for day in days:
@@ -88,8 +90,9 @@ def surrogate_matches(
 ) -> list[bool]:
     """On each of ``days``, from day one's rosters, whether the surrogate's set equals the exact
     set (as sets of moves), both with ``fields`` (an arm's; the live route's by default), on the
-    day's belief: gate 5's input, read from :func:`surrogate_records`. A day outside the
-    calendar's weeks, or with no problem built, is left out."""
+    day's belief: gate 5's input until PR g5 and since then what its ``matched`` counts, read
+    from :func:`surrogate_records`. A day outside the calendar's weeks, or with no problem built,
+    is left out."""
     records = surrogate_records(setup, w, team, days, knobs, fields)
     return [r["equal"] for r in records if r["left_out"] is None]
 

@@ -174,10 +174,11 @@ wins only.
 
 ## The gates (`sim/validate.py`)
 
-`validate` is gate 5 alone: the surrogate's set equal to the exact set on four of five sampled
-league-days, for seats 1, 6 and 12, on a replay of a recorded season (**The gates as they stand**),
-in the head-to-head format named (`--h2h`, one win per matchup by default, the format PR), so the
-two tiers are compared in the measure the seats weigh.
+`validate` is gate 5 alone: whether the surrogate, the fast seat, can stand in for the exact one.
+For seats 1, 6 and 12, on five sampled league-days each of a replay of a recorded season, a seat
+passes when its surrogate's sets keep at least 95% of the exact search's gain (PR g5; **The gates
+as they stand**), in the head-to-head format named (`--h2h`, one win per matchup by default, the
+format PR), so the two tiers are compared in the measure the seats weigh.
 Gates 1 and 4 tested the drawn world (team-week totals and missed games under its noise and its
 hazard) and went with it; gates 2, 3 and 6 read a live league's recorded weeks, scorecard and
 exports (**What was removed and when**).
@@ -305,7 +306,7 @@ None stays a value only where the engine's default is None (`blend`, `stash_thre
 A mirror rival takes the arm whole, knobs and fields, but for the stash threshold, which a rival
 keeps at None (PR G, below). Every payload records the four fields of
 every arm and, under `surrogate`, the surrogate's pool and days as the arm sets them; gate 5's
-check (`checks.surrogate_matches`) takes the arm's. Nothing in the engine that the moves route
+check (`checks.surrogate_records`) takes the arm's. Nothing in the engine that the moves route
 reaches assumes exactly three later weeks.
 
 **The season term.** At `season_weight` above 0 an arm's score on the key it executes gains
@@ -1590,7 +1591,7 @@ seats as one row, both arms' seasons pooled. The landing counters are per seat o
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state
 counters); the rest is tallied by `sim/counts.py`.
 
-## The gates as they stand (PR 2b; gate 5 alone since PR D3)
+## The gates as they stand (PR 2b; gate 5 alone since PR D3; its rule since PR g5)
 
 `validate` is gate 5 on a replay of one recorded season (`--season`, by default the latest
 replayable season on file, never the hold-out or the confirmation season) drafted on one
@@ -1603,28 +1604,76 @@ run.
   `run.replay_world` at the label's own weights), path 0. For three seats, the first, the middle
   (the lower of two) and the last of the draft order, on the season's first simulated day and the
   3rd, 7th, 10th and 14th days after it (`GATE_DAYS`), from day one's rosters and on the day's
-  belief, whether the surrogate's set equals the exact set: fifteen league-days. A seat passes
-  with four matches of five, one gate row a seat, and the gate passes when every seat does. The
-  knobs are `policy.KNOB_DEFAULTS` and the fields `policy.DEFAULT_FIELDS`, both in the payload's
-  `surrogate_gate` block with the season, the forecaster, the seats, the days and the label's
-  weights; no knob file is read.
+  belief, the surrogate's set is compared with the exact set: fifteen league-days. One gate row
+  a seat, and the gate passes when every seat does. The knobs are `policy.KNOB_DEFAULTS` and the
+  fields `policy.DEFAULT_FIELDS`, both in the payload's `surrogate_gate` block with the season,
+  the forecaster, the seats, the days and the label's weights; no knob file is read.
+- The rule (PR g5; the user's ruling of 2026-11-18, `validate.surrogate_gate`): **a seat passes
+  when its surrogate keeps at least 95% of the exact search's gain.**
+  - A day's gain for a tier is its set's worth less the worth of standing still, both by the
+    exact tier's own objective (the day's record, below).
+  - A seat's gain is the sum over its five sampled days (`SURROGATE_OF`). The two sums are
+    compared, not each day: a day that keeps less is made up by the others.
+  - The seat passes when the surrogate's gain is at least `SURROGATE_KEEPS` (0.95) times the
+    exact search's, less a tolerance far below the least gain a move must make (`EPS`), so a
+    float's last bits never decide. It is one inequality with no division:
+    - where the exact tier stood still on every day (a gain of 0), the seat passes when the
+      surrogate's gain is not below 0;
+    - a surrogate that found more than the exact tier passes. It happens: both searches are
+      heuristics, each over a pool of its own; the exact tier's pool is ranked before the
+      season guard is asked, and the surrogate's can hold an add it lacks;
+    - an exact gain below 0, which the exact search does not give, is the one case the
+      inequality is not applied to as written: the surrogate is held to that gain itself, not
+      to a share of it, so the same sets never fail (`validate.keeps`).
+  - A seat with a day left out (fewer than five compared) fails.
+  - The rule it replaced asked for the identical set on four of the five days. That was
+    stricter than what the gate is for, which is whether the fast seat can stand in for the
+    exact one: two different sets of the same worth serve a seat alike, and a seat whose
+    surrogate found them failed. The count of days on which the two sets are equal stays in
+    the row as information (`matched`); it no longer decides.
+  - On the real replay (the 2024 season drafted on `prior`, path 0; the look of 2026-11-19): the
+    gate passes in both head-to-head formats, each of the three seats in each. The rule it
+    replaced failed the same records in both: most of the seats under one win per matchup, and
+    every seat under every category, had too few days of equal sets for it. One seat under one
+    win per matchup passes close to the bar, and by the sum: on some of its days the surrogate
+    keeps less than the share needed of that day's gain, and its other days make it up. One
+    season, one seed and one path: one replay's answer, not a general limit.
+  - A row's `detail`: `matched` of the `of` days compared, the two gains (`gain`, `exact` and
+    `surrogate`), the share kept (`kept`, the surrogate's gain over the exact search's; null
+    where the exact gain is not above 0, which leaves no share to name) and the share needed
+    (`needs`). The block's `rule` says the rule in words.
 - What gate 5 compared (PR D4a2, `checks.surrogate_records`): each seat's row carries, in
   `detail.records`, a record for each sampled day.
   - It holds the exact tier's set and the surrogate's set as moves (the add and the drop, by
-    id), and whether they are equal, which is what the gate counts.
+    id), and whether they are equal, which the gate counts.
   - It holds each set's worth by the exact tier's own objective: one evaluator of the exact
     tier's, on the key it searches (`QUEUE_SET`), with the season term when the knobs carry
-    one, scores both sets on that day's problem, beside the worth of standing still.
+    one, scores both sets on that day's problem, beside the worth of standing still. These
+    three worths are what the rule reads.
   - A day left out says why instead: outside the calendar's weeks, or no problem built.
 
-  `validate` prints a line for each seat and day: equal or not, and the two worths to four
-  decimals. It names no player. The worths do not enter the gate's rule: a seat still passes on
-  its matches alone, and `validate`'s exit code is what it was.
+  `validate` prints a line for each seat (`cli.seat_line`): its verdict, `passed` or `FAILED`,
+  the share of the exact search's gain its surrogate kept with the two gains to four decimals
+  and the share needed, then the days with equal sets.
+  - The share is cut, not rounded, to a tenth of a percent, then held to the rule's verdict on
+    the two gains (`cli.kept_words`). The rule's tolerance is on the gain and the cut's is on
+    the share, so within that tolerance of the bar the cut alone could read as the share needed
+    for a seat the rule fails, or as under it for one the rule passes. The line says neither: a
+    seat that fails by the gain never reads as at the share needed, and one that keeps it never
+    reads under it. The record's `kept` is the share itself, not cut.
+  - Where the exact search made no gain there is no share to print: the line says so and gives
+    the two gains.
+  - A seat with a day left out also says how many of the five days were compared, and that a
+    seat needs every one. The share it prints is what it kept on the days compared.
+
+  Under a seat's line, a line for each of its days: equal or not, and the two worths to four
+  decimals, or why the day is left out. It names no player. `validate`'s exit code is what it
+  was: 0 for a gate that ran, whatever it said (the record's `passed` holds the verdict).
 - The format (the format PR): `--h2h one_win|each_category`, default `one_win`. Gate 5 builds its
-  league in the format named, so the two tiers solve the problem the seats play and the worths
-  are in its measure (the matchup's odds by default). Under `each_category` its answers are the
-  ones before the format PR. The block's `rules` names the format; the record holds no
-  `measure` (the format's words say it).
+  league in the format named, so the two tiers solve the problem the seats play and the worths,
+  and so the gain kept, are in its measure (the matchup's odds by default). Under
+  `each_category` the sets it compares are the ones before the format PR. The block's `rules`
+  names the format; the record holds no `measure` (the format's words say it).
 
 ## The screen (`sim/screen.py`, `cli.cmd_screen`, PR H1)
 
