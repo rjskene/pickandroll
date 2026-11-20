@@ -22,6 +22,7 @@ from pickandroll.sim import forecast as fc
 from pickandroll.sim import league as lg
 from pickandroll.sim import policy, shapes
 from pickandroll.sim import run as rn
+from pickandroll.sim import validate as vg
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, st, wk
 from pickandroll.sim.state import initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, of_format
@@ -489,8 +490,9 @@ ONE_WIN_MATCHES = {
 def test_validate_plays_gate_five_in_the_format_named(wire: Path):  # noqa: F811
     """``validate`` under the default compares the two tiers in the matchup's odds: its block
     names the format, and its answers are :data:`ONE_WIN_MATCHES`, on days where the exact tier's
-    set holds a move (not vacuous: two empty sets agree too). A format it does not know is
-    refused before any solve."""
+    set holds a move (not vacuous: two empty sets agree too). Each seat's verdict is by the gain
+    its surrogate keeps (PR g5), a gain in the matchup's odds here, and its line says the share.
+    A format it does not know is refused before any solve."""
     base = ["--data", str(wire), "--rooms", "0", "validate", "--season", "2024"]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -511,7 +513,13 @@ def test_validate_plays_gate_five_in_the_format_named(wire: Path):  # noqa: F811
         assert [x["equal"] for x in d["records"]] == ONE_WIN_MATCHES[d["seat"]]
         assert d["matched"] == sum(ONE_WIN_MATCHES[d["seat"]])
         moved += sum(1 for x in d["records"] if x["equal"] and x["exact"])
+        gain = d["gain"]
+        assert d["needs"] == vg.SURROGATE_KEEPS and gain["exact"] > 0
+        assert d["kept"] == pytest.approx(gain["surrogate"] / gain["exact"])
+        assert g["passed"] is vg.keeps(gain["exact"], gain["surrogate"])
+        assert f"seat {d['seat']}: {ss.seat_line(d)}" in out
     assert moved > 0  # days where the two tiers agree on a set that holds a move
+    assert p["surrogate_gate"]["rule"] == ss.GATE_RULE
     assert "under the nine categories, no held slot, one win per matchup" in out
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
