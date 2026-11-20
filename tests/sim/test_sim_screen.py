@@ -496,7 +496,7 @@ def test_a_lever_did_nothing_when_both_arms_played_one_season_on_every_path():
 
 #: The rule's clause for the counts "did nothing" sets aside, wherever the rule is said.
 LESS = "less the counts that part by construction between two arms"
-#: Every count key the counts module defines, in the payload's order.
+#: The count keys of the groups the counts module defines today, in the payload's order.
 COUNT_KEYS = (
     *ct.METRICS,
     *ct.CLAIMS,
@@ -519,8 +519,10 @@ def test_did_nothing_sets_aside_the_counts_that_part_by_construction_and_no_othe
     cleared = pair({("2024", "prior"): {"matchup_wins": (0.9, 0.1)}})
     guard = [path(a={"sets_past_guard": 0.0}, b={"sets_past_guard": 2.0}), path()]
     assert sc.result_of(flat, guard, "matchup_wins")["did_nothing"]
-    assert ct.APART_BY_CONSTRUCTION and set(ct.APART_BY_CONSTRUCTION) <= set(COUNT_KEYS)
-    for key in ct.APART_BY_CONSTRUCTION:
+    declared = ct.APART_BY_CONSTRUCTION
+    # Each declared key is one the payload's order knows (``counts.metrics_in``).
+    assert declared and set(declared) <= set(ct.metrics_in([dict.fromkeys(declared, 0.0)]))
+    for key in declared:
         apart = {"a": {key: 0.0}, "b": {key: 3.0}}
         only = sc.result_of(flat, [path(), path(**apart)], "matchup_wins")
         assert only["counts_equal"] and only["outcomes_equal"] and only["did_nothing"]
@@ -536,8 +538,8 @@ def test_did_nothing_sets_aside_the_counts_that_part_by_construction_and_no_othe
         more = path(a={key: 0.0}, b={key: 3.0, "gone": 1.0})
         got = sc.result_of(cleared, [path(**apart), more], "matchup_wins")
         assert not got["counts_equal"] and not got["did_nothing"] and got["survives"]
-    others = [k for k in COUNT_KEYS if k not in ct.APART_BY_CONSTRUCTION]
-    assert len(others) == len(COUNT_KEYS) - len(ct.APART_BY_CONSTRUCTION) >= len(ct.METRICS)
+    others = [k for k in COUNT_KEYS if k not in declared]
+    assert set(ct.METRICS) <= set(others) and len(others) > len(ct.METRICS)
     for key in others:
         got = sc.result_of(flat, [path(), path(a={key: 0.0}, b={key: 1.0})], "matchup_wins")
         assert not got["counts_equal"] and not got["did_nothing"], key
