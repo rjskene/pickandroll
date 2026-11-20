@@ -55,9 +55,10 @@ player goes to the next. A claim's drop and its held-slot moves are made only if
 a churn on a claim: its held player leaves the next morning, won or not, as the autopilot drops him
 on his own before the claim (which is why the engine offers a churn on a claim only when the held
 player is worth nothing net of his return). A claim is charged to the week of the day before it
-lands. The executor mirrors the autopilot's claim rules (:func:`queue`). The problem is built as the
-live build builds it: each candidate on waivers effective on his clear date and among ``claims``,
-and the seat's own claims in flight folded in (``moves.with_pending``).
+lands, in a same-day league (PR today) to the week it lands in. The executor mirrors the
+autopilot's claim rules (:func:`queue`). The problem is built as the live build builds it: each
+candidate on waivers effective on his clear date and among ``claims``, and the seat's own claims
+in flight folded in (``moves.with_pending``).
 
 **FAAB** (PR Fb, a league whose ``waivers`` is ``faab``): the waiting and the claims are as by
 priority, but each claim carries a sealed bid from its team's budget, set when it is placed and
@@ -1117,8 +1118,8 @@ def problem_of(
     # move made on Sunday lands Monday and spends the ending week's adds, as on Yahoo. This
     # week's window opens today, so a plan step dated today is charged here too. In a same-day
     # league (PR today) a free agent's add lands the day it is made, so the windows are the
-    # weeks' own days, as the live build's are (a claim that clears on a week's first morning
-    # is then weighed against that week's adds; the executor charges it to the week before).
+    # weeks' own days, as the live build's are, and the executor charges a claim to the week
+    # it clears in (a claim that clears on a Monday is the new week's on both sides).
     shift = setup.lands_after
     limits = tuple(
         mv.AddLimit(
@@ -2461,9 +2462,11 @@ def queue(
     who still waits (``READD``), a move whose drop an open claim of the team already takes
     (``DROP_CLAIMED``), a second claim on one add (``ALREADY_CLAIMED``) and a claim whose week has
     no add left, the claims in flight counted (``NO_ADDS``) are not queued. A claim is charged to
-    the week of the day before it lands, and a free agent's add to this week, which counts the
-    claims in flight charged to it. The spots open today are net of the claims in flight that
-    will take one; a claim that needs a spot beyond them takes the next of the decision's
+    the week of the day before it lands (in a same-day league, PR today, to the week it lands in:
+    a claim that clears on a Monday is the new week's, as the seat's problem weighs it), and a
+    free agent's add to this week, which counts the claims in flight charged to it. The spots
+    open today are net of the claims in flight that will take one; a claim that needs a spot
+    beyond them takes the next of the decision's
     held-slot moves, made only if it is won; a churn's claim's held drop leaves on his own
     tomorrow morning (``pending_drops``).
 
@@ -2606,7 +2609,10 @@ def queue(
         # A dropped player's claim is decided on his clear date; under continuous waivers one on
         # a player nobody dropped lately the next morning.
         clears = tomorrow if wait is None else wait.clears
-        week = setup.week_of(max(tomorrow, clears) - timedelta(1))
+        # Charged to the week of the day before it lands, the week the problem's shifted windows
+        # put it in; in a same-day league (PR today, the lead's decision) to the week it lands in,
+        # as the problem's windows, the weeks' own days, put it there.
+        week = setup.week_of(max(tomorrow, clears) - setup.lands_after)
         number = None if week is None else week.number
         if limit is not None and number is not None and charged(number) >= limit:
             continue  # NO_ADDS
@@ -2940,8 +2946,9 @@ def clear_waivers(
     is open once the claim's held-slot moves are made (each while its slot has room and accepts
     the player's status this morning, ``moves.eligible``, else refused): the claim is won, the
     held-slot moves and the drop are made, the add lands (charged to the week of the day before,
-    as a move made yesterday) and the team goes to the back of the order; every other claim on
-    that player is lost, its drop and held-slot moves never made. A won claim the roster cannot
+    as a move made yesterday; in a same-day league to today's week, PR today) and the team goes
+    to the back of the order; every other claim on that player is lost, its drop and held-slot
+    moves never made. A won claim the roster cannot
     take fails, counted apart from a lost one and among the moves gone, nothing of it made; the
     team keeps its place and the player goes to the next claim on him (Yahoo skips a claim it
     cannot process). Repeat until no claim is open. A player whose claims are all decided and

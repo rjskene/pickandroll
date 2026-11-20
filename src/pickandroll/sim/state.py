@@ -78,7 +78,8 @@ class Claim:
     an open spot), the day it was placed, its add's clear date (the morning it is decided: a
     dropped player's clear date, or under continuous waivers the next morning for a player nobody
     dropped lately), the week its add is charged to (the week of the day before it lands, so the
-    plan's and the world's weeks agree; None outside the calendar), the held-slot moves it needs,
+    plan's and the world's weeks agree; in a same-day league, PR today, the week it lands in, for
+    the same reason; None outside the calendar), the held-slot moves it needs,
     made only if it is won, and whether its drop is a held player (a churn, #221), who leaves on
     his own the morning after the claim is placed. In a FAAB league (PR Fb) its sealed ``bid``,
     whole dollars set when it is placed (0 by priority), and its ``value`` in typicals when it

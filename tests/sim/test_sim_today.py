@@ -24,10 +24,12 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import mv
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED, TODAY, TOMORROW
-from pickandroll.sim.state import Waiting, initial
+from pickandroll.sim.state import WON, Claim, Waiting, initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, replay_of
 from tests.sim.test_no_peek import SEED, WEIGHTS
 from tests.sim.test_sim_bracket_run import points_league, two_rounds
+from tests.sim.test_sim_counts import MON as MONDAY_ONE
+from tests.sim.test_sim_counts import Script
 from tests.sim.test_sim_faab import morning as faab_morning
 from tests.sim.test_sim_rules_run import (  # noqa: F401
     WHEN,
@@ -178,34 +180,148 @@ def test_the_weeks_add_windows_are_the_weeks_own_days_under_the_rule():
     assert later[0].adds == today[0].adds == base.max_weekly_adds
 
 
-def test_a_claim_clearing_on_a_weeks_first_morning_is_the_week_befores_to_the_executor():
-    """The one difference with the live build, held as it is (the README, "A league whose adds
-    play the same day"). Under the rule the problem weighs a claim that clears on a week's first
-    morning against the new week's adds (his effective day falls in the next week's window,
-    the weeks' own days), while the executor charges the claim to the week of the day before
-    it lands, as under the default rule: the morning's landing is charged to the day before's
-    week, and the week starts over after it. So on a Sunday a seat at its week's limit has such
-    a claim refused by the queue (placed nowhere, counted nowhere), and one with an add left has
-    it placed and charged to the week that ends that day."""
-    base = replace(make_setup(teams=4, max_weekly_adds=2), waivers="priority", waiver_days=2)
-    setup = same_day(base)
+def sunday_claim(waivers: str, rule: str, used: int = 2, in_flight: int = 0):
+    """A Sunday of week two in a league of two adds a week: team 1 has ``used`` adds charged to
+    the week and ``in_flight`` claims in flight charged to week three, and queues a claim on a
+    player who clears on Monday. The setup, the state after the queue, the Monday and the weeks."""
+    base = replace(make_setup(teams=4, max_weekly_adds=2), waivers=waivers, waiver_days=2)
+    setup = replace(base, lineup_from=rule)
     spots, _ = spots_of(setup)
-    week = setup.calendar.weeks[1]
-    sunday, monday = week.end, week.end + DAY
+    week, nxt = setup.calendar.weeks[1], setup.calendar.weeks[2]
+    sunday, monday = week.end, nxt.start
     s = initial(setup)
-    x = min(s.pool)
-    s = replace(s, day=sunday, waivers={x: Waiting(monday, 2)})
-    p = built_on(setup, sunday, state=s).problem
-    assert p.effective[x] == monday
-    first, second = p.limits[0], p.limits[1]
-    assert (first.start, first.end, second.start) == (sunday, sunday, monday)
-    drop = setup.rosters[1][-1][0]
-    claim = policy.Decision((mv.Move(x, drop),))
-    full = policy.queue(replace(s, adds_used={1: 2}), 1, claim, 1, 2, False, spots, setup)
-    assert full.claims.get(1, ()) == () and full.pending.get(1, ()) == ()
-    room = policy.queue(replace(s, adds_used={1: 1}), 1, claim, 1, 2, False, spots, setup)
-    (placed,) = room.claims[1]
-    assert placed.clears == monday and placed.week == week.number
+    x, *others = sorted(s.pool)
+    roster = [k for k, _ in setup.rosters[1]]
+    flight = tuple(
+        Claim(mv.Move(others[i], roster[-2 - i]), sunday - DAY, monday, nxt.number)
+        for i in range(in_flight)
+    )
+    s = replace(
+        s,
+        day=sunday,
+        adds_used={1: used},
+        waivers={x: Waiting(monday, 2), **{k: Waiting(monday, 3) for k in others[:in_flight]}},
+        claims={1: flight} if flight else {},
+    )
+    claim = policy.Decision((mv.Move(x, roster[-1]),))
+    return setup, policy.queue(s, 1, claim, 1, 2, False, spots, setup), monday, week, nxt, x
+
+
+@pytest.mark.parametrize("waivers", ["priority", "faab"])
+def test_a_claim_that_clears_on_a_monday_is_the_new_weeks_under_the_rule(waivers):
+    """The lead's decision (PR today): in a same-day league a claim is charged to the week it
+    clears in, as the seat's problem weighs it (his effective day falls in the next week's
+    window, the weeks' own days). A seat at its week's limit on a Sunday places a claim that
+    clears on Monday, charged to the new week; the problem built that Sunday puts the claim's
+    day in the new week's window. Under the default rule the same claim is the ending week's and
+    the queue refuses it (``NO_ADDS``), as before."""
+    setup, after, monday, week, nxt, x = sunday_claim(waivers, TODAY)
+    (placed,) = after.claims[1]
+    assert placed.move.add == x and placed.clears == monday and placed.week == nxt.number
+    p = built_on(setup, week.end, state=replace(after, claims={})).problem
+    assert p.effective[x] == monday and p.limits[1].start == monday
+    _, before, *_ = sunday_claim(waivers, TOMORROW)
+    assert before.claims.get(1, ()) == ()
+
+
+@pytest.mark.parametrize("waivers", ["priority", "faab"])
+def test_a_seat_whose_new_week_is_full_of_claims_in_flight_is_refused_under_the_rule(waivers):
+    """The queue's ``NO_ADDS`` reads the week the claim is charged to: the new week's claims in
+    flight. With two in flight charged to it (the limit) the Monday claim is refused; with one it
+    is placed, the new week's second."""
+    _, full, *_ = sunday_claim(waivers, TODAY, in_flight=2)
+    assert len(full.claims[1]) == 2
+    _, one, _, _, nxt, x = sunday_claim(waivers, TODAY, in_flight=1)
+    assert [c.week for c in one.claims[1]] == [nxt.number, nxt.number]
+    assert one.claims[1][-1].move.add == x
+
+
+@pytest.mark.parametrize("waivers", ["priority", "faab"])
+def test_a_claim_that_clears_inside_the_week_is_charged_as_before(waivers):
+    """A claim placed on a Wednesday on a player who clears on Friday is that week's under both
+    rules, and a seat at its limit has it refused under both."""
+    for rule in (TOMORROW, TODAY):
+        setup = replace(make_setup(teams=4, max_weekly_adds=2), waivers=waivers, waiver_days=2)
+        setup = replace(setup, lineup_from=rule)
+        spots, _ = spots_of(setup)
+        week = setup.calendar.weeks[1]
+        wednesday, friday = week.start + 2 * DAY, week.start + 4 * DAY
+        s = initial(setup)
+        x = min(s.pool)
+        s = replace(s, day=wednesday, waivers={x: Waiting(friday, 2)})
+        claim = policy.Decision((mv.Move(x, setup.rosters[1][-1][0]),))
+        room = policy.queue(replace(s, adds_used={1: 1}), 1, claim, 1, 2, False, spots, setup)
+        assert [c.week for c in room.claims[1]] == [week.number], rule
+        full = policy.queue(replace(s, adds_used={1: 2}), 1, claim, 1, 2, False, spots, setup)
+        assert full.claims.get(1, ()) == (), rule
+
+
+def test_the_weekly_rule_counts_a_claim_in_the_week_it_is_charged_to():
+    """``weekly_adds`` follows ``Claim.week``: on the Sunday a claim charged to the new week is
+    not the ending week's (two landed on a cap of two holds), and on a Monday a claim in flight
+    charged to that week is counted with its adds, so two landed and the claim break the rule."""
+    setup, after, monday, week, *_ = sunday_claim("priority", TODAY)
+    sunday = audit.Day(week.end, 0, after, {}, {})
+    assert list(audit.weekly_adds(setup, sunday, None)) == []
+    flight = replace(after, day=monday, adds_used={1: 2})
+    assert list(audit.weekly_adds(setup, audit.Day(monday, 0, flight, {}, {}), None)) == [
+        (1, "3 adds this week on a cap of 2")
+    ]
+    landed = replace(flight, claims={})
+    assert list(audit.weekly_adds(setup, audit.Day(monday, 0, landed, {}, {}), None)) == []
+
+
+@pytest.mark.parametrize("waivers", ["priority", "faab"])
+def test_a_monday_claim_lands_as_the_new_weeks_first_add_and_a_held_return_is_no_add(waivers):
+    """The runner under the rule, two scripted teams, a cap of one add a week. Team 1 adds a free
+    agent on week one's Tuesday (its week is full); team 2 adds one on Saturday and its drop waits
+    until Monday; on Sunday team 1 claims him, charged to week two. On Monday the week starts
+    over before the morning: the claim lands as week two's first add, so team 1's free agent that
+    Monday is refused (week two has none left), and team 2's held player who comes back that
+    morning is no add. The audit finds nothing."""
+    mon = MONDAY_ONE
+    setup = make_setup(
+        teams=2, spots=6, pool=6, weeks=2, playoff_weeks=1, max_weekly_adds=1, held_slots=("IL",)
+    )
+    free = sorted(setup.pool)
+    hurt = free[-1]
+    rosters = dict(setup.rosters)
+    rosters[2] = (*rosters[2], (hurt, "IL"))
+    setup = replace(
+        setup,
+        rosters=rosters,
+        pool=tuple(free[:-1]),
+        statuses={hurt: "O"},
+        returns={hurt: mon + 7 * DAY},
+        waivers=waivers,
+        waiver_days=2,
+        lineup_from=TODAY,
+    )
+    one = [k for k, _ in setup.rosters[1]]
+    two = [k for k, _ in setup.rosters[2] if k != hurt]
+    f1, f2, f3 = free[:3]
+    sunday, monday = mon + 6 * DAY, mon + 7 * DAY
+    plans = {
+        1: Script(
+            (
+                (mon + DAY, (mv.Move(f1, one[0]),)),
+                (sunday, (mv.Move(two[0], one[1]),)),
+                (monday, (mv.Move(f3, one[2]),)),
+            )
+        ),
+        2: Script(((mon + 5 * DAY, (mv.Move(f2, two[0]),)),)),
+    }
+    (res,), recs = played(setup, replay_of(setup, 2, 0), [plans])
+    assert not res.breaches, res.breaches[:2]
+    (claim,) = recs[(sunday, 0)].claims[1]
+    assert claim.move.add == two[0] and claim.clears == monday and claim.week == 2
+    rec = recs[(monday, 0)]
+    assert [(r.team, r.add, r.outcome) for r in rec.cleared] == [(1, two[0], WON)]
+    assert hurt in rec.state.active(2) or hurt not in rec.state.pool
+    assert rec.state.adds_used.get(1, 0) == 1 and rec.state.adds_used.get(2, 0) == 0
+    assert rec.queued.get(1, ()) == () and f3 not in rec.state.active(1)
+    # The counts charge the Monday claim to week two: one add in each week, each at the cap.
+    assert res.counts[1]["adds_per_week"] == 1.0 and res.counts[1]["weeks_at_cap"] == 1.0
 
 
 def test_a_plans_step_of_a_free_agent_is_due_today_and_a_claims_on_its_clear_date():
@@ -648,6 +764,27 @@ def test_a_pair_with_a_split_seat_plays_the_rule_on_its_own_table():
                     assert set(moves) <= set(rec.queued.get(t, ())), (day, t)
     # The split seat moved in at least one of its two arms, and the day's landing made it.
     assert any(r.landed.get(1) for r in recs.values())
+
+
+def test_a_seats_same_day_add_lands_inside_a_bracket_round_and_on_its_first_morning():
+    """A made-up league whose last two weeks are a bracket of two rounds for all four, under the
+    rule, the exact seat among market rivals. Each round is seeded on its first morning, before
+    the seats decide; the seat's adds of the rounds land the day they are made (each in that
+    day's queue), one of them on the first round's first day, after its seeding (a found path,
+    asserted), and the audit finds nothing. About 2 s."""
+    setup = same_day(make_setup(teams=4, weeks=6, playoff_weeks=2, playoff_teams=4))
+    first = setup.calendar.weeks[setup.spec.playoff_weeks[0] - 1].start
+    variant = {**{t: market() for t in setup.teams}, 1: seats()["exact"]}
+    (res,), recs = played(setup, replay_of(setup, 1, 0), [variant])
+    assert not res.breaches, res.breaches[:2]
+    rounds = set(setup.spec.playoff_weeks)
+    days = sorted(
+        d for (d, _), r in recs.items() if r.landed.get(1) and setup.week_of(d).number in rounds
+    )
+    assert days and days[0] == first, days
+    for day in days:
+        rec = recs[(day, 0)]
+        assert set(rec.landed[1]) <= set(rec.queued.get(1, ())), day
 
 
 def test_a_pair_in_lockstep_is_the_pair_played_apart():

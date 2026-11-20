@@ -126,7 +126,8 @@ def one_place(setup: Setup, today: Day, before: Day | None) -> Found:
 def weekly_adds(setup: Setup, today: Day, before: Day | None) -> Found:
     """The week's adds within the cap: the adds charged to this week (landed, with the ones the
     seat queued today, which are charged to the day they are made, and in a waiver league the
-    claims in flight charged to it, the week of the day before each lands; PR Fa) no more than
+    claims in flight charged to it, the week of the day before each lands, PR Fa, in a same-day
+    league the week it lands in, PR today) no more than
     the league's weekly limit. A drop the world forces when a held player returns is not an
     add."""
     limit = setup.max_weekly_adds

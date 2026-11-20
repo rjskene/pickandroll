@@ -246,7 +246,8 @@ clear dates, no bids, the caps the autopilot's; a waiver league's adds are "The 
 and under continuous waivers every add is a claim ("Continuous waivers", below). An add is charged to the week of the day it is made, as Yahoo
 charges a free agent, never the week it lands in: one made on Sunday spends the ending week's adds
 and plays from Monday (in a same-day league, from Sunday), and Monday's count starts over only once
-it is in. Each day's starters are
+it is in (in a same-day league before the morning, since nothing waits from Sunday but claims, each
+charged to the week it clears in). Each day's starters are
 the most valuable set the slots hold among the players whose team plays and whom the policy has not
 heard are out; their lines are the week's totals.
 
@@ -1906,12 +1907,15 @@ the model (`executions`), the audit holds two more rules and the counts count th
 
 What the waivers do not model, each plainly:
 
-1. **A claim is charged to the week of the day before it lands.** Yahoo charges a claim to the
-   week it clears in. They agree except on a Monday clear, which the simulator charges to the
-   week before, as the engine's plan does: its add windows are shifted a day for a move that
-   lands the next morning, and it shares them with the claims. In a same-day league the windows
-   are the weeks' own days, as live's, and the engine's plan then weighs a Monday clear against
-   the new week (**A league whose adds play the same day**).
+1. **Under the default rule a claim is charged to the week of the day before it lands.** Yahoo
+   charges a claim to the week it clears in. They agree except on a Monday clear, which the
+   simulator charges to the week before, as the engine's plan does under that rule: its add
+   windows are shifted a day for a move that lands the next morning, and it shares them with the
+   claims. A same-day league charges a claim to the week it clears in, as Yahoo does: its windows
+   are the weeks' own days, as live's, so the plan weighs a Monday clear against the new week,
+   and the executor and the morning charge it there too (**A league whose adds play the same
+   day**, the lead's decision). Under continuous waivers the rule moves nothing and this limit
+   stands.
 2. **The first order is the draft's reverse**, and a league that sets its own (last season's
    standings, a continual list) is not read. A failed claim keeps its team's place.
 3. **A budget and bids** are FAAB's, below.
@@ -2117,16 +2121,20 @@ date, and the weekly add windows are the weeks' own days. Under `today` the simu
 `problem_of` is that build: a free agent effective today, a claim on his clear date (or under
 continuous waivers the next morning, as before), each week's window its own days. Under the
 default rule a free agent is effective tomorrow and each window is its week's days shifted by one,
-which is that rule's version of the same charge. One difference stays and is said: the engine
-charges a move by its effective day, so a claim that clears on a week's first morning is weighed
-in the problem against that week's adds, while the executor charges it to the week before (the
-week of the day before it lands, as under the default rule). Live's engine does the same.
+which is that rule's version of the same charge. A claim is charged where the problem weighs it,
+under both rules: under the rule to the week it clears in (the lead's decision, a working default
+the user may reopen), so a claim that clears on a week's first morning is the new week's in the
+problem, in the queue's `NO_ADDS` test (the adds landed in that week and its claims in flight)
+and in the morning's charge; under the default rule to the week of the day before it lands, as
+before (the waivers' limit 1).
 
 **The day under the rule**, in order (the default rule's day is the same without step 3, its free
-agents landing at step 1 of the next day):
+agents landing at step 1 of the next day, and its week starting over after that landing):
 
-1. The morning: yesterday's claims due are decided and the held players who cleared come back,
-   as before; no free agent's add waits from yesterday.
+1. The morning: on a Monday the week starts over first. Then the claims due are decided and the
+   held players who cleared come back, as before, charged to today's week: a claim that clears
+   on a Monday is the new week's first add, and a held player's return is no add. No free
+   agent's add waits from yesterday.
 2. The seats decide, each on the morning's wire, and queue: a free agent's add for today, a claim
    placed as before.
 3. The day's free-agent adds land, team by team in the day's rotation, with the held-slot moves

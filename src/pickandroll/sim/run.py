@@ -918,7 +918,12 @@ def simulate(
         # the players clearing today are decided once the cleared held players are back, the
         # rosters trimmed and the churns' held players gone (``policy.arrive``, Fc's review), and
         # before the rest lands (PR Fa), each won one charged to the same week as yesterday's
-        # moves: the week of the day before.
+        # moves: the week of the day before. In a same-day league (PR today, the lead's
+        # decision) yesterday's moves landed yesterday, and a claim is charged to the week it
+        # clears in: on a Monday the week starts over before the morning, and the morning's
+        # landing (the claims, the held players back) is charged to today's week.
+        if monday and same_day:
+            states = [policy.new_week(s) for s in states]
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
@@ -946,10 +951,12 @@ def simulate(
             for vi, s in enumerate(states)
         ]
         for vi, s in enumerate(states):
-            tallies[vi].charge((made or week).number, before[vi], s.executed_by)
+            tallies[vi].charge(
+                (week if same_day else made or week).number, before[vi], s.executed_by
+            )
             if stash:
                 tallies[vi].left(was[vi], s)
-        if monday:
+        if monday and not same_day:
             states = [policy.new_week(s) for s in states]
         # A round of the bracket is seeded on its first morning, each variant's from its own
         # totals: the weeks finished before it (PR bracket).
