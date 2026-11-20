@@ -2058,7 +2058,11 @@ def land(
     one that needs an active spot (no drop, the churn's, or one whose held move was refused)
     takes a bench slot while the active roster is under ``spots`` and is otherwise gone, like an
     add another team took first (a churn's drop stands either way, made before the add; a plain
-    swap's is never made). Without ``spots`` nothing is counted.
+    swap's is never made). A swap whose drop is no longer an active player is gone too: he has
+    left, or one of the morning's held-slot moves took him to a held slot (an arm that executes
+    its plan beside its set can queue a step that drops the player its set moves there), and no
+    add lands in a held slot; a claim meets the same test (:func:`clear_waivers`). Without
+    ``spots`` nothing is counted.
 
     ``waiver`` (today and the league's waiver days, #172, PR Fa; None without waivers): every
     player who leaves a roster this morning (a forced drop, a churn's held drop, a swap's drop)
@@ -2115,7 +2119,14 @@ def land(
                 continue
             idx = None
             if m.drop is not None and m.drop not in churned:
-                idx = next((i for i, (pk, _) in enumerate(roster) if pk == m.drop), None)
+                # His drop must still be an active player. One who has left is not there to
+                # swap, and neither is one a held-slot move above took to a held slot this
+                # morning: the add would land in that slot (an arm that executes its plan
+                # beside its set queues both, the set's held-slot move and the step).
+                idx = next(
+                    (i for i, (pk, s) in enumerate(roster) if pk == m.drop and s not in mv.HELD),
+                    None,
+                )
                 if idx is None:
                     count(gone, team)
                     continue

@@ -1387,6 +1387,44 @@ def test_an_arm_that_executes_its_plan_beside_its_set_plays_a_season_with_an_il_
     assert (moved if "moves the name" in what else repeated) >= 1, (moved, repeated)
 
 
+#: The seasons in which an arm that names a stash threshold and executes its plan beside its
+#: set queued a step whose drop its set moved to a held slot the same morning (found by the
+#: second fix round's review, ``~/sim-notes/vm/scratch/e/probes/fresh_breach.py``): the league
+#: and the world's seed and path.
+HELD_LEAGUE = {"teams": 4, "pool": 12, "weeks": 6, "playoff_weeks": 2}
+HELD_STEP = {
+    "every category, no waivers, IL and IL+": (
+        lambda: every_category(make_setup(**HELD_LEAGUE, held_slots=("IL", "IL+"))),
+        (1, 0),
+    ),
+    "points, one win, priority, IL": (
+        lambda: waiving(in_points(make_setup(**HELD_LEAGUE, held_slots=("IL",))), "priority"),
+        (1, 1),
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", HELD_STEP)
+def test_no_add_of_an_arm_that_executes_its_plan_lands_in_a_held_slot(kind):
+    """The set and the streaming plan are two plans queued together, and the list cannot always
+    land whole: on some night of each of these seasons the arm's set carries a held-slot move
+    for a player and a plan step due drops that same player. The morning takes him to the slot
+    and the step is gone (``policy.land``; ``test_sim_held_landing.py`` has the night by
+    hand). Before, the step's add took the slot his drop sat in, and the audit found a healthy
+    player in a held slot. Two league kinds, as found: every category without waivers, and a
+    points league with one win a matchup and waivers by priority."""
+    league, path = HELD_STEP[kind]
+    setup = league()
+    result, days = season(setup, plan_arm(daily_cap=2, stash_threshold=stash.SHARE), path)
+    assert result.breaches == ()
+    nights = [
+        r.day
+        for r in days
+        if {k for k, _ in r.state.pending_held.get(1, ())} & {drop for _, drop in placed(r)}
+    ]
+    assert nights, "no night queued a step whose drop a queued held-slot move takes"
+
+
 def test_a_stash_threshold_and_a_leading_plan_s_step_both_reach_the_name():
     """An arm that names a stash threshold and executes ``queue``, on PR G's Monday with a free
     agent above everyone, the leading plan by hand: its step due tomorrow drops ``nxt`` for the

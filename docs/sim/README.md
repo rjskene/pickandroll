@@ -565,14 +565,20 @@ the part of the list that can land together, each add and each drop taken once b
 that takes it (`policy.distinct`); the queue itself is what it was. So a named player is never
 the drop of a move queued for the same morning: a step that can land beside the set lands on the
 roster it was planned on, where PR G's names, made with the set alone, could send a queued
-step's own drop. One case stays a limit (limits, item 7): when the engine's plan, with
-the queue made, charges a queued move's own add, he has not arrived when the held player returns
-(the adds land after the returns), so the morning falls to the rule before, the least valuable
-active player. No rule of the seat's own is written for it. Rule 1 keeps PR G's exception and
+step's own drop. A third way the two plans meet is settled at the landing (`policy.land`): a
+step due can drop the player the set's held-slot move takes to a held slot that same morning.
+The step is then gone, as a claim whose drop is no longer an active player fails: no add lands
+in a held slot. Before this PR the step's add took the slot its drop sat in, a healthy player
+in a held slot, which the audit finds (met in made-up seasons of an arm that names a stash
+threshold and executes its plan). One case stays a limit (limits, item 7): when the engine's
+plan, with the queue made, charges a queued move's own add, he has not arrived when the held
+player returns (the adds land after the returns), so the morning falls to the rule before, the
+least valuable active player. No rule of the seat's own is written for it. Rule 1 keeps PR G's exception and
 no other: a seat that holds no player names nobody and its decision is the one before, so a
 league without held slots plays as before; in a league with held slots an arm that executes its
 streaming plan may play another season than before this PR, on the mornings a plan step due
-meets a return.
+meets a return, and on a morning a step due drops a player its set moved to a held slot (a
+season the audit refused before).
 
 **The floor** is the engine's (`plans.gate_floor`): the knob of the league's kind
 (`plan_floor_cats` where every category counts, `plan_floor_points` in a points league), in a
