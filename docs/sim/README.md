@@ -439,6 +439,18 @@ held slots at None is the one before, key for key, but for one word of the recor
 table's row for `stash_threshold` ("What each knob reads"), which every record carries and which
 now says who reads the knob, at None too. No figure moves.
 
+**No add lands in a held slot** (`policy.land`). An arm that executes its streaming plan beside
+its set queues two plans together, and a plan step due can drop the player the set's held-slot
+move takes to a held slot that same morning. The step is then gone, as a claim whose drop is no
+longer an active player fails. Before this PR the step's add took the slot its drop sat in, a
+healthy player in a held slot, which the audit finds (`held_kind`). The landing's line was
+main's, and main meets it with no threshold named (a made-up season of such an arm breaks the
+audit there); a threshold makes the night more frequent, since the players it keeps are moved
+to a held slot where the search at None drops them, so it is fixed here (found by PR E's refit
+review and the lead's sweep of this PR). Rule 1 so has a second exception, in a league with
+held slots only: a season the audit refused before plays now, and an arm that executes its plan
+may differ from main on such a morning, at any threshold, None included.
+
 **The season guard and the week's stake** (the guard PR; `policy.allowed_of`,
 `policy.season_figure_of`, `sim/stake.py`). Two fields of an arm, both about how a seat trades
 the weeks near at hand against the rest of the season. Live runs the hard block and reads no
