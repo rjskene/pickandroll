@@ -52,6 +52,10 @@ def base(knobs: dict[str, Any] | None = None, **more: Any) -> dict[str, Any]:
     }
 
 
+#: A baseline that executes the queue's rule (PR E): an exact arm, the plan switches not named.
+QUEUE_BASE = base(tier="exact", executes="queue")
+
+
 def rows(spec, lever, shape=EVERY, ctx=RICH) -> dict[str, sc.Row]:
     return {r.key: r for r in sc.rows_of(spec, [lever], [shape], ctx)}
 
@@ -75,13 +79,14 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
 
 # --------------------------------------------------------------------------- the list
 def test_the_list_is_written_in_the_code_and_is_the_brief_s():
-    assert sc.SCREEN_VERSION == 3
+    assert sc.SCREEN_VERSION == 4
     assert sc.NAMES == (
         "protection_floor",
         "daily_cap",
         "plan_floor_cats",
         "plan_floor_points",
         "horizon_weight",
+        "three_weight",
         "stash_threshold",
         "faab_sizing",
         "season_weight",
@@ -91,7 +96,6 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "weeks_ahead",
         "surrogate_days",
         "executes",
-        "with_plan",
         "execute_plan",
         "system",
         "blend",
@@ -104,8 +108,8 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "plan_floor_cats",
         "plan_floor_points",
         "horizon_weight",
+        "three_weight",
         "executes",
-        "with_plan",
         "execute_plan",
     }
     assert all(lever.tier in ("exact", "surrogate") and lever.nudge for lever in sc.LEVERS)
@@ -116,6 +120,28 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
     for name in BID_NAMES:
         key, *sub = name.removeprefix(sc.BID).split(".")
         assert key in bp.KEYS and (not sub or sub[0] in (*bp.PACE_KEYS, *bp.SHADE_KEYS)), name
+    # A plan floor is on the list twice (PR E): beside the set, and under queue with rows of
+    # its own; every other lever once. No two rows of the list start their keys alike.
+    twice = [lever.name for lever in sc.LEVERS if lever.key]
+    assert twice == ["plan_floor_cats", "plan_floor_points"]
+    assert [lever.key for lever in sc.LEVERS if lever.key] == [
+        "plan_floor_cats-queue",
+        "plan_floor_points-queue",
+    ]
+    stems = [lever.key or lever.name for lever in sc.LEVERS]
+    assert len(stems) == len(set(stems)) == len(sc.NAMES) + 2
+
+
+def test_with_plan_is_a_spec_key_and_not_a_lever_of_a_season():
+    """The plan is one lever (PR E, from H1's review): from a baseline that executes its plan,
+    not drawing it and not executing it are one season, so ``with_plan`` is off the list and
+    asked for by name it is refused with the reason."""
+    assert "with_plan" in rn.SPEC_KEYS and "with_plan" not in sc.NAMES
+    assert set(sc.NOT_LEVERS) == {"with_plan"}
+    with pytest.raises(KeyError, match="lever 'with_plan' is not a lever of a season: a week plan"):
+        sc.rows_of(base(), ["with_plan"], [ONE], BARE)
+    assert "execute_plan plays" in sc.unlisted("with_plan")
+    assert sc.unlisted("pol").startswith("lever 'pol' is not in the screen's list: one of (")
 
 
 def test_every_nudge_of_the_list_builds_a_valid_arm_in_a_league_that_reads_it():
@@ -124,9 +150,13 @@ def test_every_nudge_of_the_list_builds_a_valid_arm_in_a_league_that_reads_it():
     lever, and that ``replay`` would not refuse as one seat; and every lever of the list is such
     a pair in some league here."""
     played: set[str] = set()
-    for spec in (base(), base(execute_plan=True), base({"season_weight": 0.3})):
+    keys: set[str] = set()
+    specs = (base(), base(execute_plan=True), base({"season_weight": 0.3}), QUEUE_BASE)
+    for spec in specs:
         for shape, ctx in ((EVERY, RICH), (POINTS, POINTS_CTX), (ONE, BARE)):
-            for r in sc.rows_of(spec, sc.NAMES, [shape], ctx):
+            got = sc.rows_of(spec, sc.NAMES, [shape], ctx)
+            assert len({r.key for r in got}) == len(got)
+            for r in got:
                 assert r.status in (sc.PLAY, sc.NOT_READ, sc.NOT_PLAYED), r
                 if r.status != sc.PLAY:
                     assert r.a is None and r.b is None and r.why
@@ -136,11 +166,28 @@ def test_every_nudge_of_the_list_builds_a_valid_arm_in_a_league_that_reads_it():
                 assert sc.read_why(r.lever, a, [shape]) is None
                 assert rn.same_seat(a, b, [shape]) is None
                 extra = {"blend"} if r.key == "system-blend" else set()
+                # A move to or from queue leaves the plan switches to the rule: the spec that
+                # executes queue names neither, whatever the other arm's are.
+                if r.lever == "executes" and policy.QUEUE in (a.executes, b.executes):
+                    extra = set(rn.PLAN_KEYS)
                 assert differ(a, b) - extra == {r.lever}, r.key
                 assert r.values == {"a": sc.value_of(a, r.lever), "b": sc.value_of(b, r.lever)}
                 assert b.name == f"B:{r.key}" and a.name == "B"
                 played.add(r.lever)
+                keys.add(r.key)
     assert played == set(sc.NAMES)
+    # The queue's rows (PR E) are among the pairs: the move to queue and from it, its weight
+    # both ways, and each plan floor under it.
+    assert {
+        "executes-queue",
+        "executes-three",
+        "three_weight-0",
+        "three_weight-0.67",
+        "plan_floor_cats-queue-down",
+        "plan_floor_cats-queue-up",
+        "plan_floor_points-queue-down",
+        "plan_floor_points-queue-up",
+    } <= keys
 
 
 def test_the_rows_come_in_the_list_s_order_and_an_unknown_lever_is_a_key_error():
@@ -175,17 +222,21 @@ def test_a_floor_steps_by_the_monday_step_s_own_grid():
     assert to(base(), "plan_floor_cats") == {
         "plan_floor_cats-down": 0.0667,
         "plan_floor_cats-up": 0.15,
+        "plan_floor_cats-queue-down": 0.0667,
+        "plan_floor_cats-queue-up": 0.15,
     }
     assert to(base({"plan_floor_cats": 0.3}), "plan_floor_cats")["plan_floor_cats-up"] == 0.4
     capped = rows(base({"plan_floor_cats": 0.4}), "plan_floor_cats")
     assert capped["plan_floor_cats-up"].why == "the floor is at its cap"
     assert capped["plan_floor_cats-down"].values == {"a": 0.4, "b": 0.2667}
     zero = rows(base({"plan_floor_cats": 0.0}), "plan_floor_cats")
-    assert {r.status for r in zero.values()} == {sc.NOT_PLAYED}
+    assert {r.status for r in zero.values()} == {sc.NOT_PLAYED} and len(zero) == 4
     assert all("at or below zero has no step" in r.why for r in zero.values())
     assert to(base(), "plan_floor_points", POINTS, POINTS_CTX) == {
         "plan_floor_points-down": 0.0067,
         "plan_floor_points-up": 0.015,
+        "plan_floor_points-queue-down": 0.0067,
+        "plan_floor_points-queue-up": 0.015,
     }
 
 
@@ -216,6 +267,93 @@ def test_a_plan_floor_s_row_adds_no_note_where_the_bid_gives_the_three_weeks_no_
     ):
         r = rows(base(bid=block), "plan_floor_cats")["plan_floor_cats-up"]
         assert r.status == sc.PLAY and r.note == note, block
+
+
+def test_a_plan_floor_is_screened_under_queue_in_rows_of_its_own():
+    """PR E: under the queue's rule the floor is the gate a week plan clears to take the queue.
+    Both arms execute ``queue`` and name neither plan switch, whatever the baseline's are."""
+    for spec in (base(), base(with_plan=False, execute_plan=True), base(executes="weighted")):
+        got = rows(spec, "plan_floor_cats")
+        r = got["plan_floor_cats-queue-up"]
+        assert r.status == sc.PLAY and r.lever == "plan_floor_cats" and r.tier == "exact"
+        assert r.both == {"tier": "exact", "executes": "queue"}
+        for side in (r.a, r.b):
+            assert side["executes"] == "queue" and not set(rn.PLAN_KEYS) & set(side)
+            assert rn.arm_of(side).executes == policy.QUEUE
+        assert r.values == {"a": 0.1, "b": 0.15} and r.note == sc.PLAN_FAAB_NOTE
+    # From a baseline that executes queue the rows under queue set nothing but the tier's own,
+    # and the rows beside a set are not played: the baseline plays no set with a plan beside it.
+    own = rows(QUEUE_BASE, "plan_floor_cats")
+    assert own["plan_floor_cats-queue-down"].both == {}
+    assert own["plan_floor_cats-queue-down"].status == sc.PLAY
+    for key in ("plan_floor_cats-down", "plan_floor_cats-up"):
+        assert (own[key].status, own[key].why) == (sc.NOT_PLAYED, sc.QUEUE_BASELINE)
+    # A one-win league reads its own floor under queue too; a points league the points floor.
+    one = sc.rows_of(base(), ["plan_floor_cats"], [ONE], BARE)
+    assert [(r.key, r.status) for r in one] == [
+        ("plan_floor_cats", sc.NOT_READ),
+        ("plan_floor_cats-queue", sc.NOT_READ),
+    ]
+    assert {r.why for r in one} == {policy.ONE_WIN_FLOOR}
+    points = rows(base(), "plan_floor_points", POINTS, POINTS_CTX)
+    assert points["plan_floor_points-queue-up"].both == {"tier": "exact", "executes": "queue"}
+
+
+def test_three_weight_is_nudged_under_queue_and_executes_goes_to_each_other_choice():
+    got = rows(base(), "three_weight", ONE, BARE)
+    assert {k: r.values for k, r in got.items()} == {
+        "three_weight-0": {"a": 0.33, "b": 0.0},
+        "three_weight-0.67": {"a": 0.33, "b": 0.67},
+    }
+    assert all(r.both == {"tier": "exact", "executes": "queue"} for r in got.values())
+    assert all(r.status == sc.PLAY and r.tier == "exact" for r in got.values())
+    assert all(r.both == {} for r in rows(QUEUE_BASE, "three_weight", ONE, BARE).values())
+    # Not read anywhere but under queue: the lever sets it, so the row is read in every league.
+    three = rn.arm_of(base(tier="exact"))
+    assert sc.read_why("three_weight", three, [ONE, EVERY, POINTS]) == policy.NOT_QUEUE
+    assert sc.read_why("three_weight", rn.arm_of(QUEUE_BASE), [ONE]) is None
+    # executes: each other choice, in the order of policy.EXECUTES.
+    assert to(base(), "executes") == {"executes-weighted": "weighted", "executes-queue": "queue"}
+    assert to(base(executes="weighted"), "executes") == {
+        "executes-three": "three",
+        "executes-queue": "queue",
+    }
+    assert to(QUEUE_BASE, "executes") == {
+        "executes-three": "three",
+        "executes-weighted": "weighted",
+    }
+    # A move to queue from a baseline that names its plan switches drops them in arm B alone.
+    r = rows(base(execute_plan=True), "executes")["executes-queue"]
+    assert r.a["execute_plan"] is True and not set(rn.PLAN_KEYS) & set(r.b)
+    assert r.both == {"tier": "exact"}
+
+
+def test_a_baseline_that_executes_queue_is_moved_to_the_surrogate_without_it():
+    """Most levers are played on the surrogate tier, which reads nothing an arm executes and
+    which the parser refuses ``queue`` on: the baseline goes there without the key."""
+    r = rows(QUEUE_BASE, "pool")["pool-45"]
+    assert r.status == sc.PLAY and r.both == {"tier": "surrogate"}
+    assert "executes" not in r.a and "executes" not in r.b
+    assert rn.arm_of(r.a).tier == "surrogate"
+    # The row's words say so, in the record and under the row in the table.
+    assert r.note == sc.QUEUE_OFF_TIER.format(tier="surrogate")
+    assert "both arms leave executes out" in r.note and "surrogate tier" in r.note
+    assert sc.table([r.payload()])[2].strip() == f"note: {r.note}"
+    assert rows(base(tier="exact"), "pool")["pool-45"].note is None
+    assert rows(QUEUE_BASE, "three_weight")["three_weight-0"].note is None
+    # The exact levers keep it; the plan lever is not read under it.
+    assert rows(QUEUE_BASE, "horizon_weight")["horizon_weight-even"].both == {
+        "executes": "weighted"
+    }
+    (plan,) = sc.rows_of(QUEUE_BASE, ["execute_plan"], [ONE], BARE)
+    assert (plan.status, plan.key, plan.why) == (sc.NOT_READ, "execute_plan", sc.QUEUE_PLANS)
+    # applied: a spec the parser takes, whatever is changed.
+    assert sc.applied(base(execute_plan=True, tier="exact"), {"executes": "queue"}) == {
+        **base(tier="exact"),
+        "executes": "queue",
+    }
+    assert sc.applied(QUEUE_BASE, {"tier": "surrogate"}) == base()
+    assert sc.applied(QUEUE_BASE, {"pool": 45}) == {**QUEUE_BASE, "pool": 45}
 
 
 def test_the_daily_cap_moves_by_one_inside_the_knob_s_bounds():
@@ -323,11 +461,14 @@ def test_the_fields_and_the_spec_keys_take_the_list_s_values():
     assert (none.status, none.why) == (sc.NOT_PLAYED, "twice a min_gain of 0 is 0")
     assert to(base(), "weeks_ahead") == {"weeks_ahead-6": 6}
     assert to(base(), "surrogate_days") == {"surrogate_days-monday": [0]}
-    assert to(base(), "executes") == {"executes-weighted": "weighted"}
     assert rows(base(), "executes")["executes-weighted"].both == {"tier": "exact"}
+    # The plan is one lever: executed or not, drawn in both arms (PR E).
     assert to(base(), "execute_plan") == {"execute_plan-flipped": True}
-    assert to(base(execute_plan=True), "with_plan") == {"with_plan-flipped": False}
-    assert to(base(with_plan=False, execute_plan=True), "with_plan") == {"with_plan-flipped": True}
+    assert to(base(execute_plan=True), "execute_plan") == {"execute_plan-flipped": False}
+    flip = rows(base(), "execute_plan")["execute_plan-flipped"]
+    assert flip.both == {"tier": "exact"} and flip.a["with_plan"] is flip.b["with_plan"] is True
+    undrawn = rows(base(with_plan=False), "execute_plan")["execute_plan-flipped"]
+    assert undrawn.status == sc.PLAY and undrawn.both == {"tier": "exact", "with_plan": True}
 
 
 def test_the_two_sources_levers_follow_the_reads_table_on_the_surrogate():
@@ -512,15 +653,20 @@ def test_a_lever_the_league_does_not_read_is_one_row_with_the_reads_table_s_reas
         ("plan_floor_cats", policy.Shape(waivers="faab"), policy.ONE_WIN_FLOOR),
         ("plan_floor_points", EVERY, "a categories league"),
         ("plan_floor_cats", POINTS, "a points league"),
-        ("with_plan", ONE, "the plan is drawn and not executed"),
     )
     for lever, shape, why in cases:
-        (r,) = sc.rows_of(base(), [lever], [shape], BARE)
+        # A plan floor is on the list twice (beside the set, under queue): a row each.
+        r, *under = sc.rows_of(base(), [lever], [shape], BARE)
         assert (r.status, r.key, r.a, r.b, r.note) == (sc.NOT_READ, lever, None, None, None)
         assert r.why.startswith(why), (lever, r.why)
-    # A baseline that draws no plan has none to execute.
-    (r,) = sc.rows_of(base(with_plan=False), ["execute_plan"], [ONE], BARE)
-    assert (r.status, r.why) == (sc.NOT_READ, "the arm draws no week plan")
+        floor = lever.startswith("plan_floor")
+        assert [(u.status, u.key, u.why) for u in under] == (
+            [(sc.NOT_READ, f"{lever}-queue", r.why)] if floor else []
+        )
+    # An arm that draws no plan has none to execute; the lever draws it in both arms, so this
+    # reason is an arm's, never a row's.
+    undrawn = rn.arm_of(base(tier="exact", with_plan=False))
+    assert sc.read_why("execute_plan", undrawn, [ONE]) == "the arm draws no week plan"
     # Read in one of the run's leagues is read.
     assert rows(base(), "faab_sizing", ONE, BARE).keys() == {"faab_sizing"}
     both = sc.rows_of(base(), ["faab_sizing"], [ONE, EVERY], BARE)
@@ -543,7 +689,7 @@ def test_a_nudge_equal_to_the_baseline_s_value_is_refused_by_name():
         (base(pool=45), "pool", "its nudge to 45 is the baseline's value (45)"),
         (base(weeks_ahead=6), "weeks_ahead", "its nudge to 6 is the baseline's value (6)"),
         (base(surrogate_days=[0]), "surrogate_days", "Monday only is the baseline's value ([0])"),
-        (base(executes="weighted"), "executes", "to weighted is the baseline's value (weighted)"),
+        (base({"three_weight": 0.67}), "three_weight", "to 0.67 is the baseline's value (0.67)"),
         (base({"faab_sizing": 0.5}), "faab_sizing", "to 0.5 is the baseline's value (0.5)"),
         (base({"playoff_weight": 1.5}), "playoff_weight", "to 1.5 is the baseline's value (1.5)"),
         (base({"system": "blend", "blend": 0.25}), "blend", "to 0.25 is the baseline's value"),

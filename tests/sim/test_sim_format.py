@@ -310,9 +310,10 @@ def test_a_pair_apart_only_on_plan_floor_cats_is_one_seat_in_a_one_win_run_and_t
     (why,) = rn.same_seat(PLANS, b, [policy.Shape(h2h=ONE_WIN)], rivals=False)
     assert why == (
         f"plan_floor_cats ({policy.ONE_WIN_FLOOR}; read by the exact tier drawing and executing "
-        "the week plan in a categories league), and in a categories FAAB run by a seat that bids "
-        "(the exact or the surrogate tier, a mirror rival), its typical gain until ten moves; "
-        "either only in a league that counts every category (--h2h each_category)"
+        "the week plan, or executing queue, in a categories league), and in a categories FAAB "
+        "run by a seat that bids (the exact or the surrogate tier, a mirror rival), its typical "
+        "gain until ten moves; either only in a league that counts every category "
+        "(--h2h each_category)"
     )
     assert rn.same_seat(PLANS, b, [policy.Shape(h2h=EACH_CATEGORY)], rivals=False) is None
 

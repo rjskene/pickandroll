@@ -240,8 +240,9 @@ class Seen:
     """Everything the policy reads for one claim, and nothing else (the walls).
 
     ``gain`` and ``typical`` are the three weeks': the move's own gain to its set and the seat's
-    typical gain of the fortnight, the plan floor until ten moves (for a plan's ``step``, its
-    week increment over the same typical). ``week`` and ``season`` are the move's gain on the
+    typical gain of the fortnight, the plan floor until ten moves (for a plan's ``step``, the
+    gain its claim bids on over the same typical: its week increment beside a set, its score
+    under the queue's rule, PR E). ``week`` and ``season`` are the move's gain on the
     week and the season term's figure for it (None counts 0), with ``typical_week`` and
     ``typical_season`` the seat's typicals on them (``policy.fortnight_by``: the fortnight's
     median once it holds ten moves, else the median of the seat's last ten), None before its

@@ -533,10 +533,10 @@ def test_the_refusal_of_a_pair_apart_only_on_a_plan_floor_names_a_seat_that_bids
         (why,) = rn.same_seat(a, b, [policy.Shape(waivers="priority", h2h=h2h)], rivals=False)
         assert why == (
             "plan_floor_cats (only the exact tier draws a week plan; read by the exact tier "
-            "drawing and executing the week plan in a categories league), and in a categories "
-            "FAAB run by a seat that bids (the exact or the surrogate tier, a mirror rival), its "
-            "typical gain until ten moves; either only in a league that counts every category "
-            "(--h2h each_category)"
+            "drawing and executing the week plan, or executing queue, in a categories league), "
+            "and in a categories FAAB run by a seat that bids (the exact or the surrogate tier, "
+            "a mirror rival), its typical gain until ten moves; either only in a league that "
+            "counts every category (--h2h each_category)"
         )
     (why,) = rn.same_seat(a, b, [policy.Shape(waivers="faab")], rivals=False)
     assert why.startswith(f"plan_floor_cats ({policy.ONE_WIN_FLOOR}; read by the exact tier")
