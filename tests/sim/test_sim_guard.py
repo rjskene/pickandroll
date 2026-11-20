@@ -1855,7 +1855,7 @@ def test_no_peek_with_a_threshold_the_guard_off_and_a_stake(tier):
     assert all(base[key] == got[key] for key in base if key[0] <= day)
 
 
-def test_the_replay_s_and_the_screen_s_versions_are_the_guard_pr_s():
+def test_the_replay_s_reason_and_the_screen_s_rule_say_the_guard_pr_s_words():
     """The record's reason holds this PR's words under their own number, and the screen's rule
     its clause: a payload read later says whether its arms could name ``guard`` and ``stake``,
     and a screen's record whether "did nothing" set aside the counts that part by construction.
