@@ -1760,7 +1760,7 @@ def test_a_tune_whose_ledger_line_or_record_is_gone_says_so_and_does_not_fall_ov
             file.write_text(text)
 
 
-# --------------------------------------------------------------------------- the cash leagues' kind
+# --------------------------------------------------------------------------- the public leagues' kind
 def test_a_tune_in_a_faab_league_under_continuous_waivers_with_a_held_slot(data: Path):
     """The command played once in the kind of league the levers are for: a budget and sealed
     bids, every add a claim, a held slot, every category a result. The sizing's four values and
@@ -1774,9 +1774,9 @@ def test_a_tune_in_a_faab_league_under_continuous_waivers_with_a_held_slot(data:
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(ss, "task_paired", made_up(worth_world(worth)))
-        code, out = tune(data, *flags, levers=("pool", "faab_sizing"), name="cash")
+        code, out = tune(data, *flags, levers=("pool", "faab_sizing"), name="public")
     assert code == 0, out
-    rec = record(data, "cash")
+    rec = record(data, "public")
     rules = rec["league"]["rules"]
     assert (rules["waivers"], rules["waiver_rule"], rules["held"], rules["h2h"]) == (
         "faab",
@@ -1800,7 +1800,7 @@ def test_a_tune_in_a_faab_league_under_continuous_waivers_with_a_held_slot(data:
     assert wider["change"] == {"pool": 60}
     assert rec["final"]["set"] == {"faab_sizing": 4.0, "pool": 60} and not rec["final"]["unread"]
     for key in ("p1-faab_sizing-2-again", "p1-pool-45-again", "confirm-run"):
-        pair = pair_of(data, "cash", key)
+        pair = pair_of(data, "public", key)
         assert pair["league"]["rules"] == rules and pair["audit"]["paths_voided"] == 0
     conf = rec["confirmation"]
     assert conf["status"] == tn.CONFIRMED and conf["verdict"]["state"] == tn.HOLDS
