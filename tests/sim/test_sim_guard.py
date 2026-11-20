@@ -1853,3 +1853,18 @@ def test_no_peek_with_a_threshold_the_guard_off_and_a_stake(tier):
     first = nopeek.first_difference(base, got)
     assert first is not None and first[0] > day
     assert all(base[key] == got[key] for key in base if key[0] <= day)
+
+
+def test_the_replay_s_and_the_screen_s_versions_are_the_guard_pr_s():
+    """The record's reason holds this PR's words under their own number, and the screen's rule
+    its clause: a payload read later says whether its arms could name ``guard`` and ``stake``,
+    and a screen's record whether "did nothing" set aside the counts that part by construction.
+    The sentence stands before the stash threshold's and names the scale's new key, the one
+    thing that moves with neither field named. A later version's sentence goes before this
+    one, so the numbers are held from below here and exactly by the newest version's test."""
+    why = ss.REPLAY_VERSION_WHY
+    assert ss.REPLAY_VERSION >= 16 and sc.SCREEN_VERSION >= 3
+    assert "16: the season guard as an arm's choice" in why
+    mine = why.split("16: the season guard as an arm's choice")[1].split("15: the stash ")[0]
+    assert "paths_with_ratio" in mine and "sets_past_guard" in mine and "stake_mean" in mine
+    assert "less the counts that part by construction between two arms" in sc.RULE

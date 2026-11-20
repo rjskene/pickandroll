@@ -1402,7 +1402,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 15 since the stash threshold (#172, PR G), 14 since the
+#: The replay's version in its payload: 16 since the season guard as an arm's choice and the
+#: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
 #: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
 #: (PR Fd),
 #: 12 since continuous waivers (PR Fc), 11 since the
@@ -1419,8 +1420,22 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 15
+REPLAY_VERSION = 16
 REPLAY_VERSION_WHY = (
+    "16: the season guard as an arm's choice and a season term that reads the week's stake: an "
+    "arm's spec may name guard (block, the season guard on every search of its tier, live's and "
+    "the default; or off, no search of the tier is handed an allowed set) and stake (0 to 1, 0 by"
+    " default: the season term that week is season_weight x (this week's part + (1 - stake x L) x"
+    " the rest), a move's season figure split at the running week's last day, L the week's stake "
+    "for the seat from the finished weeks' standings, in the bracket's weeks 1 inside the field "
+    "and 0 for a top seed in the week of its bye; the figure as it was when stake x L is 0); an "
+    "arm's fields and its reads table carry the two only when its spec names them; a run in which"
+    " an arm names guard counts sets_past_guard (the sets decided that the guard would have "
+    "refused, a lower bound on how often the block would have turned a decision), and one in "
+    "which an arm names stake counts stake_mean and stake_weeks_above_half, on the seats of its "
+    "arms on the exact or the surrogate tier; season_scale's rows gain paths_with_ratio (the "
+    "paths whose row holds a ratio) in every run that has a scale; with neither field named every"
+    " other figure and key is version 15's. "
     "15: the stash threshold: an arm's stash_threshold is set on its seat's problem and read "
     "there by the engine's searches on the exact and the surrogate tier (a set that drops a "
     "returning player the threshold keeps is refused; the ranking tier's one swap is not held to "

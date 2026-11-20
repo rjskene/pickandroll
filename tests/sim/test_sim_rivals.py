@@ -568,7 +568,7 @@ def test_a_run_on_the_book_records_its_rules_its_book_and_the_arms_rival_keys(wi
     label = shapes.LeagueRules(waivers="faab", waiver_rule=CONTINUOUS, rival_bids=BOOK).label()
     assert f"league rules, on every path: {label}" in out and "on the book" in label
     p = written(out)
-    assert p["replay_version"] == ss.REPLAY_VERSION == 15
+    assert p["replay_version"] == ss.REPLAY_VERSION == 16
     assert "13: the rivals' adds and bids" in p["replay_version_why"]
     assert p["league"]["rules"]["rival_bids"] == BOOK
     assert p["league"]["faab_note"] == ss.FAAB_NOTE_CONTINUOUS.replace(
