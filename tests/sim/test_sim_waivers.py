@@ -384,8 +384,11 @@ def test_the_waiver_rules_hold_an_honest_morning_and_a_run_without_waivers_reads
         "waiver_wait",
         "claim_priority",
     ]
-    assert audit.Auditor(setup).rules == audit.rules_of("priority")
-    assert audit.Auditor(make_setup(teams=4)).rules == audit.RULES
+    # The made-up league's bracket has a round, so its own audit reads the bracket's rule too
+    # (PR bracket), after the six and before the waivers'.
+    assert audit.Auditor(setup).rules == audit.rules_of("priority", bracket=True)
+    assert audit.Auditor(make_setup(teams=4)).rules == (*audit.RULES, audit.BRACKET_PAIRS)
+    assert audit.Auditor(make_setup(teams=4, bracket=False)).rules == audit.RULES
 
 
 def test_waiver_wait_catches_a_player_who_joins_before_his_clear_date():

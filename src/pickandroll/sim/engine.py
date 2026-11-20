@@ -23,12 +23,26 @@ From the Monday step (``season.hillclimb``) the simulator takes the grids its sc
 floor by (#172, PR H1), and nothing of the step itself: ``FLOOR_STEP``, the protection floor's
 step a game in each scoring; ``PLAN_DEFAULT`` and ``PLAN_CAP``, a plan floor's default and how
 many times it the floor may rise to. The simulator never runs the step and writes no knob file.
+
+From the week plans (``season.plans``, ``pl``) the simulator takes the queue's rule (#172, PR E):
+``held_out``, ``every_plan`` and ``for_queue``, the plans the live queue weighs and the one it
+takes instead of the three weeks' set, with ``step_score`` for a step's bid, ``gate`` and
+``gate_floor`` for what the choice was made on. The search, the gate, the floor and the trim are
+the engine's own: the simulator hands them the day's inputs and takes the answer.
+
+From the moves search's pool (``season.pool``, ``sp``) the simulator takes the union pool (#172, PR
+pool): ``pool_for``, a horizon's best adds by single move and then the adds whose best single
+move the season guard admits; ``admitted_swaps``, that guard's list alone; and ``joined``, a head
+and a list made one pool. The rule is the engine's own: the simulator hands it the day's single
+swaps, the guard and the arm's sizes, and writes no line of it again.
 """
 
 from __future__ import annotations
 
 from pickandroll.season import decisions as dl
 from pickandroll.season import moves as mv
+from pickandroll.season import plans as pl
+from pickandroll.season import pool as sp
 from pickandroll.season import strategy as sg
 from pickandroll.season import stream as st
 from pickandroll.season import weekly as wk
@@ -67,8 +81,10 @@ __all__ = [
     "dl",
     "monday_of",
     "mv",
+    "pl",
     "refused",
     "sg",
+    "sp",
     "st",
     "starting_slots",
     "total",

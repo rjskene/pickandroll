@@ -116,6 +116,7 @@ from datetime import date, timedelta
 from typing import Protocol
 
 from . import weekly as wk
+from .lift import Lift
 from .state import Player, Transaction
 
 #: By how much the best add's rest-of-season per-game value must beat a player's to take him
@@ -262,6 +263,12 @@ class MoveProblem:
     #: Whether the league's standings count one win per matchup (#397, ``SeasonSettings.one_win``):
     #: each week is then valued as the matchup's win odds, not its expected categories won.
     one_win: bool = False
+    #: The flagged candidates' lifts (#435, ``season.lift``): on a lifted move (:func:`is_lifted`)
+    #: the add plays on the lifted line. Empty: no lift, the moves as before.
+    lifted: Mapping[int, Lift] = field(default_factory=dict)
+    #: My marginal players (#435, :func:`marginal_of`): a lifted add's drop must be one of them,
+    #: or nobody.
+    marginal: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -981,6 +988,41 @@ def keep_rule(problem: MoveProblem) -> KeepRule:
     )
 
 
+def marginal_of(problem: MoveProblem, n: int) -> frozenset[int]:
+    """My ``n`` marginal players (#435): the active players no rule keeps, lowest by the keep
+    rule's rest-of-season per-game value (one with no line lowest of all)."""
+    if n <= 0:
+        return frozenset()
+    free = [k for k, _ in problem.roster if k not in problem.kept]
+    values = problem.season_value
+    free.sort(key=lambda k: (values[k] if k in values else float("-inf"), k))
+    return frozenset(free[:n])
+
+
+def is_lifted(problem: MoveProblem, add: int, drop: int | None) -> bool:
+    """Whether a move adding ``add`` for ``drop`` plays the add on the lifted line (#435): the add
+    is lifted, and the move drops one of my marginal players or nobody (an open spot or a held-slot
+    move). A churn's held drop, a plan step's earlier add or any other player is not marginal."""
+    return add in problem.lifted and (drop is None or drop in problem.marginal)
+
+
+def line_of(problem: MoveProblem, add: int, drop: int | None) -> wk.Rates | None:
+    """The line a move adding ``add`` for ``drop`` plays the add on: the lifted one on a lifted
+    move, else the add's own."""
+    if is_lifted(problem, add, drop):
+        return problem.lifted[add].rates
+    return problem.rates.get(add)
+
+
+def rates_with(problem: MoveProblem, moves: Iterable[Move]) -> Mapping[int, wk.Rates]:
+    """The lines ``moves`` are played on: the problem's, each lifted move's add on the lifted
+    line (#435). The problem's own mapping when no move is lifted."""
+    if not problem.lifted:
+        return problem.rates
+    up = {m.add: problem.lifted[m.add].rates for m in moves if is_lifted(problem, m.add, m.drop)}
+    return {**problem.rates, **up} if up else problem.rates
+
+
 # --------------------------------------------------------------------------- the IL advice
 #: The advice for one of my players with an absence (#124, "can and should").
 STASH, IL_FULL, BENCH, DROPPABLE = "stash", "il_full", "bench", "droppable"
@@ -1128,8 +1170,10 @@ class Evaluator:
         memo = (key, moves)
         if memo not in self._memo:
             members, available, gone = self._after(key, moves)
+            rates = rates_with(self.problem, moves)
             self._memo[memo] = sum(
-                self._week(span, members, available, gone) for span in self.problem.horizons[key]
+                self._week(span, members, available, gone, rates)
+                for span in self.problem.horizons[key]
             )
         return self._memo[memo]
 
@@ -1151,14 +1195,20 @@ class Evaluator:
     def odds(self, key: str, moves: Iterable[Move]) -> list[list[list[wk.CategoryOdds]]]:
         """Each week's category odds over horizon ``key`` with ``moves`` made, one list per
         opponent."""
-        members, available, gone = self._after(key, frozenset(moves))
-        return [self._odds(span, members, available, gone) for span in self.problem.horizons[key]]
+        moves = frozenset(moves)
+        members, available, gone = self._after(key, moves)
+        rates = rates_with(self.problem, moves)
+        return [
+            self._odds(span, members, available, gone, rates) for span in self.problem.horizons[key]
+        ]
 
     def mine(self, key: str, moves: Iterable[Move]) -> list[wk.TeamWeek]:
         """My projected week for each week of horizon ``key`` with ``moves`` made."""
-        members, available, gone = self._after(key, frozenset(moves))
+        moves = frozenset(moves)
+        members, available, gone = self._after(key, moves)
+        rates = rates_with(self.problem, moves)
         return [
-            project_mine(self.problem, span, members, gone, available)
+            project_mine(self.problem, span, members, gone, available, rates=rates)
             for span in self.problem.horizons[key]
         ]
 
@@ -1168,8 +1218,9 @@ class Evaluator:
         members: Sequence[Member],
         available: Mapping[int, date],
         gone: Mapping[int, date],
+        rates: Mapping[int, wk.Rates] | None = None,
     ) -> float:
-        odds = self._odds(span, members, available, gone)
+        odds = self._odds(span, members, available, gone, rates)
         if not odds:
             return 0.0
         won = wk.matchup_won if self.problem.one_win else wk.expected_won
@@ -1181,10 +1232,11 @@ class Evaluator:
         members: Sequence[Member],
         available: Mapping[int, date],
         gone: Mapping[int, date],
+        rates: Mapping[int, wk.Rates] | None = None,
     ) -> list[list[wk.CategoryOdds]]:
         if not span.opponents:
             return []
-        mine = project_mine(self.problem, span, members, gone, available)
+        mine = project_mine(self.problem, span, members, gone, available, rates=rates)
         finals = wk.finals(mine, span.so_far, self.problem.cats)
         return [wk.odds_of(finals, theirs, self.problem.cats) for theirs in self._theirs[id(span)]]
 
@@ -1196,16 +1248,19 @@ def project_mine(
     gone: Mapping[int, date] | None = None,
     available: Mapping[int, date] | None = None,
     chosen: Mapping[date, Collection[int]] | None = None,
+    rates: Mapping[int, wk.Rates] | None = None,
 ) -> wk.TeamWeek:
     """My week over ``span`` with ``members`` (my roster, held slots included, when None), each
     player in ``gone`` stopped from his day on (a drop): his starts go to the bench. An add
     plays from his day in ``available`` (a dated move's, #136), else from his effective day.
     ``chosen`` ranks a day's named starters first (the recommended lineup's crowded days, #314:
-    the Matchup and Season views; the moves keep ``value``'s starters)."""
+    the Matchup and Season views; the moves keep ``value``'s starters). ``rates`` are the lines
+    played on (:func:`rates_with`, #435), the problem's when None; the starters' order stays
+    ``value``'s."""
     p = problem
     return wk.project_week(
         [*p.held, *p.roster] if members is None else members,
-        p.rates,
+        p.rates if rates is None else rates,
         span.days,
         p.schedule,
         p.slots,

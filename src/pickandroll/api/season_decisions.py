@@ -28,6 +28,7 @@ from typing import Any
 from ..season import Season
 from ..season import decisions as dl
 from ..season import moves as mv
+from ..season import picks as pk
 from ..season import plans as pl
 from ..season import progress as pg
 from ..season import weekly as wk
@@ -123,6 +124,9 @@ def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, An
     horizon as the solve priced it (None for a strategy move left unpriced) and its projection
     in value units (``decisions.move_projection``), for the scorecard (#126)."""
     out = {**{k: move[k] for k in ("add", "drop", "from")}, "bid": None}
+    if "lift" in move:
+        # A lifted move (#435): the factor its add's line was valued on.
+        out["lift"] = move["lift"]
     if built is not None:
         drop = None if move.get("drop") is None else int(move["drop"])
         day = None if move.get("from") is None else date.fromisoformat(move["from"])
@@ -204,7 +208,27 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
         "adds": built.adds,
         "horizons": {k: built.horizons[k]["label"] for k in season_moves.HORIZONS},
         "scorer": built.scorer,
+        # The breakout lift in force (#435): only when a candidate is lifted.
+        **({"lift": lift} if (lift := season_moves.lift_payload(built)) is not None else {}),
+        # The add reserve and the re-cut rule in force (#436): only when one applies. The queue
+        # reads it (``autopilot.reserve_reason``).
+        **({"reserve": r} if (r := season_moves.reserve_payload(built)) is not None else {}),
     }
+
+
+def _reserve_set(
+    built: Built,
+    ev: mv.Evaluator,
+    moves: Sequence[mv.Move],
+    held: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A logged set's ``reserve`` (#436): each move's worth on the queue's score as the solve
+    computed it (``adds``, what the queue compares to the price), with the set the rules held
+    back when they held one back; nothing when no rule applies."""
+    if built.reserve is None:
+        return {}
+    back = dict(held) if held and held.get("held_back") else {}
+    return {"reserve": {**back, "adds": season_moves.reserve_adds(built, ev, moves)}}
 
 
 def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[str, Any]:
@@ -226,6 +250,9 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "gain": rec["gain"],
                 "week": _week(ev, _moves_of(moves)),
                 "season_guard": guard_record(rec.get("season_guard")),
+                # The add reserve (#436): what each move adds on the queue's score, and the set
+                # it held back when it held one back.
+                **_reserve_set(built, ev, _moves_of(moves), rec.get("reserve")),
             }
         )
     plan = payload.get("plan")
@@ -280,8 +307,12 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 },
                 "gain": w["total"],
                 "week": _week(ev, model),
+                **_reserve_set(built, ev, model),
             }
         )
+    picks = payload.get("picks")
+    if picks is not None and picks["moves"]:
+        sets.append(picks_set(built, picks))
     search = payload.get("search") or {}
     return {
         **_common(built, at, "moves"),
@@ -302,6 +333,35 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
             "cycles": search.get("cycles"),
         },
         "sets": sets,
+        # The user's picks in force the solve could not make (#434): only with a pick in force.
+        **({"picks": {"skipped": picks["skipped"]}} if picks is not None else {}),
+    }
+
+
+def picks_set(built: Built, picks: Mapping[str, Any]) -> dict[str, Any]:
+    """The user's picks the solve made (#434) as one more set, ``pick``, after the others: each
+    move logged on the problem before the picks (``season_moves.picked``), with ``decided_by``
+    ``pick``, the user's bid when set and its score (the week plus ``three_weight`` times the
+    three weeks); this week before and after them. The queue takes it first."""
+    b = season_moves.picked(built)
+    p = b.problem
+    ev = mv.Evaluator(p)
+    moves = [
+        {**_logged(m, b), "bid": m["bid"], "decided_by": m["decided_by"], "score": m["score"]}
+        for m in picks["moves"]
+    ]
+    moves = _flagged(_based(moves, b), "moves", "three")
+    model = _moves_of(moves)
+    return {
+        "key": pk.PICK,
+        "weight": None,
+        "moves": moves,
+        "held": [{"player": k, "slot": slot} for k, slot in mv.held_used(p, model)],
+        "comebacks": {
+            h: season_moves.comebacks_rows(mv.comebacks(p, h, model)) for h in p.horizons
+        },
+        "gain": {h: round(ev.gain(h, model), 3) for h in season_moves.HORIZONS},
+        "week": _week(ev, model),
     }
 
 

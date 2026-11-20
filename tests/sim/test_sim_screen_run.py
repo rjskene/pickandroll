@@ -9,6 +9,7 @@ and the record are the command's own. The list's own rules are ``test_sim_screen
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -18,11 +19,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pickandroll.sim import audit, shapes
+from pickandroll.sim import audit, policy, shapes
+from pickandroll.sim import bid_policy as bp
 from pickandroll.sim import cli as ss
+from pickandroll.sim import counts as ct
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
+from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN
 from tests.sim.sim_league import KNOBS, make_data_dir
 from tests.sim.test_sim_rivals import fit_bids, table_rows, write_table
 
@@ -122,9 +126,22 @@ def whole(data: Path) -> tuple[dict, str]:
 
 
 # --------------------------------------------------------------------------- the loop
+def test_every_flag_of_a_run_s_cells_and_world_is_a_key_of_the_screen_s_spec():
+    """A world's flag the spec did not keep would let a folder started under one value of it be
+    carried on under another (#172, the draft PR, whose ``--seat-draft`` is such a flag): every
+    flag ``_cell_args`` and ``_world_args`` give a parser is a key of ``SCREEN_WORLD``, and the
+    spec's other keys are the paths and the seed."""
+    p = argparse.ArgumentParser(add_help=False)
+    ss._cell_args(p, None)
+    ss._world_args(p)
+    flags = {a.dest for a in p._actions}
+    assert "seat_draft" in flags and flags <= set(ss.SCREEN_WORLD)
+    assert set(ss.SCREEN_WORLD) - flags == {"paths", "seed"}
+
+
 def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: Path, whole):
     rec, out = whole
-    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 1)
+    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 6)
     assert rec["note"] == ss.SCREEN_NOTE and rec["rule"] == sc.RULE
     assert rec["measure"] == "matchup_wins" and rec["hold_out"] == 2025
     assert len(rec["fit_sha"]) == 64 and rec["fit_file"].endswith("fit.json")
@@ -136,7 +153,7 @@ def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: 
     }
     # The spec: the baseline verbatim, the levers in the list's order, the world's flags.
     spec = rec["spec"]
-    assert spec["arm"] == BASE and spec["screen_version"] == 1 and spec["fit_sha"] == rec["fit_sha"]
+    assert spec["arm"] == BASE and spec["screen_version"] == 6 and spec["fit_sha"] == rec["fit_sha"]
     assert spec["replay_version"] == ss.REPLAY_VERSION
     assert set(spec) == {"screen_version", "replay_version", "arm", "levers", "world", "fit_sha"}
     assert spec["levers"] == ["protection_floor", "weeks_ahead", "surrogate_days", "system"]
@@ -200,7 +217,10 @@ def test_a_lever_that_cannot_matter_did_nothing_and_one_that_can_moved_the_count
     cell = idle["cells"]["2024"]["prior"]
     assert all(d["mean"] == 0.0 for d in cell["difference"].values() if d["mean"] is not None)
     assert cell["counts"]["a"] == cell["counts"]["b"]
-    assert "did nothing (both arms' counts and outcomes are equal on every path)" in whole[1]
+    assert (
+        "did nothing (both arms' counts and outcomes are equal on every path, less the counts "
+        "that part by construction between two arms): "
+    ) in whole[1]
     moved = rows["surrogate_days-monday"]["result"]
     assert not moved["did_nothing"] and not moved["counts_equal"]
     counts = moved["cells"]["2024"]["prior"]["counts"]
@@ -221,7 +241,7 @@ def test_a_pair_s_record_is_a_replay_s_with_one_screen_block(data: Path, whole):
     row = rows_of(rec)["surrogate_days-monday"]
     assert got["screen"] == {
         "name": "whole",
-        "screen_version": 1,
+        "screen_version": 6,
         **{k: v for k, v in row.items() if k != "file"},
     }
     assert got["screen"]["both"] == {} and got["screen"]["tier"] == "surrogate"
@@ -399,6 +419,28 @@ def test_a_screen_is_resumed_only_on_the_spec_it_was_started_with(data: Path, wh
     assert record(data, "whole") == whole[0]
 
 
+def test_a_screen_under_a_table_is_held_to_the_seat_s_draft_rule_in_force(data: Path, whole):
+    """The spec holds the seat's draft rule in force, not the flag as typed (#172, the draft
+    PR): a screen started under a table with no rule named is the market's, so it is taken up
+    by the same command naming ``--seat-draft market`` and refused by one naming ``own``, by
+    name. Without a table no rule is in force and the spec says none."""
+    assert whole[0]["spec"]["world"]["seat_draft"] is None
+    table = ("--adp", "espn", "--adp-spread", "2,0.1")
+    kw = {"levers": ("surrogate_days",), "name": "table"}
+    code, out = screen(data, *table, **kw)
+    assert code == 0, out
+    rec = record(data, "table")
+    assert rec["spec"]["world"]["seat_draft"] == "market"
+    assert set(rec["spec"]["world"]) == set(ss.SCREEN_WORLD)
+    code, out = screen(data, *table, "--seat-draft", "market", **kw)
+    assert code == 0 and "0 pair(s) to play" in out and "refused" not in out, out
+    assert record(data, "table") == rec
+    code, out = screen(data, *table, "--seat-draft", "own", **kw)
+    assert code == 2, out
+    assert "started with another spec (seat_draft: started with 'market', now 'own'" in out
+    assert "to play" not in out and record(data, "table") == rec
+
+
 def test_a_screen_on_the_price_book_is_held_to_the_book(data: Path, whole):
     """``--rival-bids book`` (PR Fd): the screen's spec and its record name the book the rivals
     bid on, as each pair's record does, and a piece under a newer book is refused: a newer book
@@ -510,6 +552,11 @@ def test_a_screen_refuses_by_name_before_any_path(data: Path, monkeypatch):
             {"levers": ("pool", "pol")},
             (),
             "refused: lever 'pol' is not in the screen's list: one of",
+        ),
+        (
+            {"levers": ("pool", "with_plan")},
+            (),
+            f"refused: lever 'with_plan' is not a lever of a season: {sc.NOT_LEVERS['with_plan']}",
         ),
         ({}, ("--max-minutes", "0"), "refused: --max-minutes is a span in minutes, above 0"),
         ({"arm": "nowhere"}, (), "refused: --arm: "),
@@ -671,25 +718,28 @@ def test_the_season_scale_is_measured_once_and_the_nudges_are_shares_of_it(data:
 
 # --------------------------------------------------------------------------- the exact tier
 def test_a_lever_of_the_exact_tier_is_played_on_it_in_both_arms(data: Path):
-    """``execute_plan`` flipped: the baseline is a surrogate arm, and the pair is played on the
-    exact tier in both arms, which the row and the pair's record say; ``with_plan`` beside it is
-    not read, since the baseline does not execute the plan it draws. (What the pair finds is not
+    """``execute_plan`` flipped, the plan as one lever (PR E): the baseline is a surrogate arm,
+    and the pair is played on the exact tier with the week plan drawn in both arms, which the
+    row and the pair's record say. ``with_plan`` is no lever of its own (asked for by name it is
+    refused, ``test_a_screen_refuses_by_name_before_any_path``). (What the pair finds is not
     pinned: on this league the two arms landed as many adds and finished apart, the case the
     rule for "did nothing" was corrected on, which ``test_sim_screen.py`` pins in made-up
     figures.)"""
-    code, out = screen(data, levers=("execute_plan", "with_plan"), name="exact")
+    code, out = screen(data, levers=("execute_plan",), name="exact")
     assert code == 0, out
     rows = rows_of(record(data, "exact"))
-    assert rows["with_plan"]["status"] == sc.NOT_READ
-    assert rows["with_plan"]["why"] == "the plan is drawn and not executed"
+    assert list(rows) == ["execute_plan-flipped"]
     row = rows["execute_plan-flipped"]
+    # The row says what both arms were moved to: the baseline draws its plan already (the
+    # spec's default), so the tier alone; the pair's specs name the plan drawn in both.
     assert row["tier"] == "exact" and row["both"] == {"tier": "exact"}
     assert row["values"] == {"a": False, "b": True}
     got = pair_of(data, "exact", "execute_plan-flipped")
-    assert got["specs"]["a"] == {**BASE, "tier": "exact"}
+    assert got["specs"]["a"] == {**BASE, "tier": "exact", "with_plan": True}
     assert got["specs"]["b"] == {
         **BASE,
         "tier": "exact",
+        "with_plan": True,
         "execute_plan": True,
         "name": "B:execute_plan-flipped",
     }
@@ -697,3 +747,197 @@ def test_a_lever_of_the_exact_tier_is_played_on_it_in_both_arms(data: Path):
     result = row["result"]
     assert result["did_nothing"] == (result["counts_equal"] and result["outcomes_equal"])
     assert result["cells"]["2024"]["prior"]["counts"]["a"]["landed"]["mean"] > 0
+
+
+# --------------------------------------------------------------------------- the bid policy
+# PR F2: a bid lever's pair in the screen, and on this small league the replay's own words for an
+# arm that names a ``bid`` (a dry run plays one path of it in a second or two).
+@pytest.mark.parametrize("h2h", [ONE_WIN, EACH_CATEGORY])
+def test_a_bid_lever_s_pair_is_played_by_faab_and_is_the_same_pair_run_by_replay(data: Path, h2h):
+    """PR F2's levers in the command, in both formats. Under continuous waivers by FAAB the
+    routine's pair is played: arm A the baseline, which names no ``bid``, arm B its ``bid`` at
+    ``routine`` 1. The routine dollar moves the dollars spent and no claim won. The pair's record
+    lists arm B's block, every key with its value in force, and says its seat reads it; arm A
+    has neither. The pair's two specs run by ``replay --arms`` give the record key for key
+    (the screen's Rule 1, with a ``bid`` in a spec file)."""
+    flags = ("--waivers", "faab", "--waiver-rule", "continuous", "--h2h", h2h)
+    name = f"bid-{h2h}"
+    code, out = screen(data, *flags, levers=("bid.routine",), name=name)
+    assert code == 0, out
+    mine = same_by_replay(data, name, "bid.routine-flipped", flags)
+    assert mine["league"]["rules"]["waivers"] == "faab" and mine["audit"]["paths_voided"] == 0
+    assert "bid" not in mine["specs"]["a"] and mine["specs"]["b"]["bid"] == {"routine": 1}
+    assert mine["bid"] == {"b": {**bp.DEFAULT.payload(), "routine": 1}}
+    assert mine["bid_note"] == ss.BID_NOTE
+    (reads_a,), (reads_b,) = mine["reads"]["a"].values(), mine["reads"]["b"].values()
+    assert reads_b["bid"] == policy.READ and "bid" not in reads_a
+    assert {k: v for k, v in reads_b.items() if k != "bid"} == reads_a
+    counts = mine["counts"]["by_season"]["2024"]["prior"]
+    assert counts["a"]["claims_won"] == counts["b"]["claims_won"]
+    assert counts["a"]["claims_won"]["mean"] > 0
+    assert counts["b"]["dollars_spent"]["mean"] > counts["a"]["dollars_spent"]["mean"] > 0
+    assert {"dollars_at_bracket", "weeks_at_zero", "value_won"} <= set(counts["a"])
+    row = rows_of(record(data, name))["bid.routine-flipped"]
+    assert row["values"] == {"a": 0, "b": 1} and row["both"] == {}
+    assert not row["result"]["counts_equal"] and not row["result"]["did_nothing"]
+    assert f"bid policy, arm B (B:bid.routine-flipped): {bp.of({'routine': 1}).label()}" in out
+
+
+@pytest.mark.parametrize("h2h", [ONE_WIN, EACH_CATEGORY])
+def test_the_bid_s_week_pair_and_its_season_pair_part_by_a_size_on_a_found_path(data: Path, h2h):
+    """The screen's ``bid.week`` row and its ``bid.season`` row are two levers in the command
+    (the lead's ask of 2026-11-19), on a found path: seed 7, where the seat of one path
+    recommends ten moves early and so reads a size on each horizon. On this file's own seed 5
+    it never makes a tenth move, and the two pairs part by a gain's sign at most.
+
+    Arm A is the baseline in both pairs and plays one season. The two arms B, one step up on
+    the week and one on the season, win as many claims at the same dollars and value them
+    apart, by no whole number of steps: before a seat's tenth move the two weights part by one
+    step for each claim whose gain has another sign on the two horizons, and by nothing else,
+    so a part of a step is a size read.
+
+    What this shows, and what it does not (found in review). Each row did something here: its
+    arm B spends other dollars than the baseline, and the row is not "did nothing". But the two
+    rows part from each other in the value their claims were sized on alone, a count no
+    decision reads (declared in ``counts.APART_BY_CONSTRUCTION``): in this league of three weeks the two sizes round to
+    one dollar on every claim, so the two arms B play one season and the screen reports one
+    outcome under two names. No dollar parted on any of the eight seeds tried (1 to 8, both
+    formats; the handoff). A dollar that parts between the two weights is
+    ``test_sim_bid_seasons.py``'s, in a made-up season of six weeks in both formats.
+
+    Here the seat's ten moves are inside one fortnight, which the live rule's fortnight reads
+    too; a seat's last ten moves past a fortnight are ``test_sim_bid_seasons.py``'s."""
+    flags = ("--waivers", "faab", "--waiver-rule", "continuous", "--h2h", h2h, "--seed", "7")
+    name = f"bid-weights-{h2h}"
+    code, out = screen(data, *flags, levers=("bid.week", "bid.season"), name=name)
+    assert code == 0, out
+    rows = rows_of(record(data, name))
+    assert [rows[f"bid.{k}-down"]["status"] for k in ("week", "season")] == [sc.NOT_PLAYED] * 2
+    week, season = (
+        rows[f"bid.{k}-up"]["result"]["cells"]["2024"]["prior"]["counts"]
+        for k in ("week", "season")
+    )
+    assert week["a"] == season["a"]
+    for key in ("claims_won", "dollars_spent"):
+        assert week["b"][key] == season["b"][key] and week["b"][key]["mean"] > 0
+    # Each row did something: its arm B spends other dollars than the baseline.
+    for k, counts in (("week", week), ("season", season)):
+        result = rows[f"bid.{k}-up"]["result"]
+        assert not result["counts_equal"] and not result["did_nothing"]
+        assert counts["a"]["dollars_spent"] != counts["b"]["dollars_spent"]
+    # The two arms B part in the value their claims were sized on, and in no other count.
+    assert {m for m in week["b"] if week["b"][m] != season["b"][m]} == {"value_won"}
+    assert "value_won" in ct.APART_BY_CONSTRUCTION
+    paths = 2
+    apart = week["b"]["value_won"]["mean"] - season["b"]["value_won"]["mean"]
+    steps = apart * paths / sc.WEIGHT_STEP
+    assert abs(steps - round(steps)) > 0.05, apart
+
+
+def test_a_bid_lever_is_listed_and_not_played_where_waivers_carry_no_bid(data: Path):
+    """By priority a ``bid`` is read by nobody: each of its levers is one row, not read here,
+    with the block's own reason, and the list has no pair to play."""
+    before = folders(data)
+    levers = ("bid.routine", "bid.shade")
+    code, out = screen(data, "--waivers", "priority", "--dry-run", levers=levers, name="unbid")
+    assert code == 0, out
+    assert out.count("not read here: waivers by priority carry no budget and no bid") == 2
+    assert "0 pair(s) to play" in out and folders(data) == before
+
+
+def test_a_replay_says_an_arm_s_bid_before_any_path_and_refuses_one_nobody_reads(data: Path):
+    """The command's words for a pair whose arm B names a ``bid`` (PR F2), on a dry run: the
+    line is ``replay_plan``'s, which a run and the no-peek check print too. By FAAB it says the
+    block in words, and nothing of arm A, which names none; the no-peek check of the same pair
+    says the same line before its own, and writes nothing. By priority two arms apart only on
+    the block are one seat, refused by name before any path; apart on the pool too, the pair is
+    planned and the line says why its league does not read the block."""
+    block = {"routine": 1, "pace": {"k": 1, "shape": 1, "reserve": 0.2}}
+    specs = {"a": BASE, "b": {**BASE, "name": "P", "bid": block}}
+    specs["c"] = {**specs["b"], "name": "Q", "pool": 45}
+    files = {}
+    for key, spec in specs.items():
+        files[key] = data / f"said-{key}.json"
+        files[key].write_text(json.dumps(spec))
+    before = folders(data)
+
+    def dry(b: str, *flags: str, how: tuple[str, ...] = ("--dry-run",)) -> tuple[int, str]:
+        argv = ["--data", str(data), "--rooms", "0", "replay", "--seasons", "2024", "--seed", "5"]
+        argv += ["--workers", "1", "--paths", "1", *flags, *how]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = ss.main([*argv, "--arms", str(files["a"]), str(files[b])])
+        return code, buf.getvalue()
+
+    words = bp.of(block).label()
+    assert "pace k 1 shape 1 reserve 0.2" in words and "a routine claim $1" in words
+    code, out = dry("b", "--waivers", "faab", "--waiver-rule", "continuous")
+    assert code == 0, out
+    assert f"bid policy, arm B (P): {words}\n" in out and "bid policy, arm A" not in out
+    assert "not read in this run" not in out and "dry run, nothing written" in out
+    # The no-peek check says it too, before the check's own lines.
+    faab = ("--waivers", "faab", "--waiver-rule", "continuous")
+    code, out = dry("b", *faab, how=("--no-peek", "2023-10-30"))
+    assert code == 0, out
+    said, check = f"bid policy, arm B (P): {words}\n", "no-peek check on 2023-10-30"
+    assert said in out and check in out and out.index(said) < out.index(check)
+    assert "bid policy, arm A" not in out and "nothing written" in out
+    code, out = dry("b", "--waivers", "priority")
+    assert code == 2, out
+    assert (
+        "refused: arms a and b are the same seat: they differ only in bid (waivers by priority "
+        f"carry no budget and no bid; read by {policy.BID_WHEN_READ})"
+    ) in out
+    assert "bid policy" not in out
+    code, out = dry("c", "--waivers", "priority")
+    assert code == 0, out
+    assert (
+        f"bid policy, arm B (Q): {words}; not read in this run: waivers by priority carry no "
+        "budget and no bid\n"
+    ) in out
+    assert folders(data) == before
+
+
+# --------------------------------------------------------------------------- the queue's rule
+def test_a_baseline_that_executes_queue_at_the_command(data: Path):
+    """PR E, at the command, on the small league. A spec that executes ``queue`` is a baseline a
+    screen takes: its plan switch is not read and, the league counting one win, neither is the
+    floor in either of its rows, each with its reason; no pair is played for them (the floor's
+    rows where the league reads it are ``test_sim_screen.py``'s: two exact pairs are slow for a
+    test). And one pair run by ``replay`` where every category counts, an
+    arm that executes the set against the same arm executing ``queue`` (one path, the arms'
+    pool 8: an exact pair is slow): the queue takes a plan, the record carries the queue's two
+    counts in every row with their note and the reads table's note on the season term for the
+    queue arm alone, and no path is voided."""
+    queue = {**BASE, "name": "Q", "tier": "exact", "executes": "queue", "pool": 8}
+    (data / "Q.json").write_text(json.dumps(queue))
+    (data / "T.json").write_text(json.dumps({**BASE, "name": "T", "tier": "exact", "pool": 8}))
+    code, out = screen(data, levers=("execute_plan", "plan_floor_cats"), arm="Q", name="q")
+    assert code == 0, out
+    rows = rows_of(record(data, "q"))
+    assert rows["execute_plan"]["status"] == sc.NOT_READ
+    assert rows["execute_plan"]["why"] == sc.QUEUE_PLANS
+    for key in ("plan_floor_cats", "plan_floor_cats-queue"):
+        assert (rows[key]["status"], rows[key]["why"]) == (sc.NOT_READ, policy.ONE_WIN_FLOOR)
+    assert len(rows) == 3
+    argv = ["--data", str(data), "--rooms", "0", "replay", "--seasons", "2024", "--workers", "1"]
+    argv += ["--seed", "5", "--paths", "1", "--h2h", "each_category"]
+    argv += ["--arms", str(data / "T.json"), str(data / "Q.json")]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert ss.main(argv) == 0, buf.getvalue()
+    (line,) = [x for x in buf.getvalue().splitlines() if x.startswith("written: ")]
+    got = json.loads(Path(line.removeprefix("written: ")).read_text())
+    assert got["audit"]["paths_voided"] == 0
+    assert got["specs"]["b"]["executes"] == "queue" and "executes" not in got["specs"]["a"]
+    counts = got["counts"]
+    assert {k: counts["note"][k] for k in ss.PLANS_NOTE} == ss.PLANS_NOTE
+    cell = counts["by_season"]["2024"]["prior"]
+    for side in ("a", "b", "rivals"):
+        assert {"plan_days", "plan_steps"} <= set(cell[side]), side
+    assert cell["a"]["plan_days"]["mean"] == cell["rivals"]["plan_days"]["mean"] == 0.0
+    assert cell["b"]["plan_days"]["mean"] > 0 and cell["b"]["plan_steps"]["mean"] > 0
+    for side, notes in (("a", None), ("b", {"season_weight": policy.QUEUE_SEASON})):
+        for by_shape in got["reads"][side].values():
+            assert by_shape.get("notes") == notes
+            assert (by_shape["knobs"]["three_weight"] == policy.READ) == (side == "b")

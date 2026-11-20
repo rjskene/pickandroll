@@ -50,7 +50,10 @@ import type {
   StartActiveRunLog,
   OutlookSummary,
   OutlookWeek,
+  PickMove,
+  PickSkipped,
   PlanStep,
+  PlayerPick,
   PlayerFlag,
   PlayerRos,
   PassTally,
@@ -89,6 +92,8 @@ import type {
   WeekPlans,
   WeekResult,
   WeekStat,
+  MovesReserve,
+  ReserveHeld,
 } from "./api";
 
 /** "4 min ago": how old a snapshot is. */
@@ -736,7 +741,14 @@ export function queueStateText(e: QueueEntry, now: number): string {
     const why = e.outcome_reason ?? (e.outcome === "claimed" && e.pass ? placedBidText(e.pass) || null : null);
     return `${MOVE_OUTCOME[e.outcome]}${why ? ` (${why})` : ""}${e.resolved ? `, ${e.resolved}` : ""}`;
   }
-  if (!e.queued) return e.reason === "below the noise floor" && e.floor.below ? `below the ${e.floor.below} floor` : (e.reason ?? "not queued");
+  if (!e.queued) {
+    if (e.reason === "below the noise floor" && e.floor.below) return `below the ${e.floor.below} floor`;
+    if (e.reserve && (e.reason === "held for the week's reserve" || e.reason === "added within the re-cut days")) {
+      const why = e.reason === "added within the re-cut days" && e.reserve.days != null ? `added within ${e.reserve.days} days` : e.reason;
+      return `${why}: gains ${(e.reserve.worth ?? 0).toFixed(2)}, the price is ${e.reserve.price.toFixed(2)}`;
+    }
+    return e.reason ?? "not queued";
+  }
   if (e.struck) return "struck";
   if (e.pass) return passText(e.pass);
   const when = countdownLabel(e.executes_at, now);
@@ -886,9 +898,12 @@ export function bidStrikable(e: Pick<QueueEntry, "availability" | "bid" | "bid_s
 
 /** "Brooks for Reed", "Brooks after Hurt to IL", "Brooks (free: open spot)": the move in words,
  * by its basis (#187). An entry logged before the basis with no drop says only that. */
-export function queueMoveText(e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move" | "held_drop" | "plan">, name: (id: number) => string): string {
+export function queueMoveText(
+  e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move" | "held_drop" | "plan"> & { set?: QueueEntry["set"] },
+  name: (id: number) => string,
+): string {
   const step = planStepTag(e);
-  const tail = step ? ` (${step} of the week plan)` : "";
+  const tail = e.set === "pick" ? " (your pick)" : step ? ` (${step} of the week plan)` : "";
   if (e.drop == null && e.basis == null) return `${name(e.add)} with no drop${tail}`;
   return `${name(e.add)} ${basisPhrase(addBasis({ drop: e.drop, held: e.held_move, held_drop: e.held_drop }, name))}${tail}`;
 }
@@ -1459,6 +1474,41 @@ export function addBasis(x: { drop: number | null; held?: HeldMove | null; held_
   return { kind: "open", text: "free: open spot", cell: "free: open spot", title: "an active spot is open: no drop" };
 }
 
+/** A lifted move in words (#435): "lifted by its flag (x1.3, add)". */
+export function liftText(l: { factor: number; level: string }): string {
+  return `lifted by its flag (x${l.factor.toFixed(2).replace(/0$/, "")}, ${l.level})`;
+}
+
+/** The add reserve and the re-cut rule in force (#436), one line: "One add held for the week's
+ * reserve until Fri; Brooks added Wed Nov 18 (re-cut only for more than 0.30)"; null when
+ * neither applies. */
+export function reserveText(r: MovesReserve | null | undefined, name: (id: number) => string): string | null {
+  if (!r) return null;
+  const parts: string[] = [];
+  if (r.week && r.reserved > 0) {
+    const n = r.reserved === 1 ? "One add" : `${r.reserved} adds`;
+    const day = r.knobs.reserve_release.slice(0, 1).toUpperCase() + r.knobs.reserve_release.slice(1, 3);
+    parts.push(`${n} held for the week's reserve until ${day}`);
+  }
+  const out = new Set(r.out);
+  const recent = Object.entries(r.recent).filter(([k]) => !out.has(Number(k)));
+  if (recent.length) parts.push(recent.map(([k, d]) => `${name(Number(k))} added ${dayLabel(d)}`).join(", "));
+  if (!parts.length) return null;
+  return `${parts.join("; ")} (only for more than ${r.price.toFixed(2)}).`;
+}
+
+/** What the add reserve or the re-cut rule held back from a set (#436); null when nothing. */
+export function reserveLine(held: ReserveHeld | null | undefined, key: MoveHorizon): string | null {
+  if (!held?.held_back || !held.gain || !held.forgone) return null;
+  const on = key === "week" ? "on the week" : "over the three weeks";
+  const rule = held.rule === "recut" ? "The re-cut rule" : "The add reserve";
+  return `${rule} held back a set that gains ${gainLabel(held.gain[key])} ${on}; this one forgoes ${Math.abs(held.forgone[key]).toFixed(2)}.`;
+}
+
+/** What a lift means, for a title (#435). */
+export const LIFT_TITLE =
+  "valued on a line lifted by its breakout flag: the minutes moved toward the recent ones by the level's weight, at least the level's floor on an adds surge; only when the drop is one of the marginal players or nobody";
+
 /** The basis after an add's name: "for Reed", "after Hurt to IL", "(free: open spot)". */
 export function basisPhrase(b: Basis): string {
   return b.kind === "open" ? `(${b.text})` : b.text;
@@ -1604,6 +1654,9 @@ export function planShortLine(
   if (plan.reason === "season" && g) {
     return `${buys(g.spots, g.games, g.gain.week)} but costs the season ${rosLabel(g.ros, scoring)}; the season guard holds it back.`;
   }
+  if (plan.reason === "reserve" && g) {
+    return `${buys(g.spots, g.games, g.gain.week)} but uses a held add or re-cuts a recent add for too little; the reserve holds it back.`;
+  }
   const floor = plan.floor.toFixed(2);
   const spots = plan.spots.filter((x) => x.steps > 0).map((x) => x.player);
   if (!spots.length || Number(plan.gain.week.toFixed(2)) <= 0) return `No streaming plan beats the set this week (floor ${floor}).`;
@@ -1614,7 +1667,7 @@ export function planShortLine(
  * day, to make it by hand (#136): "Thu Oct 22: add Brooks for Grant; Sat Oct 24: add Hale for
  * Brooks"; null for none. */
 export function guardSteps(plan: StreamPlan | null | undefined, name: (id: number | null) => string): string | null {
-  if (!plan?.guard || (plan.reason !== "guard" && plan.reason !== "season")) return null;
+  if (!plan?.guard || plan.reason === "short" || plan.reason === null) return null;
   return plan.guard.steps.map((x) => `${stepDay(x.from)}: add ${name(x.add)} for ${name(x.drop)}`).join("; ");
 }
 
@@ -2746,4 +2799,29 @@ export function realizedTitle(m: ScorecardMove, scoring: string | null | undefin
   if (x.scorer && !x.scorer.own) parts.push("valued with the nearest solve's scorer: realized only");
   if (x.lag_days) parts.push(`made ${n(x.lag_days, "day")} after the first day of the solve it matched`);
   return parts.join("; ");
+}
+
+/** A pick the solve made (#434), in words: the add, its drop (named by the user or the cheapest)
+ * and the bid. */
+export function pickMoveText(m: Pick<PickMove, "add" | "drop" | "held" | "held_drop" | "named_drop" | "bid">, name: (id: number) => string): string {
+  const basis = basisPhrase(addBasis({ drop: m.drop, held: m.held ?? null, held_drop: m.held_drop ?? null }, name));
+  const why = m.drop == null ? "" : m.named_drop ? " (the drop you named)" : " (the drop that costs least)";
+  const bid = m.bid == null ? "the bid policy's bid" : `your bid of $${m.bid}`;
+  return `${name(m.add)} ${basis}${why}: your pick, ${bid}`;
+}
+
+/** A pick the solve could not make (#434), with why. */
+export function pickSkipText(x: PickSkipped, name: (id: number) => string): string {
+  return `${x.name ?? name(x.player)}: ${x.reason}`;
+}
+
+/** One of the user's picks in the Queue screen's box (#434): where it applies, its drop and bid,
+ * its last day, who set it and the leagues it has left. */
+export function pickLine(p: PlayerPick, title: (league: string) => string): string {
+  const where = p.leagues == null ? "every league" : p.leagues.map(title).join(", ");
+  const drop = p.drop == null ? "the cheapest drop" : `drop player ${p.drop} where mine`;
+  const bid = p.bid == null ? "the bid policy's bid" : `$${p.bid}`;
+  const left = Object.keys(p.left);
+  const tail = left.length ? `; on a team in ${left.map(title).join(", ")}` : "";
+  return `${where} · ${drop} · ${bid} · until ${dayLabel(p.expires)}${p.active ? "" : " (expired)"} · set by ${p.by}${tail}`;
 }

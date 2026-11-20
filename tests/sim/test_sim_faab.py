@@ -397,7 +397,8 @@ def test_a_faab_run_is_held_to_the_wait_and_the_bid_rules_in_place_of_claim_prio
         "bid_paid",
         "bid_order",
     ]
-    assert audit.Auditor(league()).rules == audit.rules_of("faab")
+    # The league's bracket has a round: its own audit reads the bracket's rule too (PR bracket).
+    assert audit.Auditor(league()).rules == audit.rules_of("faab", bracket=True)
     for bids in ((7, 5), (5, 5), (0, 0)):
         setup, before, after, *_ = morning(*bids)
         for rule in audit.rules_of("faab"):
@@ -460,6 +461,11 @@ def test_a_faab_run_s_counts_carry_the_dollars_and_the_bids_after_the_claims():
         "claims_won_alone": 0.0,
         "bid_over_next": 2.0,
         "bid_short": 0.0,
+        # PR F2's three: the made-up morning is no simulated day, so no day was read; the
+        # claims' bids were set by hand, so they carry no value.
+        "dollars_at_bracket": None,
+        "weeks_at_zero": 0.0,
+        "value_won": 0.0,
     }
     assert (rows[3]["claims_lost_bid"], rows[3]["bid_short"], rows[3]["dollars_left"]) == (
         1,
@@ -528,10 +534,10 @@ def test_the_refusal_of_a_pair_apart_only_on_a_plan_floor_names_a_seat_that_bids
         (why,) = rn.same_seat(a, b, [policy.Shape(waivers="priority", h2h=h2h)], rivals=False)
         assert why == (
             "plan_floor_cats (only the exact tier draws a week plan; read by the exact tier "
-            "drawing and executing the week plan in a categories league), and in a categories "
-            "FAAB run by a seat that bids (the exact or the surrogate tier, a mirror rival), its "
-            "typical gain until ten moves; either only in a league that counts every category "
-            "(--h2h each_category)"
+            "drawing and executing the week plan, or executing queue, in a categories league), "
+            "and in a categories FAAB run by a seat that bids (the exact or the surrogate tier, "
+            "a mirror rival), its typical gain until ten moves; either only in a league that "
+            "counts every category (--h2h each_category)"
         )
     (why,) = rn.same_seat(a, b, [policy.Shape(waivers="faab")], rivals=False)
     assert why.startswith(f"plan_floor_cats ({policy.ONE_WIN_FLOOR}; read by the exact tier")

@@ -19,6 +19,7 @@ import pytest
 from pickandroll.season import moves as mv
 from pickandroll.sim import audit, policy, shapes
 from pickandroll.sim import cli as ss
+from pickandroll.sim import counts as ct
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN
@@ -325,7 +326,8 @@ def test_the_audit_holds_claims_only_under_the_rule_and_catches_an_add_outside_a
     for waivers in ("none", *KINDS):
         assert "claims_only" not in [r.name for r in audit.rules_of(waivers)]
         assert audit.rules_of(waivers) == audit.rules_of(waivers, DROPPED)
-    assert audit.Auditor(league()).rules == audit.rules_of("priority", CONTINUOUS)
+    # The league's bracket has a round: its own audit reads the bracket's rule too (PR bracket).
+    assert audit.Auditor(league()).rules == audit.rules_of("priority", CONTINUOUS, bracket=True)
     # An honest morning: the player who joined came by a claim won that morning.
     setup, before, after, x, _, _ = two_add_x("priority", CONTINUOUS)
     assert list(audit.claims_only(setup, day_of(after), day_of(before))) == []
@@ -382,7 +384,12 @@ def season_digest(setup, seed: int = 1, path: int = 0) -> str:
     """SHA-256 of a made-up season's outcome: a surrogate seat in seat 1 and a ranking seat in
     seat 2 among market rivals at 0.3 a day, every seat's counts and summary, every morning's
     decisions, the last day's rosters, order and dollars, and the solves, moves and breaches,
-    each figure rounded to nine places."""
+    each figure rounded to nine places.
+
+    The three count keys PR F2 adds to a FAAB run (``counts.PACING``: the dollars at the
+    bracket, the weeks at $0, the value won) are set aside, so the digests main pinned before
+    them still compare every figure they covered; the new keys have their own tests
+    (``test_sim_bid_seat.py``)."""
     u, r = arm("U", "surrogate", opponents="market"), arm("R", "ranking", opponents="market")
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, seed, path)
     days: list[SimState] = []
@@ -391,7 +398,10 @@ def season_digest(setup, seed: int = 1, path: int = 0) -> str:
     last = days[-1]
     figures = rounded(
         {
-            "counts": {str(t): row for t, row in res.counts.items()},
+            "counts": {
+                str(t): {m: x for m, x in row.items() if m not in ct.PACING}
+                for t, row in res.counts.items()
+            },
             "summaries": {str(t): s for t, s in res.summaries.items()},
             "decided": [
                 [s.day.isoformat(), x.team, x.add, x.drop, x.outcome, x.behind, x.bid]

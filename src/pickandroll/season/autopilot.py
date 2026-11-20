@@ -41,6 +41,12 @@ executed. A step's bid scales on its score, so a step that costs the three weeks
 in a playoff week the score is the odds, in other units than the typical gain, and it scales on
 the week gain.
 
+The user's picks (#434, ``season.picks``) come first: the day's solve logged them as the set
+``pick``, each made with the drop the user named or the cheapest, and each is an entry like a
+move's, judged on the week with its score beside it, under the rules above but the season-costly
+flag, the re-add rule and the floor (the user's call); the cap counts them first, and the bid is
+the user's (:func:`user_bid`) or the policy's on the pick's score.
+
 Every claim's bid is
 :func:`bid_of`'s. A second build of a day keeps the entries struck or executed by id, leaves
 their moves out of the new build, and gives any entry new to the queue its full veto window
@@ -58,6 +64,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import moves as mv
+from . import picks as pk
 
 #: The set the queue takes, and the horizon it is judged on (#143): the three weeks after.
 QUEUE_SET = "three"
@@ -98,6 +105,12 @@ NO_ADDS = "no adds left this week"
 #: is only a floor, so no add of the week is placed on it.
 ADDS_UNREAD = "this week's adds are not fully read: the transactions reads do not reach its start"
 OVER_CAP = "over the day's cap"
+#: The add reserve and the re-cut rule (#436, ``season.reserve``), read from the solve's logged
+#: record: a move that would use one of the week's held adds before the release day, or drop a
+#: player added within the re-cut days who is not out, for no more than the price. A move whose
+#: add carries an ``add`` or ``must-add`` flag may use a held add; a pick is never refused.
+RESERVE_HELD = "held for the week's reserve"
+RECUT_HELD = "added within the re-cut days"
 #: A churn (#221) is queued as one entry and executed in three steps (part 3): its held drop H on
 #: his own (the drop page, ``drop`` runs), then the IL move that frees an active spot when one is
 #: needed (``held_move``, #214), then the add as an open-spot claim. Its add waits on the drop.
@@ -225,19 +238,23 @@ def bid_of(
     flag: str | None,
     sizing: float | None,
     availability: str | None,
+    *,
+    lifted: bool = False,
 ) -> Bid:
     """A claim's bid (section 5, the ruling's point 3): ``round(gain / typical)`` typicals (the
     base), doubled for a breakout flag and tripled for a strong one, times the FAAB sizing knob
     (1.0 while unhooked), clamped to the budget left and nothing else. A routine stream, a base of
     1 or less with no breakout flag, bids $0 (user, 2026-11-15, #391); a flagged claim's base is
-    at least 1, as before. A free agent is added for $0."""
+    at least 1, as before. A free agent is added for $0. A ``lifted`` move (#435: its gain was
+    valued on the add's line lifted by the flag) bids as a flagged claim, its base at least 1,
+    with no flag factor: the flag counts once, in the gain (the master's ruling, 2026-11-19)."""
     size = 1.0 if sizing is None else float(sizing)
     if availability == FREE_AGENT:
         return Bid(0, "$0: a free agent is added at once", 0, 1, size)
     value, source = typical
     base = _half_up(gain / value) if value > 0 else 1
-    factor = FLAG_FACTOR.get(flag or "", 1)
-    if base <= 1 and factor == 1:
+    factor = 1 if lifted else FLAG_FACTOR.get(flag or "", 1)
+    if base <= 1 and factor == 1 and not lifted:
         return Bid(0, f"$0: {ROUTINE}", base, factor, size)
     # A flagged claim bids as before the ruling: at least one typical, so never below its factor.
     base = max(1, base)
@@ -247,6 +264,8 @@ def bid_of(
     if left is not None:
         amount = min(amount, left)
     why = f"gain {base}x the typical ({source})"
+    if lifted:
+        why += ", on a line lifted by a breakout flag"
     if factor > 1:
         why += f", x{factor} for a {'strong ' if factor == 3 else ''}breakout flag"
     if size != 1.0:
@@ -254,6 +273,18 @@ def bid_of(
     if clamped:
         why += f", clamped to the ${left} left"
     return Bid(amount, f"${amount}: {why}", base, factor, size)
+
+
+def user_bid(amount: int, budget: float | None, availability: str | None) -> Bid:
+    """A pick's bid when the user set one (#434): theirs, clamped to the budget left; a free agent
+    is added for $0."""
+    if availability == FREE_AGENT:
+        return Bid(0, "$0: a free agent is added at once", 0, 1, 1.0)
+    left = None if budget is None else max(0, math.floor(budget))
+    clamped = left is not None and amount > left
+    amount = max(0, amount if left is None else min(amount, left))
+    why = f"${amount}: your pick's bid" + (f", clamped to the ${left} left" if clamped else "")
+    return Bid(amount, why, 0, 1, 1.0)
 
 
 # --------------------------------------------------------------------------- the entries
@@ -298,6 +329,11 @@ def three_set(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return next((s for s in entry.get("sets") or () if s.get("key") == QUEUE_SET), None)
 
 
+def pick_set(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The user's picks the day's solve made (#434), None for none."""
+    return next((s for s in entry.get("sets") or () if s.get("key") == pk.PICK), None)
+
+
 def week_plan(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
     """The week plan the day's solve logged for the queue (#221 part 2), None for none."""
     return next((s for s in entry.get("sets") or () if s.get("key") == WEEK_PLAN), None)
@@ -321,9 +357,10 @@ def queue_of(
     judged on the week with the three weeks beside it, its bid on its score."""
     plan = week_plan(lg.entry)
     s = plan if plan is not None else three_set(lg.entry)
-    if s is None:
+    picks = pick_set(lg.entry)
+    if s is None and picks is None:
         return []
-    moves = list(s.get("moves") or [])
+    moves = list((s or {}).get("moves") or [])
     if plan is None:
         moves.sort(key=lambda m: (-((m.get("gain") or {}).get(JUDGED) or 0.0), m["add"]))
     drops = {m["drop"] for m in moves if m.get("drop") is not None}
@@ -338,6 +375,108 @@ def queue_of(
     judged = JUDGED if plan is None else PLAN_JUDGED
     claimed_adds = {int(c["add"]) for c in lg.open_claims if c.get("add") is not None}
     claimed_drops = {int(c["drop"]) for c in lg.open_claims if c.get("drop") is not None}
+    # The add reserve and the re-cut rule the solve ran with (#436): None in an entry without.
+    rule = lg.entry.get("reserve")
+    rule_days = ((rule or {}).get("knobs") or {}).get("recut_days")
+    # What each move adds on the queue's score as the solve computed it (the set's logged record).
+    solved = {
+        (int(r["add"]), None if r.get("drop") is None else int(r["drop"])): r.get("adds")
+        for r in ((s or {}).get("reserve") or {}).get("adds") or ()
+    }
+    # The user's picks first (#434): queued like the set's moves, with neither the floor, the
+    # season guard nor the re-add rule (the user's call), and ahead of them for the cap.
+    for m in (picks or {}).get("moves") or []:
+        add, drop = int(m["add"]), m.get("drop")
+        pid = entry_id(day, lg.league, add, drop)
+        if pid in lg.kept:
+            continue
+        kind, clears = lg.availability.get(add, (None, None))
+        clear = date.fromisoformat(m["from"]) if m.get("from") else clears
+        week = _week_of(left, clear) if clear is not None else None
+        reason = None
+        if lg.private:
+            reason = PRIVATE
+        elif lg.mode == "off":
+            reason = OFF
+        elif drop is not None and drop in lg.protected:
+            reason = PROTECTED
+        elif add in claimed_adds:
+            reason = ALREADY_CLAIMED
+        elif drop is not None and int(drop) in claimed_drops:
+            reason = DROP_CLAIMED
+        elif week is not None and week in lg.unread:
+            reason = ADDS_UNREAD
+        elif week is not None and left[week] is not None and left[week] <= 0:
+            reason = NO_ADDS
+        elif lg.done + queued >= lg.cap:
+            reason = OVER_CAP
+        if reason is None:
+            queued += 1
+            if week is not None and left[week] is not None:
+                left[week] -= 1
+        gain = (m.get("gain") or {}).get(PLAN_JUDGED)
+        score = m.get("score")
+        if lg.uses_faab is False:
+            bid = None
+        elif m.get("bid") is not None:
+            bid = user_bid(int(m["bid"]), lg.budget, kind)
+        else:
+            worth = score if score is not None else gain
+            bid = bid_of(
+                worth or 0.0,
+                typical,
+                lg.budget,
+                lg.flags.get(add),
+                sizing,
+                kind,
+                lifted=m.get("lift") is not None,
+            )
+        out.append(
+            {
+                "id": pid,
+                "date": day.isoformat(),
+                "league": lg.league,
+                "scoring": lg.scoring,
+                "set": pk.PICK,
+                "decision": lg.entry.get("id"),
+                "knobs": lg.entry.get("knobs"),
+                "add": add,
+                "drop": drop,
+                "from": clear.isoformat() if clear else None,
+                "availability": kind,
+                "judged": PLAN_JUDGED,
+                "gain": gain,
+                "three": (m.get("gain") or {}).get(JUDGED),
+                "score": score,
+                "value": _horizon(m, PLAN_JUDGED),
+                "season": _horizon(m, SEASON),
+                "season_costly": m.get("season_costly"),
+                "held": list((picks or {}).get("held") or []),
+                "basis": m.get("basis"),
+                "held_move": m.get("held"),
+                "held_drop": m.get("held_drop"),
+                "plan": None,
+                "after": [],
+                "flag": lg.flags.get(add),
+                "floor": {**floor.to_dict(), "below": None},
+                "bid": None
+                if bid is None
+                else {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},
+                "claim": "priority" if lg.uses_faab is False and kind == "W" else None,
+                "queued": reason is None,
+                "reason": reason,
+                "rank": queued if reason is None else None,
+                "queued_at": None,
+                "executes_at": None,
+                "struck": False,
+                "bid_struck": False,
+                "outcome": None,
+                "outcome_reason": None,
+                "outcome_at": None,
+                "resolved": None,
+                "decided_by": pk.PICK,
+            }
+        )
     for i, m in enumerate(moves):
         add, drop = int(m["add"]), m.get("drop")
         if ids[i] in lg.kept:
@@ -351,6 +490,14 @@ def queue_of(
         after = [int(j) for j in m.get("after") or []]
         # The plan is the unit for the floor and the guard (the ruling's first condition).
         below = floor.below(gain, value) if plan is None else None
+        # A step's bid scales on its score (the ruling): its week gain alone when none was logged.
+        worth = m.get("score") if plan is not None and m.get("score") is not None else gain
+        logged = solved.get((add, None if drop is None else int(drop)))
+        held = reserve_reason(
+            rule, add, drop, worth, week, None if week is None else left.get(week), logged
+        )
+        # What the rules compared to the price: the solve's own number, else the bid's.
+        compared = worth if logged is None else logged
         reason = None
         if lg.private:
             reason = PRIVATE
@@ -370,6 +517,8 @@ def queue_of(
             reason = READD
         elif below is not None:
             reason = BELOW_FLOOR
+        elif held is not None:
+            reason = held
         elif plan is not None and not _today(day, clear, kind, clears):
             reason = LATER_STEP
         elif any(j not in ready for j in after):
@@ -387,12 +536,19 @@ def queue_of(
                 left[week] -= 1
         # A standard-waivers league places no bid: its claims go by waiver priority (#261).
         standard = lg.uses_faab is False
-        # A step's bid scales on its score (the ruling): its week gain alone when none was logged.
-        worth = m.get("score") if plan is not None and m.get("score") is not None else gain
+        # A lifted move (#435) bids with no flag factor: its gain already took the flag.
         bid = (
             None
             if standard
-            else bid_of(worth or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
+            else bid_of(
+                worth or 0.0,
+                typical,
+                lg.budget,
+                lg.flags.get(add),
+                sizing,
+                kind,
+                lifted=m.get("lift") is not None,
+            )
         )
         out.append(
             {
@@ -425,7 +581,15 @@ def queue_of(
                 "plan": m.get("plan"),
                 "after": [ids[j] for j in after if j not in placed],
                 "flag": lg.flags.get(add),
+                # A lifted move's lift (#435): only on one.
+                **({"lift": m["lift"]} if m.get("lift") is not None else {}),
                 "floor": {**floor.to_dict(), "below": below},
+                # What the add reserve or the re-cut rule held back (#436): only on such a move.
+                **(
+                    {"reserve": {"worth": compared, "price": rule["price"], "days": rule_days}}
+                    if reason in (RESERVE_HELD, RECUT_HELD) and rule is not None
+                    else {}
+                ),
                 "bid": None
                 if bid is None
                 else {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},
@@ -444,6 +608,39 @@ def queue_of(
             }
         )
     return out
+
+
+def reserve_reason(
+    rule: Mapping[str, Any] | None,
+    add: int,
+    drop: int | None,
+    worth: float | None,
+    week: tuple[date, date] | None,
+    left: int | None,
+    adds: float | None = None,
+) -> str | None:
+    """Why the add reserve or the re-cut rule (#436) holds a move back, None when neither does:
+    ``rule``, the solve's logged record (``season_moves.reserve_payload``); ``adds``, what the
+    move adds on the queue's score as the solve computed it (its set's logged ``reserve``), else
+    ``worth``, what its bid scales by (an entry logged without it); ``week`` and ``left``, the
+    week its add counts in and the adds that week has left before it."""
+    if rule is None:
+        return None
+    price = float(rule.get("price") or 0.0)
+    value = worth if adds is None else adds
+    cheap = (value or 0.0) <= price + mv.EPS
+    if not cheap:
+        return None
+    recent = rule.get("recent") or {}
+    if drop is not None and str(drop) in recent and int(drop) not in set(rule.get("out") or ()):
+        return RECUT_HELD
+    held = rule.get("week")
+    if held is None or week is None or left is None or add in set(rule.get("exempt") or ()):
+        return None
+    span = (date.fromisoformat(held["start"]), date.fromisoformat(held["end"]))
+    if span == week and left <= int(rule.get("reserved") or 0):
+        return RESERVE_HELD
+    return None
 
 
 def _dropped_before(moves: Sequence[Mapping[str, Any]], i: int) -> bool:

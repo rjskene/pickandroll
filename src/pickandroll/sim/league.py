@@ -13,8 +13,10 @@ bracket seeds the top ``playoff_teams`` with ``byes`` byes, reseeds each round (
 worst) or plays the fixed bracket when the league does not reseed, and a playoff tie sends the
 higher seed through. The bracket's rules come from the settings page (PR 2a):
 :meth:`LeagueSpec.from_settings` refuses to build a spec before the page has been read for them,
-so no run trusts a bracket it has assumed. Pure: pairings, weeks and totals come in from the
-league state and the world.
+so no run trusts a bracket it has assumed. A round's matchups on its first morning are
+:func:`round_pairs` (PR bracket): the season's own calls on the weeks finished before it, which a
+seat reads its bracket opponent from. Pure: pairings, weeks and totals come in from the league
+state and the world.
 """
 
 from __future__ import annotations
@@ -431,6 +433,41 @@ def season(spec: LeagueSpec, totals: Mapping[int, Mapping[int, Totals]]) -> Seas
         for s in table
     }
     return SeasonResult(tuple(table), post, outcomes, results)
+
+
+# --------------------------------------------------------------------------- a round's pairs
+def round_weeks(spec: LeagueSpec) -> tuple[int, ...]:
+    """The weeks the bracket's rounds are played in, in order: the first ``spec.rounds`` of
+    ``spec.playoff_weeks``, as :func:`playoffs` reads them. None in a league with no bracket (no
+    playoff week, or fewer than two playoff teams); a playoff week past the last round is no
+    round's."""
+    return tuple(spec.playoff_weeks[: spec.rounds])
+
+
+def round_pairs(
+    spec: LeagueSpec, totals: Mapping[int, Mapping[int, Totals]], week: int
+) -> tuple[tuple[int, int], ...]:
+    """The matchups of the bracket's round played in ``week``, as team ids, the higher seed
+    first, in the order :func:`playoffs` lists them (#172, PR bracket): what a seat reads its
+    bracket opponent from on the day. Empty when ``week`` is no round's (:func:`round_weeks`),
+    so in every regular week and in a league with no bracket.
+
+    It states no rule of its own: the standings, the seeds, the byes, the reseeding and the tie
+    to the higher seed are :func:`season`'s, the call the season's end makes, and this selects
+    one round of its bracket and names each seed's team. :func:`playoffs` fixes a round's pairs
+    before it reads that round's totals, so on the round's first morning, with ``totals``
+    holding the weeks finished before it, the pairs are the ones the season's end will play;
+    the totals of the round's own week and of later weeks are not read for them. No winner, no
+    later round and no champion is returned: on that morning those are not yet real (a week
+    without totals reads as level, the higher seed through). A spec the bracket cannot play
+    raises here whatever :func:`playoffs` raises on it (a ValueError; a KeyError where the
+    bracket seats more teams than the league has), so on a round's first morning where it
+    raised at the season's end."""
+    weeks = round_weeks(spec)
+    if week not in weeks:
+        return ()
+    post = season(spec, totals).playoffs
+    return tuple((post.seeds[hi], post.seeds[lo]) for hi, lo, _ in post.rounds[weeks.index(week)])
 
 
 def summary(result: SeasonResult, me: int) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type LineupMode, type ProjectionSystem, type QueueEntry, type QueueLeague, type QueuePayload, type SeasonSummary } from "../api";
 import { queueKeys } from "../keys";
@@ -26,6 +26,7 @@ import {
   passBar,
   passEndLine,
   passTitle,
+  pickLine,
   queueFlagWord,
   queueFloorLine,
   queueFoldLine,
@@ -135,6 +136,7 @@ export default function QueueScreen({
             </div>
           )}
           <Today p={p} now={now} title={title} strike={strike} onOpenLeague={onOpenLeague} />
+          <Picks title={title} />
           <Left p={p} now={now} title={title} onOpenLeague={onOpenLeague} />
           {priv && <Suggestions s={priv} title={title(priv.league)} onOpen={() => onOpenLeague(priv.league)} />}
         </div>
@@ -342,6 +344,74 @@ function Today({ p, now, title, strike, onOpenLeague }: { p: QueuePayload; now: 
         </div>
       )}
       {strike.error && <p className="error small">{strike.error.message}</p>}
+    </section>
+  );
+}
+
+/** Your picks (#434): the players you name for the moves solves, each league's solve making
+ * them with the drop you name or the one that costs least, the queue carrying them first. Add one
+ * by name or Yahoo player id, with a bid and its leagues if you want; remove one. Nothing here
+ * solves: the next solve of each league takes them. */
+function Picks({ title }: { title: (league: string) => string }) {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ["playerPicks"], queryFn: api.playerPicks });
+  const [who, setWho] = useState("");
+  const [bid, setBid] = useState("");
+  const [where, setWhere] = useState("");
+  const done = (v: Awaited<ReturnType<typeof api.playerPicks>>) => {
+    queryClient.setQueryData(["playerPicks"], v);
+    void queryClient.invalidateQueries({ queryKey: ["moves"] });
+  };
+  const add = useMutation({
+    mutationFn: () => {
+      const id = /^\d+$/.test(who.trim()) ? Number(who.trim()) : null;
+      const leagues = where.trim() ? where.split(",").map((x) => x.trim()).filter(Boolean) : null;
+      return api.setPlayerPick({ ...(id == null ? { name: who.trim() } : { player: id }), bid: bid.trim() ? Number(bid) : null, leagues });
+    },
+    onSuccess: (v) => {
+      done(v);
+      setWho("");
+      setBid("");
+      setWhere("");
+    },
+  });
+  const remove = useMutation({ mutationFn: (player: number) => api.removePlayerPick(player), onSuccess: done });
+  const picks = q.data?.picks ?? [];
+  return (
+    <section className="qs-section qs-picks">
+      <span className="k" title="each league's moves solve makes your picks first, with the drop you name or the one that costs least; the queue carries them like its own moves, ahead of them">
+        Your picks
+      </span>
+      {picks.length === 0 ? (
+        <p className="dim small">No picks. Name a player to add wherever the player is available.</p>
+      ) : (
+        <ul className="small">
+          {picks.map((x) => (
+            <li key={x.player} className={x.active ? undefined : "dim"}>
+              <b>{x.name ?? `player ${x.player}`}</b> · {pickLine(x, title)}{" "}
+              <button className="link" disabled={remove.isPending} onClick={() => remove.mutate(x.player)} aria-label={`Remove the pick of ${x.name ?? x.player}`}>
+                remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="row small"
+        onSubmit={(ev) => {
+          ev.preventDefault();
+          if (who.trim()) add.mutate();
+        }}
+      >
+        <input value={who} onChange={(ev) => setWho(ev.target.value)} placeholder="player name or Yahoo id" aria-label="Pick's player" />
+        <input value={bid} onChange={(ev) => setBid(ev.target.value.replace(/[^0-9]/g, ""))} placeholder="bid $ (policy)" aria-label="Pick's bid" size={10} />
+        <input value={where} onChange={(ev) => setWhere(ev.target.value)} placeholder="league ids (all)" aria-label="Pick's leagues" size={16} />
+        <button type="submit" disabled={!who.trim() || add.isPending}>
+          Add pick
+        </button>
+      </form>
+      <p className="dim small">A pick lasts {q.data?.days ?? 7} days, and leaves a league once its player is on a team there.</p>
+      {(add.error || remove.error || q.error) && <p className="error small">{(add.error ?? remove.error ?? q.error)?.message}</p>}
     </section>
   );
 }
