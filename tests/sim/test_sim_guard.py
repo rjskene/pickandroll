@@ -1182,6 +1182,79 @@ def test_a_seat_with_a_bye_has_no_stake_in_the_week_it_sits_out(tier, h2h):
     assert policy.decide(forced, tier, with_plan=False).moves == (sits,)
 
 
+@pytest.mark.parametrize("h2h", FORMATS)
+def test_a_season_in_a_league_with_byes_gives_a_seat_no_stake_in_the_week_it_sits_out(
+    h2h, monkeypatch
+):
+    """The bye in a whole season, with the runner's own figure (nothing forced): eight seats,
+    six in the field over three bracket weeks, so the two top seeds sit out the first of them
+    (``spec.byes`` 2). A room in which every seat is one surrogate arm with a stake of 1, at a
+    season weight of the league's scale: every seat reads a stake, so the state holds every
+    seat's ``L`` and each decides on its own. Who sits out is read from the league's own
+    bracket on the season as played, not pinned.
+
+    In the bracket's first week the figure the runner hands a seat is 0 for the two that sit
+    out, 1 for the four that play and 0 outside the field; from the second week 1 for the six
+    and 0 outside, all week long. That first week a seat whose ``L`` is 0 decides on the season
+    figure itself, every day, and a seat that plays on the split one. The run's counts are what
+    those levels give (a seat on its bye has that week's 0 in its mean), and the audit is
+    clean. One tier: the figure a seat is handed is the runner's, the same for both, and the
+    made-up day above decides on each."""
+    setup = of_format(make_setup(teams=8, weeks=6, playoff_weeks=3, playoff_teams=6), h2h)
+    spec_ = setup.spec
+    assert (spec_.playoff_teams, spec_.byes, spec_.playoff_weeks) == (6, 2, (4, 5, 6))
+    w = replay_of(setup, 1, 0)
+    s = armed("S", knobs={"season_weight": scale_weight(setup, w)}, stake=1)
+    made: list[policy.Built] = []
+    real = policy.decide
+
+    def spy(built, *args, **kw):
+        made.append(built)
+        return real(built, *args, **kw)
+
+    monkeypatch.setattr(policy, "decide", spy)
+    seen: list[rn.DayRecord] = []
+    got = rn.room(setup, w, {"S": s}, ["S"], 0, on_day=seen.append)
+    assert got["breaches"] == [] and set(got["seats"].values()) == {"S"}
+    # The league's own bracket on the season as played: who is in the field, who sits out.
+    played = lg.season(spec_, seen[-1].state.totals).playoffs
+    field = set(played.seeds.values())
+    sits = {played.seeds[seed] for seed in range(1, spec_.byes + 1)}
+    plays = {played.seeds[seed] for pair in played.rounds[0] for seed in pair[:2]}
+    outside = set(setup.teams) - field
+    assert (len(sits), len(plays), len(outside)) == (2, 4, 2) and plays == field - sits
+    # The figure the runner hands each seat, a week of the bracket at a time.
+    first, *later = spec_.playoff_weeks
+    want = {w_: {t: float(t in field) for t in setup.teams} for w_ in later}
+    want[first] = {t: float(t in plays) for t in setup.teams}
+    by_week: dict[int, dict[int, float]] = {}
+    for r in seen:
+        week = setup.week_of(r.day).number
+        assert by_week.setdefault(week, dict(r.state.stakes)) == r.state.stakes
+        if week in want:
+            assert r.state.stakes == want[week]
+    assert sorted(by_week) == [1, 2, 3, 4, 5, 6]
+    # The first bracket week's decisions: every seat every day, each on its own figure.
+    that_week = [b for b in made if b.week.number == first]
+    assert len(that_week) == 7 * len(setup.teams)
+    for built in that_week:
+        assert (built.stake, built.level) == (1.0, want[first][built.team])
+        split = type(policy.season_figure_of(built)) is policy.StakedFigure
+        assert split is (built.team in plays)
+        assert (policy.later_share(built) == 1.0) is (built.team not in plays)
+    # The counts: the mean of each seat's weeks and its weeks above a half, pooled over the
+    # seats as a room's row is.
+    levels = {t: [by_week[w_][t] for w_ in sorted(by_week)] for t in setup.teams}
+    assert all(levels[t][3:] == [0.0, 1.0, 1.0] for t in sits)
+    row = got["counts"]["S"]
+    assert row["stake_mean"] == pytest.approx(
+        sum(sum(x) / len(x) for x in levels.values()) / len(levels)
+    )
+    assert row["stake_weeks_above_half"] == pytest.approx(
+        sum(sum(1 for v in x if v > ct.HALF) for x in levels.values()) / len(levels)
+    )
+
+
 # --------------------------------------------------------------------------- no peek, a split seat
 def scale_weight(setup, w) -> float:
     """A season weight of the size of the league's season scale: the surrogate's ratio in seat 1
