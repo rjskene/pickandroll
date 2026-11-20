@@ -761,18 +761,27 @@ def test_the_lever_does_something_the_threshold_changes_the_roster_at_the_end(h2
     assert plain.counts[1] == {m: none.counts[1][m] for m in ct.METRICS}
 
 
-#: The seasons in which an exact arm that names a threshold and executes its streaming plan
-#: beside its set queued a step whose drop its set moved to a held slot the same morning (found
-#: by PR E's refit review on that PR's tree, and met on this PR's): the league (scoring,
-#: waivers, the waiver rule, the format, the held slots) and the world's seed and path.
+#: The seasons in which an exact arm that executes its streaming plan beside its set queued a
+#: step whose drop its set moved to a held slot the same morning (the first two found by PR E's
+#: refit review, the third by the lead's sweep of this PR's head): the league (scoring, waivers,
+#: the waiver rule, the format, the held slots), the world's seed and path, and the arm's
+#: threshold. The third names none: the landing's line was main's, and main's own tree breaks
+#: the audit on that season; a threshold makes such a night more frequent.
 HELD_STEP = {
     "every category, no waivers, IL and IL+": (
         ("categories", "none", DROPPED, EACH_CATEGORY, ("IL", "IL+")),
         (1, 0),
+        SHARE,
     ),
     "points, one win, priority, IL": (
         ("points", "priority", DROPPED, ONE_WIN, ("IL",)),
         (1, 1),
+        SHARE,
+    ),
+    "every category, no waivers, IL, no threshold": (
+        ("categories", "none", DROPPED, EACH_CATEGORY, ("IL",)),
+        (1, 0),
+        None,
     ),
 }
 
@@ -820,12 +829,14 @@ def test_no_add_of_an_arm_that_executes_its_plan_lands_in_a_held_slot(kind):
     for a player and a plan step due drops that same player. The morning takes him to the slot
     and the step is gone, counted as one (``policy.land``; ``test_sim_held_landing.py`` has the
     night by hand). Before, the step's add took the slot his drop sat in, and the audit found a
-    healthy player in a held slot (``held_kind``). The landing's line is main's; a season
-    meets it only when the arm also names a threshold, whose kept players its set moves to a
-    held slot where the search at None drops them. Two league kinds, as found: every category
-    without waivers, and a points league with one win a matchup and waivers by priority."""
-    league, path = HELD_STEP[kind]
-    result, days = plan_season(league, path)
+    healthy player in a held slot (``held_kind``). The landing's line was main's, and a season
+    meets it with no threshold named too (the third case, which breaks the audit on main's own
+    tree); a threshold makes the night more frequent, since its kept players are moved to a
+    held slot where the search at None drops them. The league kinds are as found: every
+    category without waivers, and a points league with one win a matchup and waivers by
+    priority."""
+    league, path, threshold = HELD_STEP[kind]
+    result, days = plan_season(league, path, threshold)
     assert result.breaches == ()
     nights = [
         i

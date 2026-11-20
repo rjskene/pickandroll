@@ -429,10 +429,12 @@ its set queues two plans together, and a plan step due can drop the player the s
 move takes to a held slot that same morning. The step is then gone, as a claim whose drop is no
 longer an active player fails. Before this PR the step's add took the slot its drop sat in, a
 healthy player in a held slot, which the audit finds (`held_kind`). The landing's line was
-main's; a made-up season meets it only when the arm also names a threshold, so it is fixed here
-(found by PR E's refit review). Rule 1 so has a second exception, in a league with held slots
-only: a season the audit refused before plays now, and an arm that executes its plan may differ
-from main on such a morning.
+main's, and main meets it with no threshold named (a made-up season of such an arm breaks the
+audit there); a threshold makes the night more frequent, since the players it keeps are moved
+to a held slot where the search at None drops them, so it is fixed here (found by PR E's refit
+review and the lead's sweep of this PR). Rule 1 so has a second exception, in a league with
+held slots only: a season the audit refused before plays now, and an arm that executes its plan
+may differ from main on such a morning, at any threshold, None included.
 
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters
