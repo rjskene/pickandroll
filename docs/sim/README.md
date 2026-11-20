@@ -2774,7 +2774,18 @@ when its folder is started, and no flag lets a caller pick after seeing a figure
     (`tune.SECOND`: half again is a quarter, double again is four);
   - the knob's own bounds refuse a second step as they refuse a first, a nudge equal to the
     current value is not played, and neither is a second step that lands on a value already
-    listed. Each is listed with its reason.
+    listed. Each is listed with its reason;
+  - a row that is **no step of one lever from the current arm** is not played, with its reason
+    (`tune.alone`). A step taken moves the arm by what arm B holds that arm A does not, and two
+    rows of the list cannot be taken so from every arm. `executes` to `queue` from an arm off
+    the exact tier: the arm's own parser refuses the arm the step would make (the way there is
+    a baseline on the exact tier, from which every surrogate lever is still played on the
+    surrogate tier). The pace's reserve on an arm that follows no path: its pair sets the pace
+    in both arms, inside the `bid` block, which a step moves whole, so the step would turn the
+    pace on with it, measured by no pair against the current arm; once the tune has moved
+    `bid.pace.k` the row is played. What a pair sets in both arms outside the lever's own block
+    is never part of a step: the final arm does not hold it, and the verdict names a lever the
+    final arm then does not read.
 - **Each value is a pair against the current arm**, on the same paths, on every season and
   forecaster the search names. Arm A is the current arm on the cheapest tier that reads the
   lever, set to whatever else makes it read, exactly as a screen's row.

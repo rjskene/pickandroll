@@ -30,6 +30,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
+from . import bid_policy as bp
 from . import policy
 from . import run as rn
 from . import screen as sc
@@ -51,6 +52,15 @@ UNSCREENED = (
 
 #: Why a value is not played: the nudge leaves the lever where the current arm holds it.
 CURRENT = "the current value"
+#: Why a row to play is no step of one lever from the current arm (:func:`alone`): the arm
+#: cannot hold the value where it stands, or the pair sets more of the lever's own block in
+#: both arms than the current arm bids by.
+NOT_HELD = "the current arm cannot hold this value: {why}"
+CARRIED = (
+    "its pair sets {names} in both arms, inside the block this step would move whole, and the "
+    "current arm does not bid by it: a step from here would carry it unmeasured; a tune that "
+    "has moved the arm there plays this row"
+)
 #: How near two figures of one lever are one value: one unit of the fourth significant digit,
 #: the rounding a measured figure is kept to (the screen's season scale). A quarter of the scale
 #: taken twice and its half taken once are each rounded, so they can differ by that much.
@@ -209,13 +219,14 @@ def order_of(screen: Mapping[str, Any] | None, names: Sequence[str] | None) -> l
     its strongest surviving row's, :func:`strength_of`; a tie in the list's order); with both,
     the levers named, those the screen played first by their strongest played row, then the
     others in the list's order; with ``names`` alone, the list's order. Each with where its
-    place comes from. A lever not in the code's list is a KeyError; no screen and no name, or a
-    screen with no survivor, a ValueError."""
+    place comes from. A lever not in the code's list is a KeyError, in the screen's own words
+    (``screen.unlisted``: a spec key that is no lever of a season says why, PR E); no screen
+    and no name, or a screen with no survivor, a ValueError."""
     if names is not None:
         names = list(dict.fromkeys(names))
         unknown = [n for n in names if n not in sc.NAMES]
         if unknown:
-            raise KeyError(f"lever {unknown[0]!r} is not in the screen's list: one of {sc.NAMES}")
+            raise KeyError(sc.unlisted(unknown[0]))
     index = sc.NAMES.index
     if screen is None:
         if not names:
@@ -409,6 +420,47 @@ def _same_arm(name: str, x: sc.Row, y: sc.Row) -> bool:
     )
 
 
+def alone(name: str, spec: Mapping[str, Any], row: sc.Row) -> str | None:
+    """Why ``row``, a pair to play of lever ``name``, is no step of that lever alone from the
+    current arm ``spec``; None when it is one. A step taken moves the current arm by what arm
+    B holds that arm A does not (:func:`change_of`), and two rows of the list cannot be taken
+    so from every arm:
+
+    - the arm cannot hold the change where it stands: the arm parser's own refusal, by its
+      words (an arm off the exact tier cannot name ``executes: queue``, PR E; the pair itself
+      is played on the exact tier, where the screen plays it);
+    - the lever is a key of the ``bid`` block (PR F2), whose change is the block whole, and the
+      pair sets another key of the block in both arms that the current arm does not bid by
+      (``BidPolicy.bids``: the reserve's row sets a pace that follows its path where the arm
+      follows none). The step would turn that on with it, measured by no pair against the
+      current arm. A setting in both arms that bids as the current arm does (a pace at ``k``
+      0, which follows no path) carries nothing.
+
+    What a row sets in both arms outside the lever's own block is never in the change, so it
+    needs no rule here: the final arm does not hold it, and the verdict says which levers it
+    then does not read (:func:`unread_of`)."""
+    assert row.a is not None and row.b is not None
+    try:
+        rn.arm_of(sc.applied(spec, change_of(row.a, row.b)))
+    except ValueError as e:
+        return NOT_HELD.format(why=e)
+    if name.startswith(sc.BID):
+        now, a = rn.arm_of(spec), rn.arm_of(row.a)
+        if (now.bid or bp.DEFAULT).bids() != (a.bid or bp.DEFAULT).bids():
+            inside = [k for k in row.both if k.startswith(sc.BID)]
+            return CARRIED.format(names=", ".join(inside))
+    return None
+
+
+def _alone(name: str, spec: Mapping[str, Any], row: sc.Row) -> sc.Row:
+    """``row`` as the tune lists it: a pair to play that is no step of the lever alone
+    (:func:`alone`) is not played, with the reason."""
+    if row.status != sc.PLAY:
+        return row
+    why = alone(name, spec, row)
+    return row if why is None else replace(row, status=sc.NOT_PLAYED, why=why, a=None, b=None)
+
+
 def values_of(
     name: str,
     spec: Mapping[str, Any],
@@ -420,13 +472,14 @@ def values_of(
     to whatever else makes it read): each of the list's nudges, and after each the nudge again
     (:func:`second_of`). A lever the league does not read is its one row saying why; a nudge
     that cannot be made says why; a nudge that is the current value is not played (a screen
-    refuses it; a tune has moved there); a second step that lands on a value already listed is
+    refuses it; a tune has moved there); a nudge that is no step of the lever alone from this
+    arm is not played (:func:`alone`); a second step that lands on a value already listed is
     not played twice (two figures within a measured figure's rounding are one value: a quarter
     of the season scale taken twice is the half)."""
     firsts = [
         replace(r, status=sc.NOT_PLAYED, why=CURRENT, a=None, b=None)
         if r.status == sc.REFUSED
-        else r
+        else _alone(name, spec, r)
         for r in sc.rows_of(spec, [name], shapes, ctx)
     ]
     out: list[sc.Row] = []
@@ -437,6 +490,7 @@ def values_of(
         second = second_of(name, spec, r, firsts, shapes, ctx)
         if second is None:
             continue
+        second = _alone(name, spec, second)
         if second.status == sc.PLAY:
             twin = next(
                 (
@@ -944,6 +998,7 @@ __all__ = [
     "BELOW",
     "BY_HAND",
     "BY_SCREEN",
+    "CARRIED",
     "CARRY_NOTE",
     "CONFIRMED",
     "CURRENT",
@@ -958,6 +1013,7 @@ __all__ = [
     "MIXED",
     "NOTHING",
     "NOTHING_TO_CONFIRM",
+    "NOT_HELD",
     "NOT_SHOWN",
     "NOT_YET",
     "NO_CELL",

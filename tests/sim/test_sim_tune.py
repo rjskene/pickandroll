@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pickandroll.sim import bid_policy as bp
 from pickandroll.sim import policy
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
@@ -115,6 +116,10 @@ def test_levers_named_by_hand_take_the_screen_s_order_or_the_list_s():
     assert tn.order_words(by_hand) == "pool, weeks_ahead"
     with pytest.raises(KeyError, match="lever 'pol' is not in the screen's list"):
         tn.order_of(None, ["pol"])
+    # A spec key that is no lever of a season is refused with its reason, in the screen's own
+    # words (PR E took ``with_plan`` off the list).
+    with pytest.raises(KeyError, match="lever 'with_plan' is not a lever of a season: a week"):
+        tn.order_of(None, ["with_plan"])
     with pytest.raises(ValueError, match="a tune names its levers"):
         tn.order_of(None, None)
     with pytest.raises(KeyError, match="lever 'gone' of the screen 's' is not in the code's list"):
@@ -127,7 +132,9 @@ def test_every_lever_of_the_list_has_its_nudge_and_its_nudge_again_or_none():
     written from the arm's own value is taken again by the lever itself; a step to a fixed
     number goes on by the same difference; a switch, a choice and a list have none; the knob's
     own bounds refuse a second step as they refuse a first. A row added to the list is added
-    here, so its second step is written before any result."""
+    here, so its second step is written before any result. The rows of the PRs that landed
+    before this one (G, the guard PR, E, F2 and pool) are held as the list gives them: none
+    needed an entry of ``tune.SECOND``."""
     pinned: set[str] = set()
 
     def at(spec: dict[str, Any], lever: str, *where: Any) -> dict[str, Any]:
@@ -152,11 +159,17 @@ def test_every_lever_of_the_list_has_its_nudge_and_its_nudge_again_or_none():
         "daily_cap-plus": 2,
         "daily_cap-plus-again": 3,
     }
+    # A floor is on the list twice since PR E: under the arm's own rule and under the queue's,
+    # which sets ``executes: queue`` in both arms. The same steps, and each has its second.
     assert at(spec, "plan_floor_cats") == {
         "plan_floor_cats-down": 0.0667,
         "plan_floor_cats-down-again": 0.0445,
         "plan_floor_cats-up": 0.15,
         "plan_floor_cats-up-again": 0.225,
+        "plan_floor_cats-queue-down": 0.0667,
+        "plan_floor_cats-queue-down-again": 0.0445,
+        "plan_floor_cats-queue-up": 0.15,
+        "plan_floor_cats-queue-up-again": 0.225,
     }
     assert at(spec, "season_weight") == {
         "season_weight-quarter": 0.3,
@@ -180,7 +193,11 @@ def test_every_lever_of_the_list_has_its_nudge_and_its_nudge_again_or_none():
     # No second step: a list, a switch, a choice.
     assert at(spec, "surrogate_days") == {"surrogate_days-monday": [0]}
     exact = base(tier="exact")
-    assert at(exact, "executes") == {"executes-weighted": "weighted"}
+    assert at(exact, "executes") == {"executes-weighted": "weighted", "executes-queue": "queue"}
+    assert at(spec, "guard") == {"guard-off": "off"}
+    assert at(spec, "bid.routine") == {"bid.routine-flipped": 1}
+    assert at(spec, "bid.rival_cap") == {"bid.rival_cap-on": True}
+    assert at(spec, "bid.shade") == {"bid.shade-on": {"least": 10, "q": 0.9}}
     assert at(exact, "execute_plan") == {"execute_plan-flipped": True}
     assert at(spec, "system") == {"system-yahoo": "yahoo", "system-blend": "blend"}
     assert at(spec, "horizon_weight") == {
@@ -194,8 +211,50 @@ def test_every_lever_of_the_list_has_its_nudge_and_its_nudge_again_or_none():
         "plan_floor_points-down-again": 0.0045,
         "plan_floor_points-up": 0.015,
         "plan_floor_points-up-again": 0.0225,
+        "plan_floor_points-queue-down": 0.0067,
+        "plan_floor_points-queue-down-again": 0.0045,
+        "plan_floor_points-queue-up": 0.015,
+        "plan_floor_points-queue-up-again": 0.0225,
     }
-    assert at(base(tier="exact", execute_plan=True), "with_plan") == {"with_plan-flipped": False}
+    # A step to a fixed number goes on by the same difference, and the bounds refuse it where
+    # it leaves them (PR G's weight on the three weeks, the guard PR's stake, pool's list).
+    assert at(spec, "three_weight") == {
+        "three_weight-0": 0.0,
+        "three_weight-0-again": "three_weight -0.33 is below its minimum 0.0",
+        "three_weight-0.67": 0.67,
+        "three_weight-0.67-again": "three_weight 1.01 is above its maximum 1.0",
+    }
+    assert at(spec, "stake") == {
+        "stake-0.5": 0.5,
+        "stake-0.5-again": "the same value as stake-1",
+        "stake-1": 1.0,
+        "stake-1-again": "stake 2.0: a number from 0 to 1",
+    }
+    assert at(spec, "guard_pool") == {"guard_pool-30": 30, "guard_pool-30-again": 60}
+    # A step from no value at all has no size to repeat (PR G's threshold, PR F2's pace).
+    assert at(spec, "stash_threshold") == {"stash_threshold-0": 0.0, "stash_threshold-0.25": 0.25}
+    assert at(spec, "bid.pace.k") == {"bid.pace.k-0.5": 0.5, "bid.pace.k-1": 1.0}
+    # PR F2's two weights step by a quarter; from 0 the step down is the block's own refusal.
+    for weight in ("week", "season"):
+        assert at(spec, f"bid.{weight}") == {
+            f"bid.{weight}-down": f"bid {weight} -0.25: a number from 0 to 1",
+            f"bid.{weight}-up": 0.25,
+            f"bid.{weight}-up-again": 0.5,
+        }
+    # The reserve is a step of its own only from an arm that follows a path (``tune.alone``).
+    paced = base(bid={"pace": {"k": 1.0, "shape": 1.0, "reserve": 0.2}, "week": 0.25})
+    assert at(paced, "bid.pace.reserve") == {
+        "bid.pace.reserve-up": 0.4,
+        "bid.pace.reserve-up-again": 0.6,
+    }
+    assert at(paced, "bid.week") == {
+        "bid.week-down": 0.0,
+        "bid.week-down-again": "bid week -0.25: a number from 0 to 1",
+        "bid.week-up": 0.5,
+        "bid.week-up-again": 0.75,
+    }
+    # ``with_plan`` is off the list since PR E: no lever of a season (``screen.NOT_LEVERS``).
+    assert "with_plan" not in sc.NAMES and "with_plan" in sc.NOT_LEVERS
     # Every row of the list: here, or in the table's test below (the sizing's two).
     assert pinned | {"faab_sizing"} == set(sc.NAMES)
 
@@ -344,6 +403,98 @@ def test_a_made_up_switch_to_a_fixed_target_is_taken_once_and_then_left_out(monk
     assert there.a is None and there.b is None
     assert [o["lever"] for o in tn.order_of(None, ["execute_plan"])] == ["execute_plan"]
     assert tn.tier_of(["execute_plan"]) == "exact"
+
+
+def test_executes_to_queue_is_no_step_from_an_arm_off_the_exact_tier():
+    """Where PR H2 meets PR E: an arm off the exact tier cannot name ``executes: queue`` (the
+    arm's own parser, ``policy.queue_refused``), so from such an arm the row is not played,
+    with the parser's words, and the lever's other choice is. From an arm on the exact tier it
+    is played, and the arm that took it is one the tune goes on from."""
+    got = to(base(), "executes")
+    assert got == {
+        "executes-weighted": "weighted",
+        "executes-queue": tn.NOT_HELD.format(why=policy.queue_refused("surrogate", "queue")),
+    }
+    rows = {r.key: r for r in tn.values_of("executes", base(), [EVERY], RICH)}
+    assert rows["executes-queue"].status == sc.NOT_PLAYED and rows["executes-queue"].a is None
+    exact = base(tier="exact")
+    there = {r.key: r for r in tn.values_of("executes", exact, [EVERY], RICH)}
+    row = there["executes-queue"]
+    assert row.status == sc.PLAY and tn.alone("executes", exact, row) is None
+    moved = sc.applied(exact, tn.change_of(row.a, row.b))
+    assert rn.arm_of(moved).executes == policy.QUEUE and rn.arm_of(moved).tier == "exact"
+    assert to(moved, "executes") == {"executes-three": "three", "executes-weighted": "weighted"}
+
+
+def test_the_reserve_is_no_step_from_an_arm_that_follows_no_path():
+    """Where PR H2 meets PR F2: a step of a key of the ``bid`` block moves the block whole
+    (:func:`tune.change_of`), and the reserve's pair sets, in both arms, a pace that follows
+    its path. From an arm that follows none (no pace named, or one at ``k`` 0) the step would
+    turn the pace on with it, so the row is not played, with the reason. ``bid.pace.k``'s own
+    pair sets a pace at ``k`` 0, which bids as the arm does, and is played; from the arm that
+    took it the reserve is a step of its own, and its change moves the reserve alone."""
+    why = tn.CARRIED.format(names="bid.pace")
+    assert to(base(), "bid.pace.reserve") == {"bid.pace.reserve-up": why}
+    idle = base(bid={"pace": {"k": 0.0, "shape": 2.0, "reserve": 0.1}})
+    assert to(idle, "bid.pace.reserve") == {"bid.pace.reserve-up": why}
+    (row,) = tn.values_of("bid.pace.reserve", base(), [EVERY], RICH)
+    assert (row.status, row.a, row.b) == (sc.NOT_PLAYED, None, None)
+    # The k's rows from an arm with no pace: played, and nothing is carried.
+    ks = tn.values_of("bid.pace.k", base(), [EVERY], RICH)
+    assert [(r.key, r.status) for r in ks] == [
+        ("bid.pace.k-0.5", sc.PLAY),
+        ("bid.pace.k-1", sc.PLAY),
+    ]
+    assert all(tn.alone("bid.pace.k", base(), r) is None for r in ks)
+    moved = sc.applied(base(), tn.change_of(ks[0].a, ks[0].b))
+    assert moved["bid"] == {"pace": {**sc.PACE_PATH, "k": 0.5}}
+    # From there the reserve's row sets nothing in both arms, and its step moves it alone.
+    up, again = tn.values_of("bid.pace.reserve", moved, [EVERY], RICH)
+    assert (up.key, up.status, dict(up.both), up.values) == (
+        "bid.pace.reserve-up",
+        sc.PLAY,
+        {},
+        {"a": 0.2, "b": 0.4},
+    )
+    assert sc.applied(moved, tn.change_of(up.a, up.b))["bid"] == {
+        "pace": {**sc.PACE_PATH, "k": 0.5, "reserve": 0.4}
+    }
+    assert (again.key, again.status, again.values) == (
+        "bid.pace.reserve-up-again",
+        sc.PLAY,
+        {"a": 0.2, "b": 0.6},
+    )
+
+
+def test_every_row_a_tune_plays_is_a_step_of_its_lever_alone():
+    """The list as it stands, from an arm on each tier and from one that names a pace: no row
+    to play carries a setting of both arms into the step (the parser takes the arm the step
+    makes, and inside the ``bid`` block arm A bids as the current arm does), and every row the
+    rule leaves out says which of the two reasons it is."""
+    held = tn.NOT_HELD.split("{")[0]
+    carried = tn.CARRIED.split("{")[0]
+    left: set[str] = set()
+    for spec in (
+        base({"season_weight": 0.1}),
+        base({"season_weight": 0.1}, tier="exact"),
+        base(bid={"pace": {"k": 1.0, "shape": 1.0, "reserve": 0.2}}),
+    ):
+        now = rn.arm_of(spec)
+        for name in sc.NAMES:
+            for row in tn.values_of(name, spec, [EVERY], RICH):
+                if row.status == sc.PLAY:
+                    after = rn.arm_of(sc.applied(spec, tn.change_of(row.a, row.b)))
+                    assert after.tier == now.tier
+                    if name.startswith(sc.BID):
+                        a = rn.arm_of(row.a)
+                        assert (a.bid or bp.DEFAULT).bids() == (now.bid or bp.DEFAULT).bids()
+                elif row.why.startswith((held, carried)):
+                    left.add(f"{now.tier}:{row.key.removesuffix('-again')}")
+    assert left == {
+        "surrogate:executes-queue",
+        "surrogate:bid.pace.reserve-up",
+        "exact:bid.pace.reserve-up",
+    }
 
 
 def test_what_arm_b_holds_that_arm_a_does_not():
