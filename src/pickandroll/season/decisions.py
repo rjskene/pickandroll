@@ -288,12 +288,17 @@ def move_projection(
     dropped = mine.get(drop) if drop is not None else None
     start = day if day is not None else problem.effective.get(add, problem.first_day)
 
+    # A lifted move's add plays on the lifted line (#435, ``moves.line_of``): the guard, the
+    # tables and the log value it alike.
+    lines = {**({drop: problem.rates.get(drop)} if drop is not None else {})}
+    lines[add] = mv.line_of(problem, add, drop)
+
     def per_game(pid: int) -> float | None:
-        line = problem.rates.get(pid)
+        line = lines.get(pid)
         return None if line is None else round(wk.net_value(scorer, line), 4)
 
     def by_cat(pid: int | None) -> dict[str, float]:
-        line = problem.rates.get(pid) if pid is not None else None
+        line = lines.get(pid) if pid is not None else None
         return wk.net_values(scorer, line or {})
 
     a, d = per_game(add), per_game(drop) if dropped is not None else None

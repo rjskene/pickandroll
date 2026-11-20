@@ -4,9 +4,11 @@ A :class:`Setup` is a league as read once for a run: its calendar, pairings, tea
 rosters, free-agent pool, the policy's projection on day one, the schedule, the roster slots and
 the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class:`SimState` is
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
-tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
+tomorrow with the held-slot moves they need, every week's totals so far, and each round of the
+bracket as seeded on its first morning (PR bracket); in a waiver league
 (PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
-priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by; under
+priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by, and
+(PR F2) the season's winning bids; under
 continuous waivers (PR Fc) every add a claim among them. The world
 (``run.World``) is apart: lines, availability and the beliefs belong to the path, never to an
 arm, so two arms of a pair see one world. Pure: frozen dataclasses,
@@ -79,7 +81,9 @@ class Claim:
     plan's and the world's weeks agree; None outside the calendar), the held-slot moves it needs,
     made only if it is won, and whether its drop is a held player (a churn, #221), who leaves on
     his own the morning after the claim is placed. In a FAAB league (PR Fb) its sealed ``bid``,
-    whole dollars set when it is placed (0 by priority)."""
+    whole dollars set when it is placed (0 by priority), and its ``value`` in typicals when it
+    was placed (PR F2, ``bid_policy.value``: what the bid was sized on, for a seat that bids by
+    the live rule or the bid policy; 0 for any other), which only the counts read."""
 
     move: Move
     placed: date
@@ -88,11 +92,16 @@ class Claim:
     held: tuple[tuple[int, str], ...] = ()
     churn: bool = False
     bid: int = 0
+    value: float = 0.0
 
     @property
     def needs_spot(self) -> bool:
         """Whether its add takes an active spot of its own: no drop, or a churn's held drop."""
         return self.move.drop is None or self.churn
+
+    def keyed(self) -> Claim:
+        """The claim as a decision reads it (``SimState.key``): without its value."""
+        return replace(self, value=0.0) if self.value else self
 
 
 @dataclass(frozen=True)
@@ -272,6 +281,38 @@ class SimState:
     dollars: Mapping[int, int] = field(default_factory=dict)
     recent: Mapping[int, tuple[tuple[date, float], ...]] = field(default_factory=dict)
     market_recent: tuple[tuple[date, float], ...] = ()
+    #: The bid policy's (PR F2; a FAAB league's, all empty otherwise). ``won_bids``: every claim
+    #: won this season, in the order decided, each with its morning, its team and its bid, as
+    #: the league's transactions page shows them (a seat's policy reads the other teams').
+    #: ``value_won``: the summed value in typicals of the claims each team won
+    #: (``Claim.value``), the counts' alone. ``recent_by``: as ``recent``, the gains of a seat's
+    #: moves on the other horizons its bid policy weighs, by horizon (``bid_policy.WEEK``,
+    #: ``SEASON``) then team: the fortnight's and, where those are fewer than ten, its last ten
+    #: whatever their age (``policy.fortnight_by``); a seat whose arm names no such weight keeps
+    #: none.
+    won_bids: tuple[tuple[date, int, int], ...] = ()
+    value_won: Mapping[int, float] = field(default_factory=dict)
+    recent_by: Mapping[str, Mapping[int, tuple[tuple[date, float], ...]]] = field(
+        default_factory=dict
+    )
+    #: Whom each team's returning held players send (PR G), by team: (the held player, the
+    #: active player its seat's plan drops for him), as the seat's decision named them today
+    #: (``policy.sends_of``); tomorrow morning's alone (``policy.arrive`` spends them). Empty for
+    #: a seat that names none. No decision reads it, so it is no part of :meth:`key`.
+    sends: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
+    #: The week's stake ``L`` (#172, the guard PR, ``sim/stake.py``) of each seat that reads or
+    #: counts one, by team: set by the runner on each week's first simulated day from the weeks
+    #: finished before it, and the same all week. Empty when no arm of the run names a stake.
+    #: A decision of such a seat depends on its own figure, so the runner's cache of shared
+    #: decisions keys on it beside :meth:`key`, which leaves it out: no other seat reads it.
+    stakes: Mapping[int, float] = field(default_factory=dict)
+    #: The bracket's rounds as this arm has seeded them (#172, PR bracket): week number to that
+    #: round's matchups (team ids, the higher seed first; ``league.round_pairs``), set once a
+    #: round on its first simulated morning from this arm's own totals (``policy.seed_round``).
+    #: A problem reads its week's opponent from them where the pairings have no entry
+    #: (``policy.opponent_of``). Empty in a league with no round, and on a state built by hand.
+    #: No part of :meth:`key`.
+    seeded: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
 
     @property
     def executed(self) -> int:
@@ -296,7 +337,13 @@ class SimState:
     def key(self) -> tuple[Any, ...]:
         """What a decision depends on: two arms with the same key share one solve. In a waiver
         league also who is on waivers until when, the claims placed and the churns' held drops
-        due (#172, PR Fa); the priority is read by no decision."""
+        due (#172, PR Fa); the priority is read by no decision, and neither is a claim's value
+        (PR F2: what its bid was sized on, the counts' alone), so the key holds each claim
+        without it and two seasons apart on that only share what they shared before it. The
+        round's pairs (``seeded``, PR bracket) are left out as the week's totals are: a rival's
+        decision reads neither, and with them in the key two variants that seed different pairs
+        would stop sharing their rivals' decisions. A strategy that does read the week is keyed
+        on its team's view of it besides (``run.decision_key``, ``policy.week_view``, PR F2)."""
         base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),
@@ -310,7 +357,7 @@ class SimState:
         return (
             *base,
             tuple(sorted(self.waivers.items())),
-            tuple(sorted((t, c) for t, c in self.claims.items() if c)),
+            tuple(sorted((t, tuple(c.keyed() for c in cs)) for t, cs in self.claims.items() if cs)),
             tuple(sorted((t, d) for t, d in self.pending_drops.items() if d)),
         )
 

@@ -8,8 +8,11 @@ a waiver league the best it may add and the weakest it may drop, :class:`Market`
 league it bids by an assumed form, ``policy.rival_bid``, or on the price book, ``bids.book_bid``,
 PR Fd). Its view is the draft day's all season, or the season's that morning (``view``), and it
 may pick among its best few (``among``), PR Fd.
-**Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
-whole: at the defaults nothing changes; in a FAAB league it bids by the live rule on them). **Seat** is the equal room's: a named arm in another
+**Mirror** runs the surrogate on the shared beliefs with the arm's knobs and its fields
+(but for the stash threshold, which a rival keeps at None, PR G), never its guard or its stake
+(the guard PR: a rival stays on the block; at the defaults nothing
+changes; in a FAAB league it bids by the live rule on them, or by the arm's ``bid`` policy when it
+names one, PR F2). **Seat** is the equal room's: a named arm in another
 seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
 draws (``run.World`` passes the day's generator), so two arms of a comparison see the same
 opponents while their states agree.
@@ -24,6 +27,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from . import bid_policy as bp
 from . import policy
 from .engine import mv, wk
 from .shapes import BOOK
@@ -41,7 +45,11 @@ OUT = wk.OUT_ALL | wk.OUT_THIS_WEEK
 
 
 class Strategy(Protocol):
-    """What a seat does on a day: a decision from the problem's inputs."""
+    """What a seat does on a day: a decision from the problem's inputs. A strategy whose
+    decision reads the value of this week says so (``reads_week``, PR F2: a :class:`Seat`
+    that ``policy.reads_week``, and a :class:`Mirror` whose ``bid`` weighs the week); the runner
+    then keys its decisions on the team's week view too. One that does not say is keyed on the
+    state alone, as every other rival here is."""
 
     kind: str
 
@@ -193,11 +201,26 @@ _SEASON_VIEW = _LastView()
 
 @dataclass(frozen=True)
 class Mirror:
-    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's)."""
+    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's), but for
+    the stash threshold, which a rival keeps at None (``policy.rival_knobs``, PR G): the knob
+    is the arm's own seat's. It is dropped when the rival is made, so two arms that differ only
+    in it face one rival and share its decisions. The arm's ``bid`` block the rival does take:
+    in a FAAB league it bids by it when the arm names one (PR F2)."""
 
     knobs: Mapping[str, Any]
     fields: policy.Fields = policy.DEFAULT_FIELDS
     kind: str = "mirror"
+    bid: bp.BidPolicy | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "knobs", policy.rival_knobs(self.knobs))
+
+    @property
+    def reads_week(self) -> bool:
+        """Whether this rival's decision reads the week's opponent and totals so far: only
+        when it bids by a ``bid`` that weighs the week (``policy.reads_week``, PR F2). A mirror
+        that names no such block searches no week and says no, as before."""
+        return policy.reads_week("surrogate", bid=self.bid)
 
     def decide(
         self,
@@ -214,7 +237,8 @@ class Mirror:
         )
         if built is None:
             return policy.NONE
-        return policy.decide(built, "surrogate", fields=self.fields)
+        decision = policy.decide(built, "surrogate", fields=self.fields)
+        return policy.with_bid(built, decision, self.bid)
 
 
 @dataclass(frozen=True)
@@ -222,7 +246,15 @@ class Seat:
     """An arm in a seat: its tier, knobs, what it executes and its fields, and the forecaster it
     believes by (#172, PR D1): a label the world holds, None for the run's. Static, market and
     mirror seats hold the run's. The label is part of the seat, so of the runner's decision
-    cache's key: two seats on different forecasters share no decision."""
+    cache's key: two seats on different forecasters share no decision. ``bid`` is the arm's bid
+    policy when it names one (PR F2, ``bid_policy.BidPolicy``; None bids by the live rule
+    itself), part of the seat too.
+
+    Its guard and its stake (the guard PR, ``policy.SEASON_FIELDS``) are the values in force,
+    the block and no stake unless the arm says otherwise: an arm that names the defaults is the
+    seat of one that names nothing. Only an arm's own seat carries them: a mirror rival runs
+    the surrogate on the arm's knobs under the block, with no stake. The bid policy reads the
+    season figure with no stake (``policy.with_bid``)."""
 
     name: str
     tier: str
@@ -231,7 +263,16 @@ class Seat:
     with_plan: bool = True
     fields: policy.Fields = policy.DEFAULT_FIELDS
     forecaster: str | None = None
+    guard: str = policy.BLOCK
+    stake: float = 0.0
     kind: str = "seat"
+    bid: bp.BidPolicy | None = None
+
+    @property
+    def reads_week(self) -> bool:
+        """Whether this seat's decision reads the week's opponent and totals so far
+        (``policy.reads_week``): the runner's decision cache then keys on them (PR F2)."""
+        return policy.reads_week(self.tier, self.executes, self.with_plan, self.bid)
 
     def decide(
         self,
@@ -250,7 +291,9 @@ class Seat:
         )
         if built is None:
             return policy.NONE
-        return policy.decide(built, self.tier, self.executes, self.with_plan, self.fields)
+        built = policy.guarded(built, setup, state, self.guard, self.stake)
+        decision = policy.decide(built, self.tier, self.executes, self.with_plan, self.fields)
+        return policy.with_bid(built, decision, self.bid)
 
 
 #: The keys of an arm's ``opponents`` block the simulator reads (:func:`of`); any other is
@@ -285,11 +328,12 @@ def of(
     knobs: Mapping[str, Any],
     market_rate: float,
     fields: policy.Fields = policy.DEFAULT_FIELDS,
+    bid: bp.BidPolicy | None = None,
 ) -> Strategy:
     """An opponent from an arm's ``opponents`` block: ``{"kind": "static"}``,
     ``{"kind": "market", "rate": 0.1}`` (the setup's ``market_rate`` when none is given; with
     ``view`` and ``among`` when named, PR Fd) or ``{"kind": "mirror"}`` (the arm's own knobs and
-    fields)."""
+    fields, and its ``bid`` policy when it names one, PR F2)."""
     kind = str(spec.get("kind", "static"))
     if kind == "static":
         return Static()
@@ -303,5 +347,5 @@ def of(
             1 if among is None else int(among),
         )
     if kind == "mirror":
-        return Mirror(dict(knobs), fields)
+        return Mirror(dict(knobs), fields, bid=bid)
     raise ValueError(f"unknown opponent kind {kind!r}: one of {KINDS[:3]}")

@@ -11,7 +11,8 @@ roster change in one arm reshuffles nothing for any player: common random number
 :func:`simulate` advances several variants of one league through the same world day by day: the
 moves decided yesterday land, each seat decides on the day's beliefs, the lineup is set, the day
 is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
-states agree share one solve (the lockstep of the design note); from the first divergence each
+states agree share one solve (the lockstep of the design note; a strategy that reads the week,
+on one view of the week too: :func:`decision_key`, PR F2); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
 of the season's outcomes, B less A; :func:`room` runs a league's seats under named arms rotated
 across paths.
@@ -25,7 +26,7 @@ import math
 import multiprocessing
 import os
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -34,9 +35,11 @@ from typing import Any
 import numpy as np
 
 from . import adp, audit, policy, shapes, world
+from . import bid_policy as bp
 from . import counts as ct
 from . import league as lg
 from . import opponents as op
+from . import stake as stk
 from .belief import CausalBelief, newcomer_prior
 from .engine import EACH_CATEGORY, FPTS, ONE_WIN, Week, mv, wk
 from .fit import W_DEFAULT
@@ -87,7 +90,10 @@ def inputs_of(payload: Mapping[str, Any], sha: str) -> WorldInputs:
 @dataclass(frozen=True)
 class Arm:
     """One arm of a comparison: a tier with its knobs, what it executes, its opponents and its
-    fields (``policy.Fields``)."""
+    fields (``policy.Fields``). ``executes`` is ``three`` (the three weeks' set, the default),
+    ``weighted`` (the weighted set) or ``queue`` (the live queue's rule, #172, PR E: the exact
+    tier's). ``with_plan`` and ``execute_plan`` are the first two's, the streaming plan beside
+    the set; the queue's rule draws and executes its own plan and reads neither."""
 
     name: str
     tier: str
@@ -100,6 +106,16 @@ class Arm:
     #: The forecaster the arm's seat believes by (#172, PR D1): a label the run's world holds,
     #: None for the run's own. A run sets it; a spec file does not name it.
     forecaster: str | None = None
+    #: The arm's two season fields (#172, the guard PR, ``policy.SEASON_FIELDS``), the values
+    #: in force: its guard (``block``, live's, or ``off``) and its stake (0 to 1), and which of
+    #: the two its spec names (``named``: its payload carries those, and a run counts what any
+    #: of its arms names).
+    guard: str = policy.BLOCK
+    stake: float = 0.0
+    named: tuple[str, ...] = ()
+    #: The arm's bid policy (PR F2, ``bid_policy.of`` its spec's ``bid`` block); None when the
+    #: spec names none, and the seat bids by the live rule itself.
+    bid: bp.BidPolicy | None = None
 
     def seat(self) -> op.Seat:
         return op.Seat(
@@ -110,7 +126,15 @@ class Arm:
             self.with_plan,
             self.fields,
             self.forecaster,
+            guard=self.guard,
+            stake=self.stake,
+            bid=self.bid,
         )
+
+    def season_payload(self) -> dict[str, Any]:
+        """The season fields the arm's spec names, each with its value: what its payload carries
+        of them (nothing when it names neither)."""
+        return {k: getattr(self, k) for k in policy.SEASON_FIELDS if k in self.named}
 
 
 #: The keys of an arm's spec file the simulator reads (:func:`arm_of`, :func:`check_fit`); any
@@ -124,17 +148,29 @@ SPEC_KEYS = (
     "with_plan",
     "execute_plan",
     *policy.FIELDS,
+    *policy.SEASON_FIELDS,
+    "bid",
     "fit_sha",
 )
+
+
+#: The two plan switches of an arm's spec: the streaming plan beside the set. A spec that
+#: executes ``queue`` names neither (#172, PR E).
+PLAN_KEYS = ("with_plan", "execute_plan")
 
 
 def arm_of(spec: Mapping[str, Any]) -> Arm:
     """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
     five fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
-    ``surrogate_days``, ``guard_pool``; ``policy.fields_of``); a key the simulator does not read
+    ``surrogate_days``, ``guard_pool``; ``policy.fields_of``), its guard and its stake when
+    it names them (the guard PR, ``policy.season_of``) and its ``bid`` block (PR F2,
+    ``bid_policy.of``); a key the simulator does not read
     (:data:`SPEC_KEYS`, and ``opponents.SPEC_KEYS`` under ``opponents``), a knob missing,
-    unknown or out of the engine's bounds, a field out of its own or a tier unknown is refused
-    by name."""
+    unknown or out of the engine's bounds, a field out of its own, a tier unknown, a guard named
+    on a tier that has none, a stake with no season weight to scale or a ``bid`` key unknown or
+    out of its own is refused by name. So is ``executes: queue`` on a tier other than the exact
+    one (``policy.queue_refused``), and ``with_plan`` or ``execute_plan`` named beside it,
+    whatever its value: the queue's rule draws and executes its own plan (#172, PR E)."""
     unknown = [k for k in spec if k not in SPEC_KEYS]
     if unknown:
         raise ValueError(
@@ -149,6 +185,17 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
     executes = str(spec.get("executes", policy.QUEUE_SET))
     if executes not in policy.EXECUTES:
         raise ValueError(f"executes {executes!r}: one of {policy.EXECUTES}")
+    why = policy.queue_refused(tier, executes)
+    if why is not None:
+        raise ValueError(why)
+    if executes == policy.QUEUE:
+        for key in PLAN_KEYS:
+            if key in spec:
+                raise ValueError(
+                    f"{key} is named beside executes {executes!r}: the queue's rule draws and "
+                    "executes its own plan, so the spec leaves it out"
+                )
+    guard, stake, named = policy.season_of(spec, tier, knobs)
     return Arm(
         str(spec.get("name") or "arm"),
         tier,
@@ -158,7 +205,17 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
         bool(spec.get("with_plan", True)),
         bool(spec.get("execute_plan", False)),
         policy.fields_of(spec),
+        guard=guard,
+        stake=stake,
+        named=named,
+        bid=bp.of(spec["bid"]) if "bid" in spec else None,
     )
+
+
+def stash_named(arms: Iterable[Arm]) -> bool:
+    """Whether a run of ``arms`` names a stash threshold (#172, PR G): one of them holds a
+    number for the knob. Such a run counts the returning players each seat dropped."""
+    return any(arm.knobs.get("stash_threshold") is not None for arm in arms)
 
 
 def mirrored(arm: Arm) -> bool:
@@ -171,11 +228,16 @@ def same_seat(
     a: Arm, b: Arm, shapes: Sequence[policy.Shape], rivals: bool = True
 ) -> list[str] | None:
     """When arms ``a`` and ``b`` differ only in knobs and fields that neither reads in any of
-    ``shapes`` (``policy.reads``, ``policy.field_reads``; ``rivals``: whether the arms' rivals
+    ``shapes`` (``policy.reads``, ``policy.field_reads``, and for the guard and the stake
+    ``policy.season_reads``, by their values in force; ``rivals``: whether the arms' rivals
     play, as in a comparison, so a mirror reads), each such name with why it is not read and what
     would make it read: the two are then the same seat, and a run of them a no-op by
     construction. None when they differ in anything else, in a name one of them reads in some
-    shape, or in nothing at all (the same arm twice, a check that the difference is zero)."""
+    shape, or in nothing at all (the same arm twice, a check that the difference is zero). The
+    arms' ``bid`` blocks (PR F2) are one more such name, compared as the policy in force (an arm
+    that names none holds the default member) and read as ``policy.bid_reads`` says; where the
+    block is read, two blocks that bid alike on every claim (``BidPolicy.bids``: apart only on
+    a pace at ``k`` 0, which follows no path) are still one seat, by that reason."""
 
     def identity(arm: Arm) -> tuple[Any, ...]:
         return (
@@ -189,10 +251,14 @@ def same_seat(
 
     if identity(a) != identity(b):
         return None
-    names = [k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]] + [
-        f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)
-    ]
-    if not names:
+    names = (
+        [k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]]
+        + [f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)]
+        + [f for f in policy.SEASON_FIELDS if getattr(a, f) != getattr(b, f)]
+    )
+    rule_a, rule_b = a.bid or bp.DEFAULT, b.bid or bp.DEFAULT
+    bids = rule_a != rule_b
+    if not names and not bids:
         return None
     out = []
     for name in names:
@@ -200,7 +266,11 @@ def same_seat(
         for arm in (a, b):
             mirror = rivals and mirrored(arm)
             for shape in shapes:
-                table = policy.reads(arm, shape, mirror) | policy.field_reads(arm, mirror)
+                table = (
+                    policy.reads(arm, shape, mirror)
+                    | policy.field_reads(arm, mirror)
+                    | policy.season_reads(arm, shape)
+                )
                 rows.append(table[name])
         if policy.READ in rows:
             return None
@@ -211,14 +281,47 @@ def same_seat(
             + (f", and {also}" if also else "")
             + (f"; {only}" if only else "")
         )
+    if bids:
+        rows = [
+            policy.bid_reads(arm, shape, rivals and mirrored(arm))
+            for arm in (a, b)
+            for shape in shapes
+        ]
+        if policy.READ not in rows:
+            out.append(f"bid ({rows[0]}; read by {policy.BID_WHEN_READ})")
+        elif rule_a.bids() != rule_b.bids():
+            return None
+        else:
+            out.append(f"bid ({policy.PACE_AT_REST}; read by {policy.PACE_WHEN_READ})")
     return out
 
 
+def stake_refused(arm: Arm, shapes: Sequence[policy.Shape]) -> str | None:
+    """Why ``arm`` may not play a run whose leagues are ``shapes`` (the guard PR): it names a
+    stake above 0 and one of them has no bracket read, so the cut line and the bracket's weeks
+    its stake reads are not trusted. None when it may. The refusal is by the field, whether or
+    not the arm's tier reads a stake (the ranking tier and a static seat do not): no path of
+    such a league is played with a stake named, as none is with a stake and no season weight.
+    Every league a replay builds today has its bracket read (``replay_setup`` always makes a
+    spec), so the command's refusal guards a later league kind."""
+    if arm.stake > 0 and any(not shape.bracket for shape in shapes):
+        return (
+            f"arm {arm.name} names stake {arm.stake:g}: a stake reads the cut line and the "
+            "bracket's weeks, and the league's bracket is not read, so it is not trusted"
+        )
+    return None
+
+
 def counted_of(arms: Sequence[Arm]) -> tuple[str, ...]:
-    """The fields of ``arms`` whose counts a run of them carries on its arms' seats
-    (``counts.SEASON``): ``guard_pool`` when any of them sets it above 0 (#172, PR pool). None
-    set, nothing counted, and the run's counts are as before the field."""
-    return ("guard_pool",) if any(arm.fields.guard_pool > 0 for arm in arms) else ()
+    """What a run of ``arms`` counts on its arms' seats (``counts.SEASON``'s keys): the season
+    fields any of them names (``policy.SEASON_FIELDS``'s order), then ``guard_pool`` when any
+    of them on a tier that builds a union pool (``policy.UNION_TIERS``) sets it above 0 (#172,
+    PR pool): an arm of another tier that sets it reads nothing of it, and a run of such arms
+    alone counts none. None named or set, nothing counted, and the run's counts are as before
+    the fields."""
+    names = tuple(f for f in policy.SEASON_FIELDS if any(f in arm.named for arm in arms))
+    sets = any(arm.tier in policy.UNION_TIERS and arm.fields.guard_pool > 0 for arm in arms)
+    return (*names, *(("guard_pool",) if sets else ()))
 
 
 def check_fit(spec: Mapping[str, Any], sha: str) -> None:
@@ -669,6 +772,41 @@ class _Tables:
         return self._mixed[key]
 
 
+def queue_named(variants: Sequence[Mapping[int, op.Strategy]]) -> bool:
+    """Whether a seat of ``variants`` takes the queue's rule (#172, PR E): the run's counts then
+    carry the queue's (``counts.PLANS``), in every seat's row."""
+    return any(
+        getattr(strat, "executes", None) == policy.QUEUE for v in variants for strat in v.values()
+    )
+
+
+def decision_key(
+    setup: Setup, state: SimState, team: int, strat: op.Strategy, week: int
+) -> tuple[Any, ...]:
+    """What two variants must hold alike on a day to share ``team``'s decision: the team, the
+    strategy in its seat (its ``repr``) and ``SimState.key()``; and for a strategy that reads
+    the week (``policy.reads_week``: the exact tier on the weighted set, the queue's rule or a
+    week's plan; a seat or a mirror whose ``bid`` weighs the week), the team's view of the week
+    too (``policy.week_view``: its opponent, a round's included since PR bracket, and both
+    sides' totals so far), which the state's key does not hold (PR F2). Before it, two variants
+    that held one such ``repr`` in a seat, two arms of one name or one mirror rival of two arms,
+    could be handed each other's decision once their states agreed again on other totals. Every
+    other strategy's decision is the same whatever the view.
+
+    A seat that reads a stake (the guard PR) decides on its own week's figure too
+    (``SimState.stakes``, which the state's key leaves out), so the key holds it, None for a
+    seat with no stake."""
+    level = state.stakes.get(team) if getattr(strat, "stake", 0.0) > 0 else None
+    view = policy.week_view(setup, state, team, week) if _reads_week(strat) else None
+    return (team, repr(strat), state.key(), level, view)
+
+
+def _reads_week(strat: op.Strategy) -> bool:
+    """A strategy that does not say (a static or a market rival, a test's double) does not
+    read the week."""
+    return bool(getattr(strat, "reads_week", False))
+
+
 def simulate(
     setup: Setup,
     w: World,
@@ -676,7 +814,9 @@ def simulate(
     execute_plan: Sequence[bool] | None = None,
     on_day: Callable[[DayRecord], None] | None = None,
     rules: Sequence[audit.Rule] | None = None,
+    stash: bool = False,
     counted: Sequence[Mapping[int, Sequence[str]]] | None = None,
+    queue_counts: bool | None = None,
 ) -> list[VariantResult]:
     """Every variant (a strategy by seat) through one world in lockstep. Each day, after the lineup
     is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or the setup's,
@@ -685,12 +825,36 @@ def simulate(
     (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
     forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
     reads its table on the rosters before the landing for the forced drops, and on the rosters after
-    it for the rest of the day. The world's draws are common to all of them.
+    it for the rest of the day. The world's draws are common to all of them. On the first morning
+    of a round of the bracket each variant's state takes the round's pairs from its own totals
+    (``policy.seed_round``, PR bracket), and a seat's problem reads its opponent from them.
+    ``stash``: the run
+    names a stash threshold (:func:`stash_named`, PR G), and every variant's counts carry the
+    returning players each seat dropped (``counts.STASH``); nothing else reads it.
+    ``queue_counts``: whether the run has an arm that takes the queue's rule, so every seat's
+    counts carry the queue's (PR E); None reads it off ``variants`` (:func:`queue_named`), and a
+    pair whose arms play apart says it for both.
 
-    ``counted``, by variant, names for a seat the fields its run counts (:func:`counted_of`;
-    ``counts.SEASON``, PR pool): each of that seat's decisions is handed to the variant's tally.
-    None by default, and the counts are as before."""
+    The week's stake (the guard PR): on each week's first simulated day the state of a variant
+    takes ``L`` (``stake.level``, from the weeks finished before it) for each of its seats that
+    reads one (``opponents.Seat.stake`` above 0) or counts one, and holds it all week
+    (``SimState.stakes``); such a seat's shared decisions are keyed on its own figure too.
+    ``counted``, by variant, names for a seat the season fields its run counts, and
+    ``guard_pool`` when the run counts the union pool (PR pool: each day's union of that seat
+    is handed to the variant's tally with what it queued) (:func:`counted_of`;
+    ``counts.SEASON``); none by
+    default, and the counts are as before. A
+    seat with a stake in a league whose bracket is not read is refused by name before any day
+    (ValueError), by the field: on any tier, read there or not (:func:`stake_refused`)."""
     n = len(variants)
+    if setup.spec is None:
+        for v in variants:
+            for t, strat in sorted(v.items()):
+                if getattr(strat, "stake", 0.0) > 0:
+                    raise ValueError(
+                        f"seat {t} ({strat.name}) names stake {strat.stake:g}: "
+                        f"{policy.stake_unread(setup)}"
+                    )
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
     shared = [0] * n
@@ -699,7 +863,16 @@ def simulate(
     spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
     auditor = audit.Auditor(setup, rules, w.path)
     counted = list(counted or [{}] * n)
-    tallies = [ct.Tally(setup, counted[vi]) for vi in range(n)]
+    queued = queue_named(variants) if queue_counts is None else queue_counts
+    tallies = [ct.Tally(setup, stash, counted[vi], queued) for vi in range(n)]
+    # The seats whose week's stake the state holds: those that read one and those counted.
+    staked = [
+        sorted(
+            {t for t, strat in v.items() if getattr(strat, "stake", 0.0) > 0}
+            | {t for t, names in counted[vi].items() if "stake" in names}
+        )
+        for vi, v in enumerate(variants)
+    ]
     holds = [holds_of(w, v) for v in variants]
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
@@ -709,6 +882,19 @@ def simulate(
         week = setup.week_of(day)
         if week is None:
             continue
+        if setup.spec is not None and (made is None or made.number != week.number):
+            # A new week: the stake of each seat that reads or counts one, from the weeks
+            # finished before it, once (a league whose bracket is not read has none: a seat
+            # that reads one is refused where it decides, ``policy.stake_of``).
+            states = [
+                replace(
+                    s,
+                    stakes={t: stk.level(setup.spec, s.totals, t, week.number) for t in staked[vi]},
+                )
+                if staked[vi]
+                else s
+                for vi, s in enumerate(states)
+            ]
         monday = day.weekday() == 0 and day != setup.start
         beliefs = w.beliefs_on(day)
         status, returns = w.status_on(day)
@@ -731,6 +917,7 @@ def simulate(
         before = [s.executed_by for s in states]
         # Who leaves a roster this morning waits from today (a waiver league's only).
         waiver = {"waiver": (day, setup.waiver_days)} if waiting else {}
+        was = list(states)
         if waiting:
             states = [
                 policy.clear_waivers(
@@ -753,8 +940,13 @@ def simulate(
         ]
         for vi, s in enumerate(states):
             tallies[vi].charge((made or week).number, before[vi], s.executed_by)
+            if stash:
+                tallies[vi].left(was[vi], s)
         if monday:
             states = [policy.new_week(s) for s in states]
+        # A round of the bracket is seeded on its first morning, each variant's from its own
+        # totals: the weeks finished before it (PR bracket).
+        states = [policy.seed_round(setup, s, week.number) for s in states]
         # From here on, the day's rosters: yesterday's moves are in, today's land tomorrow.
         seats = [
             {t: tables.of(label, s) for t, label in h.items()}
@@ -770,7 +962,7 @@ def simulate(
                 strat = variants[vi].get(team)
                 if strat is None or strat.kind == "static":
                     continue
-                key = (team, repr(strat), state.key())
+                key = decision_key(setup, state, team, strat, week.number)
                 if key in cache:
                     decision = cache[key]
                     shared[vi] += decision.solves
@@ -781,6 +973,9 @@ def simulate(
                     cache[key] = decision
                     solves[vi] += decision.solves
                 decided[team] = decision
+                if stash and decision.source in policy.TIERS:
+                    # Before today's queue: the claims open are those placed on earlier days.
+                    tallies[vi].reading(team, decision.returning, state)
                 tallies[vi].decided(team, decision)
                 state = policy.queue(
                     state,
@@ -792,6 +987,20 @@ def simulate(
                     spots,
                     setup,
                 )
+                if decision.plan_leads:
+                    # The queue took a plan (PR E): the steps of it queued today, as a free
+                    # agent's add for the morning or as a claim placed.
+                    placed = sum(1 for c in state.claims.get(team, ()) if c.placed == day)
+                    tallies[vi].took(team, len(state.pending.get(team, ())) + placed)
+                if decision.union is not None:
+                    # The union pool's counts (PR pool) read which of the set's own moves the
+                    # seat sent today, the day's cap and the week's adds applied: a free
+                    # agent's add for the morning, or a claim placed. A plan's step is not one.
+                    mine = {(m.add, m.drop) for m in decision.moves}
+                    sent = [*state.pending.get(team, ())]
+                    sent += [c.move for c in state.claims.get(team, ()) if c.placed == day]
+                    adds = {m.add for m in sent if (m.add, m.drop) in mine}
+                    tallies[vi].searched(team, decision.union, adds)
             states[vi] = state
             lineup = {
                 t: policy.starters_of(setup, state, t, day, status, values[vi].get(t, value))
@@ -870,18 +1079,27 @@ def _metrics(summary: Mapping[str, Any] | None) -> dict[str, float | None]:
 
 
 def _counted(arms: Sequence[Arm], seated: Mapping[int, Arm]) -> dict[int, tuple[str, ...]]:
-    """What a run of ``arms`` counts on the seats ``seated`` (an arm by team): the fields any of
-    the run's arms sets (:func:`counted_of`), on each seat whose arm is on a tier that builds a
-    union pool (``policy.UNION_TIERS``), so the arm at 0 shows its zeros beside the other's;
-    empty when none is set. A rival's seat counts none."""
+    """What a run of ``arms`` counts on the seats ``seated`` (an arm by team), name by name
+    (:func:`counted_of`): the season fields any of the run's arms names, on each seat whose
+    arm's tier reads them (``policy.GUARDED_TIERS``); and ``guard_pool`` when any arm sets it
+    (PR pool), on each seat whose arm is on a tier that builds a union pool
+    (``policy.UNION_TIERS``), so the arm at 0 shows its zeros beside the other's. Empty when
+    none is named or set. A rival's seat counts none."""
     names = counted_of(arms)
-    if not names:
-        return {}
-    return {t: names for t, arm in seated.items() if arm.tier in policy.UNION_TIERS}
+    out: dict[int, tuple[str, ...]] = {}
+    for t, arm in seated.items():
+        mine = tuple(
+            name
+            for name in names
+            if arm.tier in (policy.UNION_TIERS if name == "guard_pool" else policy.GUARDED_TIERS)
+        )
+        if mine:
+            out[t] = mine
+    return out
 
 
 def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
-    other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields)
+    other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields, arm.bid)
     return {t: other for t in setup.teams if t != me}
 
 
@@ -956,7 +1174,13 @@ def paired(
     scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
     counted = _counted([a, b], {me: a}), _counted([a, b], {me: b})
     ra, rb = simulate(
-        setup, w, [va, vb], [a.execute_plan, b.execute_plan], on_day=on_day, counted=counted
+        setup,
+        w,
+        [va, vb],
+        [a.execute_plan, b.execute_plan],
+        on_day=on_day,
+        stash=stash_named((a, b)),
+        counted=counted,
     )
     return _pair_result(setup, ra, rb, me, scale)
 
@@ -979,10 +1203,31 @@ def paired_apart(
     va = {**opponents_of(setup_a, a, me), me: a.seat()}
     vb = {**opponents_of(setup_b, b, me), me: b.seat()}
     scale = {"a": scale_on(setup_a, w_a, a, me), "b": scale_on(setup_b, w_b, b, me)}
+    stash = stash_named((a, b))
     counted = _counted([a, b], {me: a}), _counted([a, b], {me: b})
-    (ra,) = simulate(setup_a, w_a, [va], [a.execute_plan], on_day=on_day, counted=counted[:1])
+    # One run, two seasons: both arms' rows carry the queue's counts when either takes the rule.
+    queued = queue_named([va, vb])
+    (ra,) = simulate(
+        setup_a,
+        w_a,
+        [va],
+        [a.execute_plan],
+        on_day=on_day,
+        stash=stash,
+        counted=counted[:1],
+        queue_counts=queued,
+    )
     second = None if on_day is None else (lambda r: on_day(replace(r, variant=1)))
-    (rb,) = simulate(setup_b, w_b, [vb], [b.execute_plan], on_day=second, counted=counted[1:])
+    (rb,) = simulate(
+        setup_b,
+        w_b,
+        [vb],
+        [b.execute_plan],
+        on_day=second,
+        stash=stash,
+        counted=counted[1:],
+        queue_counts=queued,
+    )
     rb = replace(rb, breaches=tuple(replace(x, variant=1) for x in rb.breaches))
     return _pair_result(setup_a, ra, rb, me, scale)
 
@@ -1052,6 +1297,7 @@ def room(
         [variant],
         [any(arms[n].execute_plan for n in seats)],
         on_day=on_day,
+        stash=stash_named(arms.values()),
         counted=[counted],
     )
     by_arm: dict[str, list[dict[str, float | None]]] = {}
@@ -1504,21 +1750,27 @@ def draft_boards(
     cats: Sequence[str],
     points: Mapping[str, float] | None = None,
 ) -> dict[int, list[int]]:
-    """Each seat's board under ``draft`` (#172, PR D4a): a seat ``draft.seats`` names drafts on
-    its own forecaster's per-game values on draft day (over the league's ``players`` it
-    projects, as the run's ``value`` is over the run's; in a points league on ``points``, PR
-    D4c), every other seat on a rival's board
-    (``adp.rival_board``) drawn from its own generator on the path's ``(seed, path)`` and the
-    ``draft`` stream, so two leagues on one path meet the same rivals' boards."""
+    """Each seat's board under ``draft`` (#172, PR D4a). A seat ``draft.seats`` does not name
+    drafts on a rival's board (``adp.rival_board``) drawn from its own generator on the path's
+    ``(seed, path)`` and the ``draft`` stream, so two leagues on one path meet the same rivals'
+    boards. A seat it names holds an arm, valued on its own forecaster's per-game values on
+    draft day (over the league's ``players`` it projects, as the run's ``value`` is over the
+    run's; in a points league on ``points``, PR D4c), and drafts by ``draft.rule`` (the draft
+    PR): under ``adp.OWN_DRAFT`` on those values alone (``adp.seat_board``); under
+    ``adp.MARKET_DRAFT`` on the rival's board in its seat, on that seat's own draw, less the
+    players it has no value for (``adp.market_seat_board``)."""
     out: dict[int, list[int]] = {}
     for t in teams:
         own = draft.seats.get(t)
-        if own is None:
-            g = world.rng(draft.seed, draft.path, t, 0, world.STREAMS["draft"])
-            out[t] = adp.rival_board(draft.picks, draftable, value, draft.spread, g)
-        else:
+        mine = None
+        if own is not None:
             mine = wk.per_game_values({k: own[k] for k in own if k in players}, tuple(cats), points)
+        if mine is not None and draft.rule == adp.OWN_DRAFT:
             out[t] = adp.seat_board(mine, draftable)
+            continue
+        g = world.rng(draft.seed, draft.path, t, 0, world.STREAMS["draft"])
+        board = adp.rival_board(draft.picks, draftable, value, draft.spread, g)
+        out[t] = board if mine is None else adp.market_seat_board(board, mine)
     return out
 
 
@@ -1564,5 +1816,6 @@ __all__ = [
     "scale_on",
     "simulate",
     "split_beliefs",
+    "stake_refused",
     "unprojected",
 ]

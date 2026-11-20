@@ -1208,6 +1208,37 @@ The streaming plan turns over a weak spot; a week plan orders the week's moves o
   odds, the queue's index, `judged`, the floor and the seconds, so the choice can be replayed.
 - **Out of scope.** Plans across weeks; the Moves card's section is part 2b.
 
+## Your picks (#434)
+
+The user ruled on 2026-11-19 that we take chances on players who may outplay their projections,
+above all when the drop is a marginal player. A pick is a player the user names: the moves solve
+makes it, and the solver fills the adds left around it.
+
+- **Where.** In each league the pick names (all by default) where its player is available, on no
+  team and with a projection. A pick leaves a league once its player is on any team there, mine
+  included, and every league at its expiry (7 days unless set).
+- **The move.** `season.picks.forced`, on the roster the pending claims leave (#360): the pick
+  takes its add's effective day (a claim's clear day) and one add of that day's week, the picks
+  before it counted; a week with no add left skips it, and it waits for the next week's adds. Its
+  drop is the one the user named where that player is mine, else the option (an open spot, a held-slot
+  move, a drop or a churn) whose set with the picks before it scores best on the queue's score:
+  the week plus `three_weight` times the three weeks, the matchup odds in a playoff week. The keep
+  rule, Yahoo's can't-cut list, the held-slot logic, the stash threshold and the pending claims
+  apply as for any move: a named drop the keep rule keeps skips the pick. The season guard and the
+  noise floor do not: the pick is the user's call.
+- **The solve.** The picks made are folded into the problem like pending claims
+  (`season.picks.fold`): each add on my roster from its day, never a later move's drop or held-slot
+  move, its drop gone, and one add fewer in its week's limit. The keep rule is read again on that
+  roster. Every set, re-solve, plan, guard and comeback is then solved with the picks made. The
+  lineup and the roster views keep Yahoo's roster as read (`Built.real`).
+- **The record.** The moves payload's `picks` (only with a pick in force): `moves`, each with
+  `decided_by` `pick`, what it adds to the picks on each horizon (`marginal`) and to the queue's
+  score (`score`), its rest of the season, whether its drop is the one named, the user's bid and
+  its expiry; and `skipped`, each with why. The decision log adds the set `pick` after the others,
+  its moves logged on the roster before the picks, and `picks.skipped`. The Moves card shows them
+  as "Your picks"; the queue takes the set first (docs/AUTOPILOT.md, "Your picks"). With no pick in
+  force the payload and the log are today's, byte for byte.
+
 ## The breakout flag
 
 A pickup that might be a long-term asset deserves a sign on the card distinct from his
@@ -1285,6 +1316,102 @@ below its floor) after the flagged ones, with a dimmed "UNDER 0.6" tag there and
 opportunity score alone is still no flag. The Flags card sorts by level, then by score, and
 shows the signals that spoke as chips; the legend draws the same tags, a dimmed "under" sample
 and a meter at the add floor.
+
+### The lift (#435)
+
+The user ruled on 2026-11-19 that the moves take chances on players who may outplay their
+projections. A flagged available player is valued on a lifted line (`season/lift.py`), on a move
+that drops one of my marginal players or nobody:
+
+- **The factor.** The minutes move toward the recent minutes by the level's weight:
+  `M' = projected + w[level] × (recent − projected)`, where `recent` is the minutes signal's
+  7-day window when it has at least 2 games, else its 14-day one (the smaller of the two lags
+  exactly the role changes this is for). The factor is
+  `M' / projected`, never below 1: a flag never lowers a line. When the adds surge spoke, the
+  factor is at least `1 + floor[level]`, so the market alone lifts with no minutes gain.
+- **The line.** Every stat times the factor (a per-minute line at `M'`). Makes and attempts scale
+  alike, so the percentages are unchanged.
+- **Marginal.** My `lift_marginal` active players lowest by the keep rule's rest-of-season
+  per-game value, those it keeps left out (`moves.marginal_of`). A move dropping one of them, or
+  nobody (an open spot or a held-slot move), is lifted (`moves.is_lifted`). A churn's held drop,
+  a plan step's earlier add or any other player is not: the add plays on the plain line.
+- **Where.** The evaluator plays a lifted move's add on the lifted line (`moves.rates_with`), so
+  every horizon, search, re-solve, week plan, streaming plan and single swap sees the lift where
+  the rule allows it. The starters' order stays the plain values. The season guard's figure and
+  the log's (`decisions.move_projection`) take the lifted line too (`moves.line_of`). The keep
+  rule, the strategy engine's curves and the lineup views stay plain.
+- **The knobs**, the first guesses ruled live as the code's defaults (`lift.DEFAULTS`):
+  `lift_weight_watch` 0.5, `lift_weight_add` 0.75, `lift_weight_must_add` 1.0 (0 to 1);
+  `lift_floor_watch` 0.10, `lift_floor_add` 0.15, `lift_floor_must_add` 0.25 (0 to 0.5);
+  `lift_marginal` 3 (0 to 10). Stronger than a plain move would take, since the lift applies only
+  against a marginal drop. The knob file may set any of them in force or per league; the
+  Monday step never steps them, and they stay out of `LIVE_KNOBS` so the simulator's arms are
+  unchanged until it tunes them (#172). Every weight and floor at 0, or no marginal player, lifts
+  nothing: the moves as before #435.
+- **The record.** A lifted move carries `lift: {factor, level, signals}` on its candidate row, its
+  recommended row and its logged move. The payload and the decision log entry gain `lift` (the
+  knobs, my marginal players and each lifted candidate's lift) only in a league with a lifted
+  candidate. The Moves card says "lifted by its flag (x1.38, add)" on such a row. The digest is
+  unchanged.
+- **The bid.** A lifted move's queue entry carries its `lift`, and it bids as a flagged claim
+  (its base at least one typical) with no x2 or x3 flag factor: the flag counts once, in the
+  gain (`autopilot.bid_of(..., lifted=True)`, the master's ruling of 2026-11-19). A flagged add
+  whose move is not lifted keeps its factor.
+- **The flags read.** The build takes the league's flags (`SeasonService._flags`); the moves stamp
+  carries the flags' inputs, so a new buzz day or past-days export solves again. A flag read that
+  fails leaves the solve without the lift.
+
+### The add reserve and the re-cut rule (#436)
+
+The user ruled on 2026-11-19 that adds and recent adds should not go cheaply: six of nine public
+leagues had used the week's adds by Thursday when a breakout came free. Two rules
+(`season/reserve.py`) hold with the season guard in every search, re-solve, streaming plan, week
+plan and strategy weight (`reserve.both`, the `allowed` they already take):
+
+- **The reserve.** Before the week's release day (`reserve_release`, a weekday; from that day on
+  the reserve is free) a set may use the week's last `reserve_adds` adds only through moves that
+  add more than the price to the set on the queue's own score (the week plus `three_weight` times
+  the three weeks; the matchup odds in a playoff week), or whose add carries an `add` or
+  `must-add` flag. A move lifted by a `watch` flag (#435) gets no exemption. The moves that use
+  the held adds are the set's lowest-scoring ones of the week, so the rule reads the same in any
+  order. The user's picks (#434) are folded before the search and count toward the week's adds;
+  they are never refused.
+- **No quick re-cut.** A move dropping a player I added within `recut_days` days (my adds in the
+  league's transactions, `moves.when_date`) is allowed only when it adds more than the price, or
+  when that player is out (an O, a status that keeps a player out of every week, or a held slot).
+  A pick's drop is never refused. A set's own earlier add counts as added on its move's day
+  (the master's review): a streaming chain's or week plan's later step dropping it within the
+  days pays the price too, so a plan never counts on a chain the queue refuses on the later
+  step's day. A move a later step needs (its add is that step's drop) is worth what it adds to
+  the moves before its day.
+- **What a move adds.** The set's value on the queue's score less the set's without the move
+  (`reserve.worths`); the solve and the queue compare the same number to the price.
+- **The price.** `reserve_price` when set, else the typical recommended gain the bid policy scales
+  by (`autopilot.typical_gain`): the armed public leagues of the same scoring, their logged
+  recommended moves of the fortnight up to yesterday (`SeasonService._typical`, cached a day; not
+  in the moves stamp, so today's logged solves never move it), the plan floor until ten such
+  moves exist.
+- **The knobs**, the master's first guesses as the code's defaults (`reserve.DEFAULTS`):
+  `reserve_adds` 1 (0 to 3), `reserve_release` `friday` (its solves place claims that land on
+  Saturday), `reserve_price` none (the typical gain), `recut_days` 3 (0 to 14). Like the lift's,
+  they stay out of `LIVE_KNOBS` (the simulator tunes them later, #172), and the Monday step never
+  steps them. `reserve_adds` and `recut_days` both 0 apply nothing: the moves as before #436.
+- **The record.** The payload and the decision log entry gain `reserve` (the knobs, the week held
+  and its adds, how many are held, the price, the exempt adds, my players added within the
+  re-cut days and those of them out) only when a rule applies (`recut_days` above 0 is enough).
+  A horizon whose set a rule held back carries `reserve` with the set without the rules
+  (`held_back`, its moves, its gain, what this one forgoes, the rule and the move that refused
+  it, the price). The log's three sets and the week plan the queue takes carry `reserve.adds`,
+  each move's worth as the solve computed it, with the held-back set when there is one. A streaming plan the rules refuse says so (`reason` `reserve`). The
+  Moves card says what is held ("One add held for the week's reserve until Fri; P added Wed Nov
+  18 (only for more than 0.30)") and what was held back.
+- **The queue.** The build reads the solve's logged `reserve` and leaves out, after the noise
+  floor, a move that would use one of the week's held adds (its week's adds left at or under the
+  held count) or re-cut a recent add who is not out, for no more than the price, on the move's
+  logged `adds` (what its bid scales by, a three-weeks move's gain or a plan step's score, only
+  for an entry logged without it); it counts the adds left on its own. Reasons `held for the week's
+  reserve` and `added within the re-cut days`, the entry's `reserve` giving its worth, the price
+  and the days. A pick's own entry is never refused, and its add counts first.
 
 ## The trade evaluator
 
