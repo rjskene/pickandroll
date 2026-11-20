@@ -1353,10 +1353,11 @@ The family is one pure function, `bid_policy.amount`, of the block and of one fr
    worth more than nothing (item 1's value above 0) bids every dollar left (no `faab_sizing`;
    then the caps and the clamp), and one worth nothing or less bids `routine`. A pace so far
    ahead of its path at so large a `k` that the power, or its product with the value, is beyond
-   a float has no bound either, and bids the same way. With no `pace`
-   named, or at `k` 0, `p` is 1 and no calendar is read. In a league whose bracket is not read
-   the whole season is the regular season: the path has no straight line and ends at `reserve`,
-   so a reserve there is dollars never spent, the arm's own choice.
+   a float has no bound either, and bids the same way. With no `pace` named, or at `k` 0, `p`
+   is 1 and no calendar is read. In a league whose bracket is not read the whole season is the
+   regular season: the path has no straight line and falls towards `reserve` without reaching
+   it (`t` is still below 1 on the season's last day), so a reserve there is dollars never
+   spent, the arm's own choice.
 3. **The base** is `v × p`, rounded half up. At 1 or less the claim is routine and bids `routine`
    dollars.
 4. Otherwise the amount is the base times `faab_sizing`, rounded half up, as the live rule.
@@ -1721,10 +1722,11 @@ mechanism counts.
   the two arms played one season, and its difference is zero by construction. Both arms play
   one world, so equal counts with an outcome that differs is a lever that changed which moves
   were made, not how many; it did something, and the row keeps both facts (`counts_equal`,
-  `outcomes_equal`). One count is set aside in that comparison: `value_won`, what a seat's won
-  claims were sized on (`screen.SIZED_ON`, PR F2). A weight of the `bid` block moves it by
-  itself, whatever the arm then bids, so two arms apart in it alone placed the same claims at
-  the same bids and played one season. The record keeps it in both arms' rows.
+  `outcomes_equal`). "Did nothing" compares the outcomes and the counts, less the counts that
+  part by construction between two arms (`screen.SIZED_ON`): `value_won`, what a seat's won
+  claims were sized on (PR F2). A weight of the `bid` block moves it by itself, whatever the
+  arm then bids, so two arms apart in it alone placed the same claims at the same bids and
+  played one season. The record keeps it in both arms' rows.
 - The table prints every row in the list's order, then the survivors.
 
 **What a screen cannot say.** One season, one forecaster and forty-eight paths by default, and a

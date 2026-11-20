@@ -87,11 +87,13 @@ RULE = (
     "construction) and does not survive; advisory: a survivor is a candidate for the tune, not "
     "a finding"
 )
-#: The counts "did nothing" sets aside (:func:`result_of`): what a seat's bids were sized on,
-#: not what its season did. ``value_won`` (PR F2, ``counts.PACING``) is the summed value in
-#: typicals of the claims a seat won, which a weight of the bid block moves by itself, whatever
-#: the arm then bids: two arms apart in it alone placed the same claims at the same bids and
-#: played one season. The record keeps it in both arms' rows as every other count.
+#: The counts "did nothing" sets aside (:func:`result_of`): those that part by construction
+#: between two arms, so are no count of what a season did. One tuple: a count of that kind is
+#: added here. ``value_won`` (PR F2, ``counts.PACING``) is the summed value in typicals of the
+#: claims a seat won, measured in the arm's own weights: a weight of the bid block moves it by
+#: itself, whatever the arm then bids, and two arms apart in it alone placed the same claims at
+#: the same bids and played one season. The record keeps it in both arms' rows as every other
+#: count.
 SIZED_ON = ("value_won",)
 #: The measures by name, for the table.
 MEASURE_WORDS = {"matchup_wins": "matchup wins", "category_wins": "category wins"}

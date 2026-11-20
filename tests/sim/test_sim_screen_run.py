@@ -799,7 +799,8 @@ def test_a_bid_lever_is_listed_and_not_played_where_waivers_carry_no_bid(data: P
 def test_a_replay_says_an_arm_s_bid_before_any_path_and_refuses_one_nobody_reads(data: Path):
     """The command's words for a pair whose arm B names a ``bid`` (PR F2), on a dry run: the
     line is ``replay_plan``'s, which a run and the no-peek check print too. By FAAB it says the
-    block in words, and nothing of arm A, which names none. By priority two arms apart only on
+    block in words, and nothing of arm A, which names none; the no-peek check of the same pair
+    says the same line before its own, and writes nothing. By priority two arms apart only on
     the block are one seat, refused by name before any path; apart on the pool too, the pair is
     planned and the line says why its league does not read the block."""
     block = {"routine": 1, "pace": {"k": 1, "shape": 1, "reserve": 0.2}}
@@ -811,9 +812,9 @@ def test_a_replay_says_an_arm_s_bid_before_any_path_and_refuses_one_nobody_reads
         files[key].write_text(json.dumps(spec))
     before = folders(data)
 
-    def dry(b: str, *flags: str) -> tuple[int, str]:
+    def dry(b: str, *flags: str, how: tuple[str, ...] = ("--dry-run",)) -> tuple[int, str]:
         argv = ["--data", str(data), "--rooms", "0", "replay", "--seasons", "2024", "--seed", "5"]
-        argv += ["--workers", "1", "--paths", "1", *flags, "--dry-run"]
+        argv += ["--workers", "1", "--paths", "1", *flags, *how]
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             code = ss.main([*argv, "--arms", str(files["a"]), str(files[b])])
@@ -825,6 +826,13 @@ def test_a_replay_says_an_arm_s_bid_before_any_path_and_refuses_one_nobody_reads
     assert code == 0, out
     assert f"bid policy, arm B (P): {words}\n" in out and "bid policy, arm A" not in out
     assert "not read in this run" not in out and "dry run, nothing written" in out
+    # The no-peek check says it too, before the check's own lines.
+    faab = ("--waivers", "faab", "--waiver-rule", "continuous")
+    code, out = dry("b", *faab, how=("--no-peek", "2023-10-30"))
+    assert code == 0, out
+    said, check = f"bid policy, arm B (P): {words}\n", "no-peek check on 2023-10-30"
+    assert said in out and check in out and out.index(said) < out.index(check)
+    assert "bid policy, arm A" not in out and "nothing written" in out
     code, out = dry("b", "--waivers", "priority")
     assert code == 2, out
     assert (
