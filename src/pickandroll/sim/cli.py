@@ -1515,7 +1515,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 19 since the bracket's rounds (#172, PR bracket), 18
+#: The replay's version in its payload: 20 since the union pool as an arm's choice (#172, PR
+#: pool), 19 since the bracket's rounds (#172, PR bracket), 18
 #: since the bid policy (#172, PR F2), 17 since the
 #: queue's rule (#172, PR E), 16 since the season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
@@ -1535,8 +1536,17 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 19
+REPLAY_VERSION = 20
 REPLAY_VERSION_WHY = (
+    "20: the union pool as an arm's choice: an arm may set a fifth field, guard_pool, the size "
+    "of the guard's list (0, the default, is off); above 0, while the arm's guard blocks, the "
+    "exact tier's three weeks' set, its weighted search and under the queue's rule its week's "
+    "set are searched among the engine's union pool (season.pool: the best pool adds by single "
+    "move, then the adds whose best single move the season guard admits), as live searches "
+    "since #424; an arm's fields and its reads table carry guard_pool only above 0, and a run "
+    "in which an arm on the exact tier sets it adds five counts on its arms' seats on the "
+    "exact tier (union_days, union_admitted, union_admitted_days, union_taken_days, "
+    "union_head_refused_days); with the field left off the figures are version 19's. "
     "19: the bracket's rounds: in a week of the bracket a seat's problem reads its round's "
     "opponent, seeded that morning from the variant's own totals as the season's end seeds it "
     "(before, the week had no opponent and was worth nothing): the weighted set weighs the "

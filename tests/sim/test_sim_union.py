@@ -1450,3 +1450,26 @@ def test_the_screen_plays_the_row_on_the_exact_tier_and_reads_did_nothing_by_the
     assert result["counts_equal"] and result["outcomes_equal"] and result["did_nothing"]
     assert not result["survives"]
     assert "guard_pool-30: did nothing (" in out
+
+
+def test_the_versions_say_the_union_pool():
+    """The replay's reason names what a reader of an older record must know: the field and its
+    default, which searches take the union and when, what a record carries, and whose figures
+    are the version before's. The screen's version moved with its list."""
+    why = ss.REPLAY_VERSION_WHY
+    assert ss.REPLAY_VERSION >= 20 and "20: the union pool as an arm's choice: " in why
+    mine = why.split("20: the union pool as an arm's choice: ")[1].split("19: the bracket's ")[0]
+    for said in (
+        "guard_pool",
+        "0, the default, is off",
+        "while the arm's guard blocks",
+        "three weeks' set",
+        "weighted search",
+        "under the queue's rule its week's set",
+        "season.pool",
+        "only above 0",
+        *UNION_KEYS,
+    ):
+        assert said in mine, said
+    assert "with the field left off the figures are version 19's" in mine
+    assert sc.SCREEN_VERSION >= 6
