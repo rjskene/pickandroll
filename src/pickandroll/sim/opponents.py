@@ -8,8 +8,9 @@ a waiver league the best it may add and the weakest it may drop, :class:`Market`
 league it bids by an assumed form, ``policy.rival_bid``, or on the price book, ``bids.book_bid``,
 PR Fd). Its view is the draft day's all season, or the season's that morning (``view``), and it
 may pick among its best few (``among``), PR Fd.
-**Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
-whole but for the stash threshold, which a rival keeps at None, PR G: at the defaults nothing
+**Mirror** runs the surrogate on the shared beliefs with the arm's knobs and its four fields
+(but for the stash threshold, which a rival keeps at None, PR G), never its guard or its stake
+(the guard PR: a rival stays on the block; at the defaults nothing
 changes; in a FAAB league it bids by the live rule on them, or by the arm's ``bid`` policy when it
 names one, PR F2). **Seat** is the equal room's: a named arm in another
 seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
@@ -236,7 +237,13 @@ class Seat:
     mirror seats hold the run's. The label is part of the seat, so of the runner's decision
     cache's key: two seats on different forecasters share no decision. ``bid`` is the arm's bid
     policy when it names one (PR F2, ``bid_policy.BidPolicy``; None bids by the live rule
-    itself), part of the seat too."""
+    itself), part of the seat too.
+
+    Its guard and its stake (the guard PR, ``policy.SEASON_FIELDS``) are the values in force,
+    the block and no stake unless the arm says otherwise: an arm that names the defaults is the
+    seat of one that names nothing. Only an arm's own seat carries them: a mirror rival runs
+    the surrogate on the arm's knobs under the block, with no stake. The bid policy reads the
+    season figure with no stake (``policy.with_bid``)."""
 
     name: str
     tier: str
@@ -245,6 +252,8 @@ class Seat:
     with_plan: bool = True
     fields: policy.Fields = policy.DEFAULT_FIELDS
     forecaster: str | None = None
+    guard: str = policy.BLOCK
+    stake: float = 0.0
     kind: str = "seat"
     bid: bp.BidPolicy | None = None
 
@@ -265,6 +274,7 @@ class Seat:
         )
         if built is None:
             return policy.NONE
+        built = policy.guarded(built, setup, state, self.guard, self.stake)
         decision = policy.decide(built, self.tier, self.executes, self.with_plan, self.fields)
         return policy.with_bid(built, decision, self.bid)
 

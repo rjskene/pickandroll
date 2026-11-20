@@ -428,4 +428,6 @@ def test_the_screen_s_rows_of_each_pr_keep_the_other_s_setting_in_both_arms():
             assert a.knobs["stash_threshold"] == b.knobs["stash_threshold"] == 0.5
             assert a.bid != b.bid
     assert sorted(got["stash_threshold-0"].values.items()) == [("a", 0.5), ("b", 0.0)]
-    assert not set(sc.SIZED_ON) & set(ct.STASH) and set(sc.SIZED_ON) <= set(ct.BIDS)
+    # The stash count is no count that parts by construction; the bid policy's value won is.
+    assert not set(ct.APART_BY_CONSTRUCTION) & set(ct.STASH)
+    assert "value_won" in ct.APART_BY_CONSTRUCTION and "value_won" in ct.BIDS

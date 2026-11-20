@@ -5,6 +5,7 @@ is played here: the command is ``test_sim_screen_run.py``'s."""
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -67,14 +68,14 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
     return (
         {k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]}
         | {f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)}
-        | {k for k in ARM_KEYS if getattr(a, k) != getattr(b, k)}
+        | {k for k in (*ARM_KEYS, *policy.SEASON_FIELDS) if getattr(a, k) != getattr(b, k)}
         | {n for n in BID_NAMES if sc.value_of(a, n) != sc.value_of(b, n)}
     )
 
 
 # --------------------------------------------------------------------------- the list
 def test_the_list_is_written_in_the_code_and_is_the_brief_s():
-    assert sc.SCREEN_VERSION == 2
+    assert sc.SCREEN_VERSION == 3
     assert sc.NAMES == (
         "protection_floor",
         "daily_cap",
@@ -94,6 +95,8 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "execute_plan",
         "system",
         "blend",
+        "guard",
+        "stake",
         *BID_NAMES,
     )
     exact = {lever.name for lever in sc.LEVERS if lever.tier == "exact"}
@@ -652,8 +655,8 @@ def test_a_lever_did_nothing_when_both_arms_played_one_season_on_every_path():
     assert got["counts_equal"] and got["outcomes_equal"] and got["did_nothing"]
     assert not got["survives"]
     assert sc.result_words(got) == (
-        "did nothing (both arms' counts and outcomes are equal on every path): matchup wins "
-        "+0.000 (SE 0.000) over 4 paths"
+        "did nothing (both arms' counts and outcomes are equal on every path, less the counts "
+        "that part by construction between two arms): matchup wins +0.000 (SE 0.000) over 4 paths"
     )
     # The same counts with an outcome that differs on a path: the lever changed which moves were
     # made, not how many. It did something, and it survives when it clears the bar.
@@ -670,6 +673,114 @@ def test_a_lever_did_nothing_when_both_arms_played_one_season_on_every_path():
     assert sc.result_of(flat, [path(delta=None)], "matchup_wins")["did_nothing"]
 
 
+#: The rule's clause for the counts "did nothing" sets aside, wherever the rule is said.
+LESS = "less the counts that part by construction between two arms"
+#: The count keys of the groups the counts module defines today, in the payload's order.
+COUNT_KEYS = (
+    *ct.METRICS,
+    *ct.CLAIMS,
+    *ct.BIDS,
+    *ct.STASH,
+    *(m for group in ct.SEASON.values() for m in group),
+)
+
+
+def test_did_nothing_sets_aside_the_counts_that_part_by_construction_and_no_other():
+    """The one declaration (``counts.APART_BY_CONSTRUCTION``, beside the keys' definition): a
+    count that parts between two arms by construction and is no difference of the season. A
+    pair apart only in a declared count did nothing. A pair apart in any other count did
+    something, whatever its declared counts hold. A declared count sets no outcome aside.
+
+    The guard's count of decided sets is declared (the guard PR): the arm on the block has
+    none by construction, and a set the other arm decided past the guard and never queued is
+    no difference in the season."""
+    flat = pair({("2024", "prior"): {}})
+    cleared = pair({("2024", "prior"): {"matchup_wins": (0.9, 0.1)}})
+    guard = [path(a={"sets_past_guard": 0.0}, b={"sets_past_guard": 2.0}), path()]
+    assert sc.result_of(flat, guard, "matchup_wins")["did_nothing"]
+    declared = ct.APART_BY_CONSTRUCTION
+    # Each declared key is one the payload's order knows (``counts.metrics_in``).
+    assert declared and set(declared) <= set(ct.metrics_in([dict.fromkeys(declared, 0.0)]))
+    for key in declared:
+        apart = {"a": {key: 0.0}, "b": {key: 3.0}}
+        only = sc.result_of(flat, [path(), path(**apart)], "matchup_wins")
+        assert only["counts_equal"] and only["outcomes_equal"] and only["did_nothing"]
+        assert not only["survives"] and LESS in sc.result_words(only)
+        # It is set aside on a path where the other counts moved alike, too.
+        alike = path(a={key: 0.0, "landed": 5.0}, b={key: 3.0, "landed": 5.0})
+        assert sc.result_of(flat, [alike], "matchup_wins")["did_nothing"]
+        # An outcome apart is something done, with the declared count apart or not.
+        odd = sc.result_of(cleared, [path(**apart, delta=1.0)], "matchup_wins")
+        assert odd["counts_equal"] and not odd["outcomes_equal"]
+        assert not odd["did_nothing"] and odd["survives"]
+        # Another count apart beside it is something done.
+        more = path(a={key: 0.0}, b={key: 3.0, "gone": 1.0})
+        got = sc.result_of(cleared, [path(**apart), more], "matchup_wins")
+        assert not got["counts_equal"] and not got["did_nothing"] and got["survives"]
+    others = [k for k in COUNT_KEYS if k not in declared]
+    assert set(ct.METRICS) <= set(others) and len(others) > len(ct.METRICS)
+    for key in others:
+        got = sc.result_of(flat, [path(), path(a={key: 0.0}, b={key: 1.0})], "matchup_wins")
+        assert not got["counts_equal"] and not got["did_nothing"], key
+        # A count one arm's row has and the other's has not is a difference as well.
+        lone = {"counts": {"a": {}, "b": {key: 0.0}}, "delta": dict.fromkeys(rn.METRICS, 0.0)}
+        got = sc.result_of(flat, [lone], "matchup_wins")
+        assert not got["counts_equal"] and not got["did_nothing"], key
+
+
+def test_the_screen_reads_the_declaration_and_names_no_count(monkeypatch):
+    """``screen.result_of`` reads the tuple where the keys are defined, at the time it is
+    asked: a key a later PR appends is set aside by that one line, and with nothing declared
+    every count is compared, as before the declaration. Rows that hold no declared count are
+    judged the same whatever the tuple holds. Both arms' counts are recorded whole either way.
+    No declared key is written in ``screen.py``, and the rule's clause names none: it is part
+    of the rule whatever the tuple holds."""
+    flat = pair({("2024", "prior"): {}})
+    source = inspect.getsource(sc)
+    assert "ct.APART_BY_CONSTRUCTION" in source
+    assert not [k for k in ct.APART_BY_CONSTRUCTION if k in source]
+    assert LESS in " ".join(sc.RULE.split()) and LESS in " ".join((sc.__doc__ or "").split())
+    key = ct.APART_BY_CONSTRUCTION[0]
+    declared = [path(a={key: 0.0}, b={key: 3.0})]
+    plain = {
+        "same": [path(), path(a={"landed": 5.0}, b={"landed": 5.0})],
+        "moved": [path(), path(b={"gone": 1.0})],
+        "outcome": [path(), path(delta=1.0)],
+    }
+
+    def read(paths) -> tuple[bool, bool, bool]:
+        got = sc.result_of(flat, paths, "matchup_wins")
+        return got["counts_equal"], got["outcomes_equal"], got["did_nothing"]
+
+    before = {name: read(paths) for name, paths in plain.items()}
+    assert before == {
+        "same": (True, True, True),
+        "moved": (False, True, False),
+        "outcome": (True, False, False),
+    }
+    assert read(declared) == (True, True, True)
+    words = sc.result_words(sc.result_of(flat, declared, "matchup_wins"))
+    # The record keeps both arms' counts by cell as the pair's record holds them.
+    kept = sc.result_of(flat, declared, "matchup_wins")["cells"]["2024"]["prior"]["counts"]
+    assert kept == {side: flat["counts"]["by_season"]["2024"]["prior"][side] for side in "ab"}
+    # One line more in the tuple, and the screen sets that count aside too.
+    made_up = [path(b={"a_count_a_later_pr_brings": 1.0})]
+    assert read(made_up) == (False, True, False)
+    with monkeypatch.context() as mp:
+        mp.setattr(
+            ct, "APART_BY_CONSTRUCTION", (*ct.APART_BY_CONSTRUCTION, "a_count_a_later_pr_brings")
+        )
+        assert read(made_up) == (True, True, True) == read(declared)
+        assert {name: read(paths) for name, paths in plain.items()} == before
+    # Nothing declared: every count is compared, and the rule's words are the same.
+    with monkeypatch.context() as mp:
+        mp.setattr(ct, "APART_BY_CONSTRUCTION", ())
+        assert read(declared) == (False, True, False)
+        assert {name: read(paths) for name, paths in plain.items()} == before
+        same = sc.result_of(flat, plain["same"], "matchup_wins")
+        assert sc.result_words(same) == words and LESS in words
+
+
 def test_a_pair_apart_only_in_the_value_its_claims_were_sized_on_did_nothing():
     """``value_won`` (PR F2) is what a seat's won claims were sized on, in typicals: for the
     bid's weight on the week or on the season it restates the lever's own setting, whatever the
@@ -683,7 +794,8 @@ def test_a_pair_apart_only_in_the_value_its_claims_were_sized_on_did_nothing():
     got = sc.result_of(flat, [path(), path(a=a, b=b)], "matchup_wins")
     assert got["counts_equal"] and got["outcomes_equal"] and got["did_nothing"]
     assert not got["survives"] and sc.result_words(got).startswith("did nothing (")
-    assert sc.SIZED_ON == ("value_won",) and set(sc.SIZED_ON) <= set(ct.BIDS)
+    # It is declared with the counts that part by construction (the one declaration).
+    assert "value_won" in ct.APART_BY_CONSTRUCTION and "value_won" in ct.BIDS
     # The record keeps the count in both arms' rows, as every other.
     assert set(got["cells"]["2024"]["prior"]["counts"]) == {"a", "b"}
     for key, count in bids.items():

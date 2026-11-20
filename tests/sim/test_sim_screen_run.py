@@ -22,6 +22,7 @@ import pytest
 from pickandroll.sim import audit, policy, shapes
 from pickandroll.sim import bid_policy as bp
 from pickandroll.sim import cli as ss
+from pickandroll.sim import counts as ct
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
@@ -140,7 +141,7 @@ def test_every_flag_of_a_run_s_cells_and_world_is_a_key_of_the_screen_s_spec():
 
 def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: Path, whole):
     rec, out = whole
-    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 2)
+    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 3)
     assert rec["note"] == ss.SCREEN_NOTE and rec["rule"] == sc.RULE
     assert rec["measure"] == "matchup_wins" and rec["hold_out"] == 2025
     assert len(rec["fit_sha"]) == 64 and rec["fit_file"].endswith("fit.json")
@@ -152,7 +153,7 @@ def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: 
     }
     # The spec: the baseline verbatim, the levers in the list's order, the world's flags.
     spec = rec["spec"]
-    assert spec["arm"] == BASE and spec["screen_version"] == 2 and spec["fit_sha"] == rec["fit_sha"]
+    assert spec["arm"] == BASE and spec["screen_version"] == 3 and spec["fit_sha"] == rec["fit_sha"]
     assert spec["replay_version"] == ss.REPLAY_VERSION
     assert set(spec) == {"screen_version", "replay_version", "arm", "levers", "world", "fit_sha"}
     assert spec["levers"] == ["protection_floor", "weeks_ahead", "surrogate_days", "system"]
@@ -216,7 +217,10 @@ def test_a_lever_that_cannot_matter_did_nothing_and_one_that_can_moved_the_count
     cell = idle["cells"]["2024"]["prior"]
     assert all(d["mean"] == 0.0 for d in cell["difference"].values() if d["mean"] is not None)
     assert cell["counts"]["a"] == cell["counts"]["b"]
-    assert "did nothing (both arms' counts and outcomes are equal on every path)" in whole[1]
+    assert (
+        "did nothing (both arms' counts and outcomes are equal on every path, less the counts "
+        "that part by construction between two arms): "
+    ) in whole[1]
     moved = rows["surrogate_days-monday"]["result"]
     assert not moved["did_nothing"] and not moved["counts_equal"]
     counts = moved["cells"]["2024"]["prior"]["counts"]
@@ -237,7 +241,7 @@ def test_a_pair_s_record_is_a_replay_s_with_one_screen_block(data: Path, whole):
     row = rows_of(rec)["surrogate_days-monday"]
     assert got["screen"] == {
         "name": "whole",
-        "screen_version": 2,
+        "screen_version": 3,
         **{k: v for k, v in row.items() if k != "file"},
     }
     assert got["screen"]["both"] == {} and got["screen"]["tier"] == "surrogate"
@@ -787,7 +791,7 @@ def test_the_bid_s_week_pair_and_its_season_pair_part_by_a_size_on_a_found_path(
     What this shows, and what it does not (found in review). Each row did something here: its
     arm B spends other dollars than the baseline, and the row is not "did nothing". But the two
     rows part from each other in the value their claims were sized on alone, a count no
-    decision reads (``screen.SIZED_ON``): in this league of three weeks the two sizes round to
+    decision reads (declared in ``counts.APART_BY_CONSTRUCTION``): in this league of three weeks the two sizes round to
     one dollar on every claim, so the two arms B play one season and the screen reports one
     outcome under two names. No dollar parted on any of the eight seeds tried (1 to 8, both
     formats; the handoff). A dollar that parts between the two weights is
@@ -814,7 +818,8 @@ def test_the_bid_s_week_pair_and_its_season_pair_part_by_a_size_on_a_found_path(
         assert not result["counts_equal"] and not result["did_nothing"]
         assert counts["a"]["dollars_spent"] != counts["b"]["dollars_spent"]
     # The two arms B part in the value their claims were sized on, and in no other count.
-    assert {m for m in week["b"] if week["b"][m] != season["b"][m]} == set(sc.SIZED_ON)
+    assert {m for m in week["b"] if week["b"][m] != season["b"][m]} == {"value_won"}
+    assert "value_won" in ct.APART_BY_CONSTRUCTION
     paths = 2
     apart = week["b"]["value_won"]["mean"] - season["b"]["value_won"]["mean"]
     steps = apart * paths / sc.WEIGHT_STEP

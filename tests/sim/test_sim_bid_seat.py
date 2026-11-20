@@ -546,8 +546,9 @@ def test_the_bid_block_is_read_only_in_a_faab_league_by_a_seat_that_bids():
     # A mirror rival takes the arm's bid as it takes its other settings.
     assert policy.bid_reads(static, faab, mirrored=True) == policy.READ
     assert policy.bid_reads(rn.Arm("X", "ranking", KNOBS, {}, bid=named), faab, True) == policy.READ
-    # The words that say what reads it are the block's own, beside the knobs' and the fields'.
-    assert set(policy.WHEN_READ) == {*policy.KNOBS, *policy.FIELDS}
+    # The words that say what reads it are the block's own, beside the knobs', the fields' and
+    # the two season fields' (the guard PR).
+    assert set(policy.WHEN_READ) == {*policy.KNOBS, *policy.FIELDS, *policy.SEASON_FIELDS}
     assert "FAAB" in policy.BID_WHEN_READ
 
 
