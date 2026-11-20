@@ -11,11 +11,14 @@ from collections import Counter
 from dataclasses import replace
 from datetime import timedelta
 from functools import cache
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from pickandroll.sim import audit, nopeek, policy, shapes
 from pickandroll.sim import bid_policy as bp
+from pickandroll.sim import cli as ss
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import mv
@@ -24,6 +27,14 @@ from pickandroll.sim.state import Waiting, initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, replay_of
 from tests.sim.test_no_peek import SEED, WEIGHTS
 from tests.sim.test_sim_bracket_run import points_league, two_rounds
+from tests.sim.test_sim_rules_run import (  # noqa: F401
+    WHEN,
+    pinned_clock,
+    replay,
+    spec,
+    wire,
+    written,
+)
 from tests.sim.test_sim_split import armed, second_of, variant_of, world_of
 
 DAY = timedelta(1)
@@ -505,3 +516,80 @@ def test_no_peek_with_the_rule_on_over_a_day_a_same_day_add_played():
     got, _ = records_of(nopeek.perturb(lines, rn.game_days_of(setup), day, SEED))
     first = nopeek.first_difference(digests, got)
     assert first is not None and first[0] > day
+
+
+# --------------------------------------------------------------------------- the command
+def without_clock(p: dict) -> dict:
+    return {k: v for k, v in p.items() if k not in WHEN}
+
+
+def test_the_lineup_rule_out_of_its_words_is_refused_by_name_before_any_path(wire: Path):  # noqa: F811
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--dry-run")
+    code, out = replay(wire, *room, "--lineup-from", "noon")
+    assert code == 2 and "refused: --lineup-from noon: one of tomorrow, today" in out, out
+    assert "tasks (" not in out
+
+
+def test_rule_1_with_tomorrow_named_nothing_moves(wire: Path):  # noqa: F811
+    """Rule 1: ``--lineup-from tomorrow`` named and nothing named give one payload: the league
+    block's rules name no lineup rule, no note says one, the execution model and the audit's
+    rules are the default rule's."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--waivers", "priority")
+    runs = []
+    for extra in ((), ("--lineup-from", "tomorrow")):
+        code, out = replay(wire, *room, *extra)
+        assert code == 0, out
+        runs.append(written(out))
+    one, two = runs
+    assert without_clock(one) == without_clock(two)
+    assert "lineup_from" not in one["league"]["rules"] and "lineup_note" not in one["league"]
+    assert one["executions"] == policy.EXECUTIONS_PRIORITY
+    assert "lands_next_day" in [r["name"] for r in one["audit"]["rules"]]
+
+
+@pytest.mark.parametrize("waivers", ["none", "priority"])
+def test_a_same_day_run_records_its_rule_its_model_its_note_and_its_audit(wire: Path, waivers):  # noqa: F811
+    """``--lineup-from today``: the line that says the rules says it, the league block's rules
+    name it, its note says what it does and does not model, the execution model has a name of
+    its own, and the audit holds ``lands_same_day`` in ``lands_next_day``'s place and finds
+    nothing."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--lineup-from", "today")
+    extra = () if waivers == "none" else ("--waivers", waivers)
+    code, out = replay(wire, *room, *extra)
+    assert code == 0, out
+    rules = shapes.LeagueRules(waivers=waivers, lineup_from=TODAY)
+    assert f"league rules, on every path: {rules.label()}" in out
+    p = written(out)
+    assert p["league"]["rules"] == rules.payload() and p["league"]["rules"]["lineup_from"] == TODAY
+    assert p["league"]["lineup_note"] == ss.LINEUP_NOTE
+    assert p["executions"] == policy.executions_of(waivers, DROPPED, True)
+    names = [r["name"] for r in p["audit"]["rules"]]
+    assert "lands_same_day" in names and "lands_next_day" not in names
+    assert p["audit"]["paths_voided"] == 0
+
+
+def test_under_continuous_waivers_the_record_says_the_rule_moves_nothing(wire: Path):  # noqa: F811
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--waivers", "faab")
+    room += ("--waiver-rule", "continuous", "--lineup-from", "today")
+    code, out = replay(wire, *room)
+    assert code == 0, out
+    p = written(out)
+    assert p["league"]["rules"]["lineup_from"] == TODAY
+    assert p["league"]["lineup_note"] == ss.LINEUP_NOTE_CONTINUOUS
+    assert p["executions"] == policy.EXECUTIONS_CONTINUOUS_FAAB
+    assert "lands_next_day" in [r["name"] for r in p["audit"]["rules"]]
+
+
+def test_the_rule_is_part_of_the_league_kind_and_a_screens_world_names_it_only_when_named():
+    """A screen and a tune are held to the league kind (H2's ``league_kind``): a same-day league
+    is another kind, the default rule the kind it was. A screen's world records the flag only
+    when it is named, so a screen that names none records the world it did before."""
+    assert "lineup_from" in ss.KIND_FLAGS and "lineup_from" in ss.SCREEN_WORLD
+    assert ss.WORLD_IF_NAMED == ("lineup_from",)
+    grid = shapes.FIXED_GRID
+
+    def kind(rule):
+        return ss.league_kind(SimpleNamespace(grid=grid, league_rules=shapes.LeagueRules(lineup_from=rule)))  # fmt: skip
+
+    assert kind(TOMORROW) == ss.league_kind(SimpleNamespace(grid=grid, league_rules=shapes.PLAIN))
+    assert kind(TODAY) != kind(TOMORROW) and kind(TODAY)["rules"]["lineup_from"] == TODAY
