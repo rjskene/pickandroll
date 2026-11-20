@@ -1663,13 +1663,17 @@ def test_a_season_with_a_threshold_under_off_and_under_a_stake_plays_clean(
     morning takes the seat's name, and on the exact tier a set past the guard is named. Under
     the stake some decision made on the split figure (a week whose ``L`` is above 0) names a
     drop with a set made, the set moves the name, and a morning takes one. A mirror rival is
-    made without the threshold, decides on the block with no stake, and names too."""
+    made without the threshold, decides on the block with no stake, and names too.
+
+    The pair drafted apart (``run.paired_apart``, a season a call) is handed the same two: on
+    this league and this world twice it gives the pair's own counts and outcomes."""
     scoring, waivers, rule, h2h = kind
     setup = of_format(held_league(scoring, waivers, rule), h2h)
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *STASH_SEASON)
     knobs = {"season_weight": scale_weight(setup, w), "stash_threshold": SHARE}
     a = crossing_arm("A", tier, rivals, knobs, guard="off")
     b = crossing_arm("B", tier, rivals, knobs, stake=1)
+    apart = rn.paired_apart(setup, w, setup, w, a, b, 1)
     made: list[tuple[policy.Built, policy.Decision]] = []
     real = policy.decide
 
@@ -1682,6 +1686,9 @@ def test_a_season_with_a_threshold_under_off_and_under_a_stake_plays_clean(
     seen: dict[int, list[rn.DayRecord]] = {0: [], 1: []}
     got = rn.paired(setup, w, a, b, 1, on_day=lambda r: seen[r.variant].append(r))
     assert got["breaches"] == []
+    # The same pair, each arm's season played by a call of its own: every row and every outcome.
+    assert apart["breaches"] == [] and apart["counts"] == got["counts"]
+    assert [apart[k] for k in ("a", "b", "delta")] == [got[k] for k in ("a", "b", "delta")]
     # The counts, side by side.
     for name in "ab":
         row = got["counts"][name]
