@@ -979,7 +979,7 @@ def test_the_part_of_a_list_that_can_land_together_takes_each_add_and_each_drop_
 
 def test_the_moves_the_names_are_made_with_are_the_moves_the_morning_lands():
     """``policy.distinct`` says in a few lines what the executor does in two places, so it is
-    held to the executor (the lead's hold on it, a-8). In a league without waivers, over every
+    held to the executor (the lead's hold on it). In a league without waivers, over every
     list of a set of one or two moves and one or two plan steps due, the steps drawn from
     three free agents and three of the seat's players: the moves ``distinct`` keeps are the
     moves the night queues (``policy.queue``) and the morning lands (``policy.land``), in
@@ -1439,7 +1439,7 @@ def test_an_arm_that_executes_its_plan_beside_its_set_plays_a_season_with_an_il_
 
 #: The seasons in which an arm that names a stash threshold and executes its plan beside its
 #: set queued a step whose drop its set moved to a held slot the same morning (found by the
-#: second fix round's review, ``~/sim-notes/vm/scratch/e/probes/fresh_breach.py``): the league
+#: refit's second review, ``~/sim-notes/vm/scratch/e/probes/fresh_breach.py``): the league
 #: and the world's seed and path.
 HELD_LEAGUE = {"teams": 4, "pool": 12, "weeks": 6, "playoff_weeks": 2}
 HELD_STEP = {
