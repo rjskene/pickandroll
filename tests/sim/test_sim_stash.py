@@ -1077,11 +1077,12 @@ def test_the_command_takes_a_threshold_from_a_seat_s_file_and_counts_it(tmp_path
     assert "returning_dropped" in counts["T"] and "returning_dropped" not in counts["S"]
 
 
-def test_the_replay_s_version_is_the_stash_threshold_s():
-    """The record's version and the first words of its reason (PR G): a payload read later says
-    which rule the morning of a comeback was played by."""
-    assert ss.REPLAY_VERSION == 15
-    assert ss.REPLAY_VERSION_WHY.startswith("15: the stash threshold: ")
+def test_the_replay_s_version_says_the_stash_threshold():
+    """The record's reason holds PR G's words under their own number: a payload read later says
+    which rule the morning of a comeback was played by. The record's number is a later PR's
+    since (the newest version's own test holds it), and its sentence goes first."""
+    assert ss.REPLAY_VERSION >= 15
+    assert "15: the stash threshold: " in ss.REPLAY_VERSION_WHY
     assert "14: the arm's seat's draft under a table" in ss.REPLAY_VERSION_WHY
 
 

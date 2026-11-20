@@ -452,12 +452,21 @@ def test_a_replay_s_seats_and_its_standings_follow_one_format(formats, h2h):
 
 def figures_digest(p: dict) -> str:
     """SHA-256 of a run's results, counts and season scale figures, each rounded to nine places
-    (as ``test_sim_seasons.figures_digest``)."""
+    (as ``test_sim_seasons.figures_digest``). The scale's ``paths_with_ratio`` is left out: the
+    guard PR's one key in every run that has a scale (how many paths its ratio rests on), which
+    the commit the pin is of did not write; every figure that commit gave is hashed as it was."""
+    scale = {
+        t: {
+            arm: row and {k: v for k, v in row.items() if k != "paths_with_ratio"}
+            for arm, row in by_arm.items()
+        }
+        for t, by_arm in p["season_scale"]["by_season"].items()
+    }
     figures = rounded(
         {
             "results": p["results"],
             "counts": p["counts"]["by_season"],
-            "scale": p["season_scale"]["by_season"],
+            "scale": scale,
         }
     )
     return hashlib.sha256(json.dumps(figures, sort_keys=True).encode()).hexdigest()

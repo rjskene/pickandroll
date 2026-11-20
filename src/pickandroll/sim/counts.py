@@ -20,7 +20,10 @@ executor queued: that run's only, in every seat's row (0 for a seat that does no
 so a run that names no ``queue`` counts as before. The landing and claim
 counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
 ``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
-and the day's lines once they are scored. Pure.
+and the day's lines once they are scored. In a run where an arm names its guard or its stake (the
+guard PR) also, on the seats of the run's arms on the exact or the surrogate tier, the sets
+decided that the season guard would have refused, and the season's mean week's stake with the
+weeks it was above a half: such a run's only, so a run that names neither counts as before. Pure.
 """
 
 from __future__ import annotations
@@ -31,6 +34,9 @@ from typing import Any
 
 from .engine import HELD
 from .state import Setup, SimState
+
+#: The week's stake above which a week is counted in ``stake_weeks_above_half``.
+HALF = 0.5
 
 #: A seat's counts over one season, in the payload's order.
 METRICS = (
@@ -77,19 +83,55 @@ BIDS: dict[str, str | None] = {
 #: placed (:meth:`Tally.reading`). None for a seat that builds no problem (a market or a static
 #: rival): nothing reads its players.
 STASH = ("returning_dropped",)
-#: The queue's counts (PR E), only in a run where an arm executes ``queue``, after :data:`STASH`:
-#: the days the queue took a week plan instead of the three weeks' set, and the steps of those
-#: plans queued (a free agent's add for the next morning, or a claim placed). Whether a queued
-#: step then landed is in ``landed``, ``gone`` and the claim counts, with every other move.
+
+#: The guard's and the stake's counts (the guard PR), after :data:`STASH`, by the season field
+#: (``policy.SEASON_FIELDS``) whose naming brings them: in a run where an arm names ``guard``,
+#: the sets its arms' seats decided that the season guard would have refused (none under the
+#: block, by construction; under ``off`` a lower bound on how often the block would have turned
+#: the decision); in one where an arm names ``stake``, the mean of the week's stake
+#: ``L`` over the weeks the seat played and the weeks ``L`` was above :data:`HALF`. On the
+#: run's arms' seats whose tier reads the fields, never a rival's; a run that names neither has
+#: none, so its counts are as before.
+SEASON: dict[str, tuple[str, ...]] = {
+    "guard": ("sets_past_guard",),
+    "stake": ("stake_mean", "stake_weeks_above_half"),
+}
+
+#: The queue's counts (PR E), only in a run where an arm executes ``queue``, after the guard's
+#: and the stake's (:data:`SEASON`): the days the queue took a week plan instead of the three
+#: weeks' set, and the steps of those plans queued (a free agent's add for the next morning, or
+#: a claim placed). Whether a queued step then landed is in ``landed``, ``gone`` and the claim
+#: counts, with every other move.
 PLANS = ("plan_days", "plan_steps")
+
+#: The counts that part by construction between two arms and are no difference of the season:
+#: what a pair's two rows may differ in while the two arms played one season. The screen's
+#: "did nothing" sets them aside when it says whether the two arms' counts are equal
+#: (``screen.result_of`` reads this tuple and names no count itself); both rows are still
+#: recorded whole. The one declaration: a PR whose count is of this kind appends its key here,
+#: a line a key with its reason, and declares nothing of its own elsewhere.
+APART_BY_CONSTRUCTION: tuple[str, ...] = (
+    # The guard PR: an arm on the block has none, by construction. A set an ``off`` arm
+    # decided past the guard and never queued is no difference in the season, and one that is
+    # queued shows in the other counts.
+    "sets_past_guard",
+)
 
 
 class Tally:
     """One variant's counts as its season is played. ``stash``: the run names a stash threshold,
-    and the returning players each seat drops are counted (:data:`STASH`). ``plans``: the run has
-    an arm that takes the queue's rule, so every seat's row carries :data:`PLANS`."""
+    and the returning players each seat drops are counted (:data:`STASH`). ``counted``, by team,
+    names the season fields (:data:`SEASON`'s keys) the run counts on that seat; none by
+    default. ``plans``: the run has an arm that takes the queue's rule, so every seat's row
+    carries :data:`PLANS`."""
 
-    def __init__(self, setup: Setup, stash: bool = False, plans: bool = False) -> None:
+    def __init__(
+        self,
+        setup: Setup,
+        stash: bool = False,
+        counted: Mapping[int, Sequence[str]] | None = None,
+        plans: bool = False,
+    ) -> None:
         self.stash = stash
         #: Each seat's players its last decision read as returning (with the drops of its open
         #: claims as read the day each was placed), and those of them it dropped.
@@ -116,6 +158,10 @@ class Tally:
         self.held_days = dict.fromkeys(self.teams, 0)
         self.games = dict.fromkeys(self.teams, 0)
         self._held: dict[int, set[int]] = {t: set() for t in self.teams}
+        self.counted = {t: tuple(names) for t, names in (counted or {}).items() if names}
+        #: The sets a counted seat decided past the guard, and its stake by week.
+        self.past = dict.fromkeys(self.counted, 0)
+        self.stakes: dict[int, dict[int, float]] = {t: {} for t in self.counted}
 
     def charge(self, week: int, before: Mapping[int, int], after: Mapping[int, int]) -> None:
         """The adds that landed this morning (``executed_by`` before and after the landing),
@@ -148,13 +194,24 @@ class Tally:
             gone = {k for k, _ in before.rosters.get(t, ())} - still
             self.returning_dropped[t] += len(gone & returning)
 
+    def decided(self, team: int, decision: Any) -> None:
+        """``team``'s decision of the day (a ``policy.Decision``): a set decided past the guard
+        is counted on a counted seat."""
+        if team in self.past and decision.past_guard:
+            self.past[team] += 1
+
     def took(self, team: int, steps: int) -> None:
         """``team``'s queue took a week plan today (PR E), and ``steps`` of it were queued."""
         self.plan_days[team] = self.plan_days.get(team, 0) + 1
         self.plan_steps[team] = self.plan_steps.get(team, 0) + steps
 
     def day(self, week: int, state: SimState) -> None:
-        """A simulated day of ``week``: each held player's stint goes on or begins."""
+        """A simulated day of ``week``: each held player's stint goes on or begins; on the
+        week's first, a counted seat's stake for the week is kept (``SimState.stakes``)."""
+        if week not in self.weeks:
+            for t, by_week in self.stakes.items():
+                if t in state.stakes:
+                    by_week[week] = float(state.stakes[t])
         self.weeks.add(week)
         for t in self.teams:
             now = {k for k, slot in state.rosters.get(t, ()) if slot in HELD}
@@ -207,6 +264,15 @@ class Tally:
             if self.stash:
                 n = self.returning_dropped.get(t)
                 out[t]["returning_dropped"] = None if n is None else float(n)
+            names = self.counted.get(t, ())
+            if "guard" in names:
+                out[t]["sets_past_guard"] = float(self.past[t])
+            if "stake" in names:
+                levels = list(self.stakes[t].values())
+                out[t]["stake_mean"] = sum(levels) / len(levels) if levels else None
+                out[t]["stake_weeks_above_half"] = (
+                    float(sum(1 for x in levels if x > HALF)) if levels else None
+                )
             if self.plans:
                 out[t] |= {
                     "plan_days": float(self.plan_days.get(t, 0)),
@@ -218,9 +284,10 @@ class Tally:
 def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
     when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the stash
-    count (a run's that names a stash threshold, PR G), then the queue's (a run with an arm that
-    executes ``queue``, PR E)."""
-    extra = (*CLAIMS, *BIDS, *STASH, *PLANS)
+    count (a run's that names a stash threshold, PR G), then the guard's and the stake's (a run
+    that names them), then the queue's (a run with an arm that executes ``queue``, PR E)."""
+    season = (m for group in SEASON.values() for m in group)
+    extra = (*CLAIMS, *BIDS, *STASH, *season, *PLANS)
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))
 
 
@@ -240,10 +307,13 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
 
 
 __all__ = [
+    "APART_BY_CONSTRUCTION",
     "BIDS",
     "CLAIMS",
+    "HALF",
     "METRICS",
     "PLANS",
+    "SEASON",
     "STASH",
     "Tally",
     "metrics_in",

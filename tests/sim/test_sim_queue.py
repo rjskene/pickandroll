@@ -220,7 +220,7 @@ def test_the_counts_note_says_the_queue_s_counts_only_when_an_arm_executes_queue
         assert list(with_queue) == [*before, *ct.PLANS]
         assert {k: with_queue[k] for k in before} == dict(before)
         # Beside the stash count (PR G), the queue's counts come last.
-        assert list(ss.counts_note(waivers, True, True)) == [*before, *ct.STASH, *ct.PLANS]
+        assert list(ss.counts_note(waivers, True, queue=True)) == [*before, *ct.STASH, *ct.PLANS]
     assert ss.counts_note() is ss.COUNTS_NOTE
     assert "instead of the three weeks' set" in ss.PLANS_NOTE["plan_days"]
     assert "queued" in ss.PLANS_NOTE["plan_steps"]

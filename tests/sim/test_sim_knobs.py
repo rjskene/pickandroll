@@ -453,7 +453,8 @@ def test_the_tripwire_every_live_knob_has_a_row_in_every_shape():
         assert list(table) == list(policy.KNOBS)
         assert all(isinstance(v, str) and v for v in table.values())
         assert list(policy.field_reads(config, mirror)) == list(policy.FIELDS)
-    assert set(policy.WHEN_READ) == {*policy.KNOBS, *policy.FIELDS}
+        assert list(policy.season_reads(config, shape)) == list(policy.SEASON_FIELDS)
+    assert set(policy.WHEN_READ) == {*policy.KNOBS, *policy.FIELDS, *policy.SEASON_FIELDS}
 
 
 def test_the_reads_table_as_built():
@@ -817,6 +818,8 @@ FULL_SPEC = {
     "min_gain": 0.02,
     "weeks_ahead": 3,
     "surrogate_days": [0, 3],
+    "guard": "off",
+    "stake": 0,
     "fit_sha": "abc",
 }
 
@@ -829,6 +832,7 @@ def test_the_spec_keys_are_the_ones_the_simulator_reads():
     rn.check_fit(spec, "abc")
     assert spec.read == set(rn.SPEC_KEYS) == set(FULL_SPEC)
     assert a.fields == policy.Fields(20, 0.02, 3, (0, 3))
+    assert (a.guard, a.stake, a.named) == ("off", 0.0, policy.SEASON_FIELDS)
     opponents = _Reading(a.opponents)
     op.of(opponents, a.knobs, 0.1, a.fields)
     assert opponents.read == set(op.SPEC_KEYS)

@@ -372,8 +372,10 @@ def base_payload(
     model (``policy.executions_of`` its waivers, PR Fa, and its waiver rule, PR Fc); ``measure``, what the run's format gives
     a seat that weighs (``policy.measure``, the format PR; a replay's, beside it); ``book``, the
     price book its rivals bid on (``readers.newest_book``, PR Fd): its hash, its file and its
-    table's hash beside the fit's, in a run that names it only."""
+    table's hash beside the fit's, in a run that names it only. An arm's ``fields`` carry its
+    guard and its stake (the guard PR) when its spec names them, and only then."""
     fields = {k: arm.fields for k, arm in (arms or {}).items()} or {"gate": policy.Fields()}
+    season = {k: arm.season_payload() for k, arm in (arms or {}).items()}
     return {
         "kind": kind,
         "name": name,
@@ -397,7 +399,7 @@ def base_payload(
         "hold_out": fit.get("hold_out", HOLD_OUT),
         "executions": executions,
         **({"measure": measure} if measure is not None else {}),
-        "fields": {k: f.payload() for k, f in fields.items()},
+        "fields": {k: f.payload() | season.get(k, {}) for k, f in fields.items()},
         "surrogate": {
             k: {"pool": f.pool, "days": list(f.surrogate_days), "plan": "daily"}
             for k, f in fields.items()
@@ -495,18 +497,47 @@ PLANS_NOTE = {
     "claim placed; whether each landed is in landed, gone and the claim counts",
 }
 
+#: What the guard's and the stake's counts are (the guard PR), by the arm field whose naming
+#: brings them (``counts.SEASON``): a run's in which an arm names that field, on the seats of
+#: its arms on the exact or the surrogate tier. ``sets_past_guard`` is a lower bound on how
+#: often the block would have turned an ``off`` seat's decision, and the note says so: the
+#: count asks the guard about the decided set alone (``policy.mark_past_guard``).
+SEASON_NOTE = {
+    "guard": {
+        "sets_past_guard": "sets the seat decided that the season guard would have refused (the "
+        "rest of the season below 0 by the engine's own figure), before the day's cap and the "
+        "week's adds cut them: 0 for an arm on the block, by construction; for an arm with the "
+        "guard off a lower bound on how often the block would have turned its decision, not "
+        "that number (the block tests every set a search tries, so it can end on another set "
+        "where the set decided here passes as a whole and is not counted; the exact tier's "
+        "week set and week plan are not asked about)",
+    },
+    "stake": {
+        "stake_mean": "the week's stake L for the seat, its mean over the weeks played (the "
+        "standings it reads are the arm's own season's; an arm's stake field does not change "
+        "what L is, only whether its season term reads it)",
+        "stake_weeks_above_half": "the weeks whose stake L was above a half",
+    },
+}
+
 
 def queue_run(arms: Iterable[rn.Arm]) -> bool:
     """Whether one of the run's arms takes the queue's rule (``executes: queue``, PR E)."""
     return any(arm.executes == policy.QUEUE for arm in arms)
 
 
-def counts_note(waivers: str = "none", stash: bool = False, queue: bool = False) -> dict[str, str]:
+def counts_note(
+    waivers: str = "none",
+    stash: bool = False,
+    counted: Sequence[str] = (),
+    queue: bool = False,
+) -> dict[str, str]:
     """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, the claims' too in a
     waiver run, and in a FAAB run the bids' with the claims' said for bids; ``stash``: the run
-    names a stash threshold (``run.stash_named``, PR G), and the note says its count; ``queue``:
-    the run has an arm that executes ``queue`` (:func:`queue_run`, PR E), and the queue's
-    counts' follow."""
+    names a stash threshold (``run.stash_named``, PR G), and the note says its count; then the
+    notes of the season fields the run's arms name (``counted``, ``run.counted_of``;
+    :data:`SEASON_NOTE`), none for a run that names neither; ``queue``: the run has an arm that
+    executes ``queue`` (:func:`queue_run`, PR E), and the queue's counts' follow."""
     if waivers == "none":
         note = COUNTS_NOTE
     elif waivers == "faab":
@@ -515,6 +546,8 @@ def counts_note(waivers: str = "none", stash: bool = False, queue: bool = False)
         note = {**COUNTS_NOTE, **CLAIMS_NOTE}
     if stash:
         note = {**note, **STASH_NOTE}
+    if counted:
+        note = {**note, **{k: v for f in counted for k, v in SEASON_NOTE[f].items()}}
     return {**note, **PLANS_NOTE} if queue else note
 
 
@@ -654,7 +687,10 @@ def scale_note(scoring: str = "categories", h2h: str = ONE_WIN) -> str:
 
 def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
     """The season scale of the paths that stand: the mean of each figure over the paths that
-    have it, and the paths; None when no path has one (the ranking tier, a static seat)."""
+    have it, the paths that have a row (``paths``) and, of those, the paths whose row holds a
+    ratio (``paths_with_ratio``: what the ratio's mean rests on; a seat with no feasible swap
+    on its first day, or none that has a ``ROS_w``, or whose ``ROS_w`` have a median size of 0,
+    has a row and no ratio); None when no path has a row (the ranking tier, a static seat)."""
     have = [r for r in rows if r is not None]
     if not have:
         return None
@@ -669,6 +705,7 @@ def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
         "ratio": mean("ratio"),
         "against": mean("against"),
         "paths": len(have),
+        "paths_with_ratio": sum(1 for r in have if r.get("ratio") is not None),
     }
 
 
@@ -676,9 +713,10 @@ def reads_of(
     arms: Mapping[str, rn.Arm], shapes: Sequence[policy.Shape], rivals: bool
 ) -> dict[str, Any]:
     """The reads table by arm and by each shape of the run: each knob and field ``read`` or the
-    reason it is not (``policy.reads``, ``policy.field_reads``); and for an arm that executes
-    ``queue`` only (PR E), ``notes``: what the table says beside a row (``policy.read_notes``:
-    where the season term stands in the queue's rule)."""
+    reason it is not (``policy.reads``, ``policy.field_reads``), an arm's guard and stake among
+    its fields when its spec names them (``policy.season_reads``, the guard PR); and for an arm
+    that executes ``queue`` only (PR E), ``notes``: what the table says beside a row
+    (``policy.read_notes``: where the season term stands in the queue's rule)."""
     out: dict[str, Any] = {}
     for key, arm in arms.items():
         mirror = rivals and rn.mirrored(arm)
@@ -686,7 +724,8 @@ def reads_of(
         out[key] = {
             shape.label(): {
                 "knobs": policy.reads(arm, shape, mirror),
-                "fields": policy.field_reads(arm, mirror),
+                "fields": policy.field_reads(arm, mirror)
+                | {k: v for k, v in policy.season_reads(arm, shape).items() if k in arm.named},
                 **({"notes": notes} if notes else {}),
             }
             for shape in sorted(set(shapes), key=lambda s: s.label())
@@ -1384,7 +1423,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 15 since the stash threshold (#172, PR G), 14 since the
+#: The replay's version in its payload: 16 since the season guard as an arm's choice and the
+#: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
 #: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
 #: (PR Fd),
 #: 12 since continuous waivers (PR Fc), 11 since the
@@ -1401,8 +1441,22 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 15
+REPLAY_VERSION = 16
 REPLAY_VERSION_WHY = (
+    "16: the season guard as an arm's choice and a season term that reads the week's stake: an "
+    "arm's spec may name guard (block, the season guard on every search of its tier, live's and "
+    "the default; or off, no search of the tier is handed an allowed set) and stake (0 to 1, 0 by"
+    " default: the season term that week is season_weight x (this week's part + (1 - stake x L) x"
+    " the rest), a move's season figure split at the running week's last day, L the week's stake "
+    "for the seat from the finished weeks' standings, in the bracket's weeks 1 inside the field "
+    "and 0 for a top seed in the week of its bye; the figure as it was when stake x L is 0); an "
+    "arm's fields and its reads table carry the two only when its spec names them; a run in which"
+    " an arm names guard counts sets_past_guard (the sets decided that the guard would have "
+    "refused, a lower bound on how often the block would have turned a decision), and one in "
+    "which an arm names stake counts stake_mean and stake_weeks_above_half, on the seats of its "
+    "arms on the exact or the surrogate tier; season_scale's rows gain paths_with_ratio (the "
+    "paths whose row holds a ratio) in every run that has a scale; with neither field named every"
+    " other figure and key is version 15's. "
     "15: the stash threshold: an arm's stash_threshold is set on its seat's problem and read "
     "there by the engine's searches on the exact and the surrogate tier (a set that drops a "
     "returning player the threshold keeps is refused; the ranking tier's one swap is not held to "
@@ -2272,6 +2326,13 @@ def replay_plan(
             f"(a named league shape refuses it): {short_line(x)}"
         )
     shapes_read = [r.shape for r in reads if r.shape is not None]
+    # A stake reads the cut line and the bracket's weeks: no path of a league whose bracket is
+    # not read is played with one (the guard PR), said before any path.
+    for arm in arms.values():
+        why = rn.stake_refused(arm, shapes_read)
+        if why:
+            print(f"refused: {why}")
+            return 2
     same = same_seats(arms, shapes_read, rivals=paired)
     if same:
         print(f"refused: {same}")
@@ -2543,6 +2604,7 @@ def replay_payload(
             league_rules.scoring,
             league_rules.waivers,
             league_rules.h2h,
+            rn.counted_of(list(arms.values())),
             queue_run(arms.values()),
         )
         if sources is not None:
@@ -2915,13 +2977,14 @@ def room_blocks(
     scoring: str = "categories",
     waivers: str = "none",
     h2h: str = ONE_WIN,
+    counted: Sequence[str] = (),
     queue: bool = False,
 ) -> dict[str, Any]:
     """A room's figures, keyed by season and then by forecaster: each arm's outcomes and counts
     pooled over its seats and the paths that stand (the counts' note the run's ``waivers``',
-    and the queue's counts' when ``queue`` says an arm executes it, :func:`counts_note`), each
-    arm's season scale by season (its note the run's ``scoring``'s
-    and format's, :func:`scale_note`), the unprojected count by cell."""
+    the season fields its arms name, ``counted``, and the queue's counts' when ``queue`` says an
+    arm executes it, :func:`counts_note`), each arm's season scale by season (its note the
+    run's ``scoring``'s and format's, :func:`scale_note`), the unprojected count by cell."""
     by_cell: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
     counts_by_cell: dict[str, dict[str, dict[str, list[Any]]]] = {}
     unprojected: dict[str, dict[str, list[Any]]] = {}
@@ -2961,6 +3024,7 @@ def room_blocks(
                     for row in r["counts"].values()
                     for m in ct.STASH
                 ),
+                counted,
                 queue,
             ),
             "rivals": None,
@@ -3259,7 +3323,12 @@ def paired_blocks(
             },
         },
         "counts": {
-            "note": counts_note(waivers, rn.stash_named(arms.values()), queue_run(arms.values())),
+            "note": counts_note(
+                waivers,
+                rn.stash_named(arms.values()),
+                rn.counted_of(list(arms.values())),
+                queue_run(arms.values()),
+            ),
             "rivals": "the seats other than the pair's, both arms' seasons, as one row",
             "by_season": {
                 t: {
