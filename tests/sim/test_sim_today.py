@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import cache
 from pathlib import Path
@@ -21,12 +21,13 @@ from pickandroll.sim import audit, nopeek, policy, shapes
 from pickandroll.sim import bid_policy as bp
 from pickandroll.sim import cli as ss
 from pickandroll.sim import opponents as op
+from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
-from pickandroll.sim.engine import mv
+from pickandroll.sim.engine import mv, wk
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED, TODAY, TOMORROW
 from pickandroll.sim.state import WON, Claim, Waiting, initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, replay_of
-from tests.sim.test_no_peek import SEED, WEIGHTS
+from tests.sim.test_no_peek import SEED, WEIGHTS, recorded
 from tests.sim.test_sim_bracket_run import points_league, two_rounds
 from tests.sim.test_sim_counts import MON as MONDAY_ONE
 from tests.sim.test_sim_counts import Script
@@ -278,7 +279,8 @@ def test_a_monday_claim_lands_as_the_new_weeks_first_add_and_a_held_return_is_no
     until Monday; on Sunday team 1 claims him, charged to week two. On Monday the week starts
     over before the morning: the claim lands as week two's first add, so team 1's free agent that
     Monday is refused (week two has none left), and team 2's held player who comes back that
-    morning is no add. The audit finds nothing."""
+    morning is no add; team 2's free agent added that Monday lands that day, week two's. The
+    counts charge both Monday adds to week two, and the audit finds nothing."""
     mon = MONDAY_ONE
     setup = make_setup(
         teams=2, spots=6, pool=6, weeks=2, playoff_weeks=1, max_weekly_adds=1, held_slots=("IL",)
@@ -299,7 +301,7 @@ def test_a_monday_claim_lands_as_the_new_weeks_first_add_and_a_held_return_is_no
     )
     one = [k for k, _ in setup.rosters[1]]
     two = [k for k, _ in setup.rosters[2] if k != hurt]
-    f1, f2, f3 = free[:3]
+    f1, f2, f3, f4 = free[:4]
     sunday, monday = mon + 6 * DAY, mon + 7 * DAY
     plans = {
         1: Script(
@@ -309,7 +311,7 @@ def test_a_monday_claim_lands_as_the_new_weeks_first_add_and_a_held_return_is_no
                 (monday, (mv.Move(f3, one[2]),)),
             )
         ),
-        2: Script(((mon + 5 * DAY, (mv.Move(f2, two[0]),)),)),
+        2: Script(((mon + 5 * DAY, (mv.Move(f2, two[0]),)), (monday, (mv.Move(f4, two[1]),)))),
     }
     (res,), recs = played(setup, replay_of(setup, 2, 0), [plans])
     assert not res.breaches, res.breaches[:2]
@@ -318,10 +320,15 @@ def test_a_monday_claim_lands_as_the_new_weeks_first_add_and_a_held_return_is_no
     rec = recs[(monday, 0)]
     assert [(r.team, r.add, r.outcome) for r in rec.cleared] == [(1, two[0], WON)]
     assert hurt in rec.state.active(2) or hurt not in rec.state.pool
-    assert rec.state.adds_used.get(1, 0) == 1 and rec.state.adds_used.get(2, 0) == 0
-    assert rec.queued.get(1, ()) == () and f3 not in rec.state.active(1)
-    # The counts charge the Monday claim to week two: one add in each week, each at the cap.
-    assert res.counts[1]["adds_per_week"] == 1.0 and res.counts[1]["weeks_at_cap"] == 1.0
+    assert rec.state.adds_used.get(1, 0) == 1 and rec.queued.get(1, ()) == ()
+    assert f3 not in rec.state.active(1)
+    # Team 2's free agent that Monday lands that day as week two's only add: the held
+    # player back that morning took none.
+    assert rec.landed[2] == (mv.Move(f4, two[1]),) and rec.state.adds_used.get(2, 0) == 1
+    # The counts charge each Monday add to week two (the claim at the morning, the free agent
+    # at the day's landing): one add in each week for each team, each week at the cap.
+    for t in (1, 2):
+        assert res.counts[t]["adds_per_week"] == 1.0 and res.counts[t]["weeks_at_cap"] == 1.0, t
 
 
 def test_a_plans_step_of_a_free_agent_is_due_today_and_a_claims_on_its_clear_date():
@@ -766,6 +773,60 @@ def test_a_pair_with_a_split_seat_plays_the_rule_on_its_own_table():
     assert any(r.landed.get(1) for r in recs.values())
 
 
+@dataclass(frozen=True)
+class SplitScript(Script):
+    """A scripted seat that holds a split table (``forecaster``)."""
+
+    forecaster: str | None = None
+
+
+def test_a_split_seats_same_day_add_is_started_on_the_table_read_after_the_landing():
+    """A split seat (``yahoo``) reads a player on no roster on the second's line and a rostered
+    one on the first's. The recorded league starts three of each team's four (PG, C, Util). On
+    the first day from the second on that three of team 1's players of one kind play (two slots
+    hold them), team 1 adds a free agent of that kind who plays that day, whom the second rates
+    at four times his line and the first at a twentieth, dropping one of the three. On the
+    morning's table he starts; on the table read on the rosters after the landing he is the
+    least of the three, and the day's lineup, set on that table, sits him (a hand-built day: the
+    two lineups differ, asserted). About 2 s."""
+    base, lines = recorded()
+    setup = same_day(base)
+    one = [k for k, _ in setup.rosters[1]]
+
+    def playing(d):
+        return [k for k in one if lines.get(k, {}).get(d)]
+
+    def kinds(d):
+        return {setup.players[k].positions for k in playing(d)}
+
+    day = next(d for d in setup.days[1:] if len(playing(d)) == 3 and len(kinds(d)) == 1)
+    (kind,) = kinds(day)
+    f = min(
+        k for k in setup.pool if lines.get(k, {}).get(day) and setup.players[k].positions == kind
+    )
+    d = playing(day)[0]
+    first = {k: {s: v * 1.1 for s, v in r.items()} for k, r in setup.projection.items()}
+    second = second_of(first)
+    first[f] = {s: v * 0.05 for s, v in first[f].items()}
+    second[f] = {s: v * 4.0 for s, v in setup.projection[f].items()}
+    arms = armed(("Y", "yahoo", None))
+    label = arms["Y"].forecaster
+    w = world_of(setup, lines, first, second, arms)
+    seat = SplitScript(((day, (mv.Move(f, d),)),), forecaster=label)
+    variant = {**{t: op.Static() for t in setup.teams}, 1: seat}
+    (res,), recs = played(setup, w, [variant])
+    assert not res.breaches, res.breaches[:2]
+    rec = recs[(day, 0)]
+    assert rec.holds == {1: label} and rec.landed[1] == (mv.Move(f, d),)
+    points = None
+    fresh = rn._Tables(w, day, [label], setup.cats, points).of(label, rec.state)[1]
+    morning = wk.per_game_values(rec.held[label], setup.cats, points)
+    on_fresh = policy.starters_of(setup, rec.state, 1, day, rec.status, fresh)
+    on_morning = policy.starters_of(setup, rec.state, 1, day, rec.status, morning)
+    assert f in on_morning and f not in on_fresh
+    assert dict(rec.starters[1]) == dict(on_fresh)
+
+
 def test_a_seats_same_day_add_lands_inside_a_bracket_round_and_on_its_first_morning():
     """A made-up league whose last two weeks are a bracket of two rounds for all four, under the
     rule, the exact seat among market rivals. Each round is seeded on its first morning, before
@@ -873,6 +934,28 @@ def test_a_same_day_run_records_its_rule_its_model_its_note_and_its_audit(wire: 
     names = [r["name"] for r in p["audit"]["rules"]]
     assert "lands_same_day" in names and "lands_next_day" not in names
     assert p["audit"]["paths_voided"] == 0
+
+
+def test_the_command_plays_the_rule_and_the_setup_it_builds_says_it(wire: Path):  # noqa: F811
+    """The rule reaches the season, by what the run did and not by what it names: the same room
+    under ``today`` and under ``tomorrow`` gives figures or counts that differ (a found path,
+    asserted), and the setup the command builds for a path (``cli.replay_setup_of``) says
+    ``today`` and plays the same day, the default rule's setup ``tomorrow``."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
+    figures = {}
+    for rule in (TOMORROW, TODAY):
+        code, out = replay(wire, *room, "--lineup-from", rule)
+        assert code == 0, out
+        p = written(out)
+        figures[rule] = (p["results"], p["counts"]["by_season"])
+    assert figures[TODAY] != figures[TOMORROW]
+    lines, members, scheduled = reader.replay_lines(wire, 2024)
+    prior = reader.prior_rates(wire, 2024)
+    rules = shapes.LeagueRules(lineup_from=TODAY)
+    setup = ss.replay_setup_of(2024, lines, members, scheduled, prior, league_rules=rules)
+    assert setup.lineup_from == TODAY and setup.same_day
+    plain = ss.replay_setup_of(2024, lines, members, scheduled, prior)
+    assert plain.lineup_from == TOMORROW and not plain.same_day
 
 
 def test_the_users_league_of_five_adds_runs_and_its_record_names_five(wire: Path):  # noqa: F811
