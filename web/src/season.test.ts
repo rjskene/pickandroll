@@ -161,6 +161,12 @@ import {
   checkingNow,
   queuePoll,
   queueMoveText,
+  pickLine,
+  liftText,
+  reserveLine,
+  reserveText,
+  pickMoveText,
+  pickSkipText,
   queueNamer,
   queueOrder,
   queueStateLine,
@@ -1865,6 +1871,8 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(planStepTag(step), "step 2 of 3");
   assert.equal(planStepTag(e), "");
   assert.equal(queueMoveText(step, name), "P101 for P201 (step 2 of 3 of the week plan)");
+  // The user's pick (#434) says so.
+  assert.equal(queueMoveText({ ...e, set: "pick" }, name), "P101 for P201 (your pick)");
   assert.equal(queueStateLine(step, now + 3_600_000, name), "waits for step 1 to land (P11)");
   assert.equal(queueStateLine({ ...step, waits: null }, now + 3_600_000, name), "due at the next pass");
   assert.equal(queueStateLine({ ...step, outcome: "added" }, now, name), queueStateText({ ...step, outcome: "added" }, now));
@@ -1877,6 +1885,10 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(queueStateText({ ...e, outcome: "gone", outcome_reason: null }, now), "gone: another team had him first");
   assert.equal(queueStateText({ ...e, queued: false, reason: "below the noise floor", floor: { ...floor, below: "scored" } }, now), "below the scored floor");
   assert.equal(queueStateText({ ...e, queued: false, reason: "over the day's cap" }, now), "over the day's cap");
+  // The add reserve and the re-cut rule (#436): the move's worth against the price.
+  const reserve = { worth: 0.2, price: 0.3, days: 3 };
+  assert.equal(queueStateText({ ...e, queued: false, reason: "held for the week's reserve", reserve }, now), "held for the week's reserve: gains 0.20, the price is 0.30");
+  assert.equal(queueStateText({ ...e, queued: false, reason: "added within the re-cut days", reserve }, now), "added within 3 days: gains 0.20, the price is 0.30");
   assert.equal(bidLabel(e), "$4 claim");
   assert.equal(bidLabel({ ...e, bid_struck: true }), "$0 claim (the $4 bid struck)");
   assert.equal(bidLabel({ ...e, availability: "FA" }), "free agent, $0");
@@ -2604,4 +2616,43 @@ test("the Moves card counts each horizon's pool and the adds the season guard's 
     "Recommended by a search over the 30 candidates whose best single move adds most. A strong heuristic, not a proof.",
     "an answer made before #424",
   );
+});
+
+test("a pick reads as the user's, with the drop named or the cheapest, the bid and where it applies (#434)", () => {
+  const name = (id: number) => `P${id}`;
+  const m = { add: 10, drop: 3, held: null, held_drop: null, named_drop: false, bid: null };
+  assert.equal(pickMoveText(m, name), "P10 for P3 (the drop that costs least): your pick, the bid policy's bid");
+  assert.equal(pickMoveText({ ...m, named_drop: true, bid: 4 }, name), "P10 for P3 (the drop you named): your pick, your bid of $4");
+  assert.equal(pickMoveText({ ...m, drop: null }, name), "P10 (free: open spot): your pick, the bid policy's bid");
+  assert.equal(pickSkipText({ player: 7, name: null, reason: "no adds left that week", expires: "2026-11-26", by: "dashboard" }, name), "P7: no adds left that week");
+  const pick = { player: 7, name: "A", leagues: ["1", "2"], drop: null, bid: 3, expires: "2026-11-26", by: "dashboard", at: "", left: { "2": "2026-11-20" }, active: true };
+  const title = (league: string) => `L${league}`;
+  assert.equal(pickLine(pick, title), `L1, L2 · the cheapest drop · $3 · until ${dayLabel("2026-11-26")} · set by dashboard; on a team in L2`);
+  assert.equal(pickLine({ ...pick, leagues: null, left: {}, active: false, bid: null }, title), `every league · the cheapest drop · the bid policy's bid · until ${dayLabel("2026-11-26")} (expired) · set by dashboard`);
+});
+
+test("a lifted move says its flag's factor and level (#435)", () => {
+  assert.equal(liftText({ factor: 1.2, level: "add" }), "lifted by its flag (x1.2, add)");
+  assert.equal(liftText({ factor: 1.15, level: "must-add" }), "lifted by its flag (x1.15, must-add)");
+  assert.equal(liftText({ factor: 1.5, level: "watch" }), "lifted by its flag (x1.5, watch)");
+});
+
+test("the add reserve and the re-cut rule say what they hold (#436)", () => {
+  const name = (id: number) => `P${id}`;
+  const r = {
+    knobs: { reserve_adds: 1, reserve_release: "friday", reserve_price: null, recut_days: 3 },
+    week: { start: "2026-11-16", end: "2026-11-22", adds: 2 },
+    reserved: 1,
+    price: 0.3,
+    exempt: [],
+    recent: { "7": "2026-11-18", "8": "2026-11-17" },
+    out: [8],
+  };
+  assert.equal(reserveText(r, name), `One add held for the week's reserve until Fri; P7 added ${dayLabel("2026-11-18")} (only for more than 0.30).`);
+  assert.equal(reserveText({ ...r, week: null, recent: {} }, name), null);
+  assert.equal(reserveText(undefined, name), null);
+  const held = { held_back: true, gain: { week: 0.5, three: 1.25 }, forgone: { week: 0.1, three: -0.2 }, rule: "reserve" as const };
+  assert.match(reserveLine(held, "three") ?? "", /^The add reserve held back a set that gains .* over the three weeks; this one forgoes 0\.20\.$/);
+  assert.match(reserveLine({ ...held, rule: "recut" }, "week") ?? "", /^The re-cut rule held back/);
+  assert.equal(reserveLine({ held_back: false }, "week"), null);
 });

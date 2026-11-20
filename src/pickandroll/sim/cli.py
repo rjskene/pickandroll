@@ -914,6 +914,7 @@ def short_drafts(
     sources: Sources | None,
     arms: Mapping[str, rn.Arm],
     picks: Mapping[int, Mapping[int, float]],
+    seat_draft: str | None = None,
 ) -> list[dict[str, Any]]:
     """Every draft of ``grid``'s league shapes that may not fill (#172, PR D4b), one record a
     season, forecaster, team count with roster size, and board: the draft takes teams times the
@@ -921,7 +922,9 @@ def short_drafts(
     pool, the season's draftable players on the cell's forecaster (``run.draftable_of``),
     which every seat drafts from without a table and every rival's board is under one; or,
     under a table (``picks``, by season), an arm's seat's own board, its forecaster's draftable
-    players. Rivals could take every player on that board, so it is held to the whole draft's
+    players (under ``seat_draft`` ``adp.MARKET_DRAFT`` the players it does not pass on, a split
+    seat's by its rostered side: :func:`passing_label`). Rivals could take every player on that
+    board, so it is held to the whole draft's
     need, and a draft refused on it might have filled. Read on path 0: a forecaster projects
     the same players on every path. Empty when every draft fills. A run that names a league
     shape is refused on any record; under the fixed shape they are noted (:func:`short_line`)."""
@@ -939,8 +942,10 @@ def short_drafts(
             )
             boards: dict[str | None, int] = {None: len(pool)}
             if table is not None:
+                split = splits_of(sources, arms)
                 for key, arm in arms.items():
-                    own = own_projection(arm.forecaster, f.label, projection, forecasts)
+                    label = passing_label(seat_draft, arm.forecaster, split)
+                    own = own_projection(label, f.label, projection, forecasts)
                     boards[key] = sum(1 for k in pool if k in own)
             for teams, spots in sizes:
                 for board, n in boards.items():
@@ -975,8 +980,19 @@ def short_line(x: Mapping[str, Any]) -> str:
 
 
 #: A season's market under ``--adp espn`` (#172, PR D4a): its table's listed players' average
-#: picks and the rivals' spread; None under ``--adp none``.
-Market = tuple[Mapping[int, float], adp.Spread] | None
+#: picks, the rivals' spread and how an arm's seat drafts (``adp.SEAT_DRAFTS``, the draft PR);
+#: None under ``--adp none``.
+Market = tuple[Mapping[int, float], adp.Spread, str] | None
+
+
+def seat_draft_of(args: argparse.Namespace) -> str | None:
+    """How a run's arms' seats draft (``adp.SEAT_DRAFTS``): the rule ``--seat-draft`` names, the
+    market's when it names none; None without a table, where nobody drafts from a market."""
+    if args.adp == "none":
+        return None
+    return args.seat_draft or adp.MARKET_DRAFT
+
+
 #: The fixed shape's seats as ``run.replay_setup`` numbers them (a league shape's are its
 #: ``ids``).
 REPLAY_IDS = shapes.FIXED.ids
@@ -993,6 +1009,31 @@ def own_projection(
     return projection if label is None or label == run_label else forecasts[label]
 
 
+def passing_label(
+    rule: str | None, label: str | None, split: Mapping[str, str] | None
+) -> str | None:
+    """The label whose table a seat holding ``label`` is named with in a draft under ``rule``
+    (``adp.SEAT_DRAFTS``). Under ``adp.OWN_DRAFT`` its own: the board it ranks, a split label's
+    available side as the run builds it for day one. Under ``adp.MARKET_DRAFT`` the table it
+    passes by, which is what it will believe of a player once he is on its roster: a split
+    label's rostered side (``split``, :func:`splits_of`: the first stand-in's), any other
+    label's own. A ``yahoo`` or ``blend`` seat that passed by its available side would draft a
+    player only the second stand-in projects and read him at nothing from the first day."""
+    if rule == adp.MARKET_DRAFT and label is not None:
+        return (split or {}).get(label, label)
+    return label
+
+
+def draft_of(market: Market, seed: int, path: int, own: Mapping[int, Any]) -> adp.Draft:
+    """A path's draft on a ``market`` with the arms' seats ``own`` (by team, each arm's
+    forecaster's projection), under the market's rule. ``adp.OWN_DRAFT`` is ``adp.Draft``'s own
+    default and names nothing more, as before the draft PR."""
+    assert market is not None
+    if market[2] == adp.OWN_DRAFT:
+        return adp.Draft(market[0], market[1], seed, path, own)
+    return adp.Draft(market[0], market[1], seed, path, own, rule=market[2])
+
+
 def room_draft(
     market: Market,
     arms: Mapping[str, rn.Arm],
@@ -1004,19 +1045,28 @@ def room_draft(
     path: int,
     league: shapes.LeagueShape = shapes.FIXED,
     turn: int | None = None,
+    split: Mapping[str, str] | None = None,
 ) -> adp.Draft | None:
-    """A room's draft under a ``market`` on one path (#172, PR D4a): every seat holds an arm, so
-    every seat drafts on its arm's own board. None without a market. The seats are the path's
-    league shape's and the arms are rotated by its ``turn`` (#172, PR D4b; the path's on one
-    shape); the rivals' draws stay on the path."""
+    """A room's draft under a ``market`` on one path (#172, PR D4a). Every seat holds an arm
+    and is named with its arm's forecaster's projection: under ``adp.MARKET_DRAFT`` (the draft
+    PR, the default) each drafts as the rival in its seat would, less the players its own arm
+    cannot value (a split seat by its rostered side, ``split``: :func:`passing_label`); under
+    ``adp.OWN_DRAFT`` every seat drafts on its arm's own board. None without a market. The
+    seats are the path's league shape's and the arms are rotated by its ``turn`` (#172, PR
+    D4b; the path's on one shape); the rivals' draws stay on the path."""
     if market is None:
         return None
     rotation = path if turn is None else turn
     own = {
-        t: own_projection(arms[name].forecaster, run_label, projection, forecasts)
+        t: own_projection(
+            passing_label(market[2], arms[name].forecaster, split),
+            run_label,
+            projection,
+            forecasts,
+        )
         for t, name in rn.rotate(seats, league.ids, rotation).items()
     }
-    return adp.Draft(market[0], market[1], seed, path, own)
+    return draft_of(market, seed, path, own)
 
 
 def pair_setups(
@@ -1035,21 +1085,29 @@ def pair_setups(
     league: shapes.LeagueShape = shapes.FIXED,
     turn: int | None = None,
     league_rules: shapes.LeagueRules = shapes.PLAIN,
+    split: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The pair's league on one path, by arm (#172, PR D4a), in the path's league shape (#172,
     PR D4b) under the run's league rules (PR D4c): one league drafted on the run's forecaster
-    without a ``market``. Under one, the
-    arm's seat drafts on the arm's own board and every other seat on a rival's board: arms whose
-    draft-day beliefs are one label share one league (the same object), arms on two labels get
-    one each. The arm's seat is the shape's ``teams[turn mod n]`` (the path's turn; the path
-    itself on one shape)."""
+    without a ``market``. Under one, the arm's seat drafts by the market's rule (the draft PR)
+    and every other seat on a rival's board: under ``adp.MARKET_DRAFT``, the default, as the
+    rival in its seat would, less the players the arm cannot value; under ``adp.OWN_DRAFT`` on
+    the arm's own board. Arms whose seats are named with one label's table share one league
+    (the same object), arms on two get one each. That label is the arm's draft-day belief's,
+    but under ``adp.MARKET_DRAFT`` a split seat's is its rostered side's (``split``,
+    :func:`passing_label`): a ``yahoo`` or ``blend`` arm passes on the players its ``bbm``
+    baseline passes on, and the two are one league on every path. Under ``adp.MARKET_DRAFT``
+    two arms on two tables share one league all the same when their two drafts come out the
+    same league (every roster equal: the two tables lack the same players, or differ only on
+    players the seat never reached): nothing else of a setup reads the arm. The arm's seat is
+    the shape's ``teams[turn mod n]`` (the path's turn; the path itself on one shape)."""
     if market is None:
         setup = replay_setup_of(
             season, lines, members, scheduled, projection, None, league, league_rules
         )
         return dict.fromkeys(pair, setup)
     me = league.ids[(path if turn is None else turn) % league.teams]
-    labels = {k: arms[k].forecaster or run_label for k in pair}
+    labels = {k: passing_label(market[2], arms[k].forecaster, split) or run_label for k in pair}
     setups: dict[str, Any] = {}
     for k in pair:
         same = next((setups[j] for j in setups if labels[j] == labels[k]), None)
@@ -1057,10 +1115,19 @@ def pair_setups(
             setups[k] = same
             continue
         own = own_projection(labels[k], run_label, projection, forecasts)
-        draft = adp.Draft(market[0], market[1], seed, path, {me: own})
-        setups[k] = replay_setup_of(
-            season, lines, members, scheduled, projection, draft, league, league_rules
+        setup = replay_setup_of(
+            season,
+            lines,
+            members,
+            scheduled,
+            projection,
+            draft_of(market, seed, path, {me: own}),
+            league,
+            league_rules,
         )
+        if market[2] == adp.MARKET_DRAFT:
+            setup = next((x for x in setups.values() if x.rosters == setup.rosters), setup)
+        setups[k] = setup
     return setups
 
 
@@ -1085,7 +1152,8 @@ def task_replay(
     league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> dict[str, Any]:
     """One task of the room on a replay. Under a ``market`` (#172, PR D4a) every seat holds an
-    arm, so every seat drafts on its arm's own board and no board is a rival's. The path plays
+    arm: each drafts as the rival in its seat would less the players its arm cannot value, or
+    under ``adp.OWN_DRAFT`` on its arm's own board (:func:`room_draft`). The path plays
     its league shape on ``grid`` with the arms rotated by its turn (``shapes.visit``, #172, PR
     D4b), under the run's ``league_rules`` (PR D4c); the world's draws stay on ``(seed,
     path)``."""
@@ -1093,7 +1161,17 @@ def task_replay(
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
     forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
     draft = room_draft(
-        market, arms, seats, forecaster.label, projection, forecasts, seed, path, v.shape, v.turn
+        market,
+        arms,
+        seats,
+        forecaster.label,
+        projection,
+        forecasts,
+        seed,
+        path,
+        v.shape,
+        v.turn,
+        splits_of(sources, arms),
     )
     setup = replay_setup_of(
         season, lines, members, scheduled, projection, draft, v.shape, league_rules
@@ -1193,6 +1271,7 @@ def pair_league(
         v.shape,
         v.turn,
         league_rules,
+        splits_of(sources, arms),
     )
     sa, sb = (setups[k] for k in pair)
     worlds = {id(sa): world_of(sa)} if sa is sb else {id(sa): world_of(sa), id(sb): world_of(sb)}
@@ -1225,11 +1304,13 @@ def task_paired(
     second, through one world (``run.paired``); every other seat is each arm's rivals, on the
     run's forecaster. ``pair`` names the two arms' keys in ``arms`` (``a`` and ``b``).
 
-    Under a ``market`` (#172, PR D4a) the arm's seat drafts on the arm's own board and the other
-    seats on rivals' boards. When the two arms' draft-day beliefs are one label there is one
-    draft and one league, as before; when they differ each arm's season is its own league from
-    the draft on (``run.paired_apart``): two setups and two worlds on the same ``(seed, path)``,
-    so the world's draws and the rivals' boards stay common.
+    Under a ``market`` (#172, PR D4a) the arm's seat drafts by the market's rule (the draft PR:
+    as the rival in its seat less the players the arm cannot value, or on the arm's own board)
+    and the other seats on rivals' boards. When the two arms' draft-day beliefs are one label
+    there is one draft and one league, as before; when they differ, and the two drafts are not
+    the same league (:func:`pair_setups`), each arm's season is its own league from the draft
+    on (``run.paired_apart``): two setups and two worlds on the same ``(seed, path)``, so the
+    world's draws and the rivals' boards stay common.
 
     The path plays its league shape on ``grid``, and the seat is the shape's ``teams[turn mod
     n]`` (``shapes.visit``, #172, PR D4b): both arms hold one shape and one seat. Every path
@@ -1328,7 +1409,9 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 12 since continuous waivers (#172, PR Fc), 11 since the
+#: The replay's version in its payload: 14 since the arm's seat drafts from the market's board
+#: (#172, the draft PR), 13 since the rivals' adds and bids (PR Fd),
+#: 12 since continuous waivers (PR Fc), 11 since the
 #: head-to-head format (the format PR),
 #: 10 since FAAB (PR Fb), 9 since the waivers (PR Fa), 8 since the league rules (PR D4c), 7 since the
 #: league generator (PR D4b), 6 since the draft market (PR D4a), each as its reason says; 5
@@ -1342,8 +1425,18 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 13
+REPLAY_VERSION = 14
 REPLAY_VERSION_WHY = (
+    "14: the arm's seat's draft under a table (--adp espn): it drafts as a rival does, from the "
+    "market's board (the listed players by average pick plus a draw at the spread, the unlisted "
+    "below by the run's forecaster's draft-day value) on the draw the rival in that seat on that "
+    "path would take, less the players its own forecaster has no value for (a yahoo or blend "
+    "seat by its rostered side, the first stand-in's), where it drafted on its own forecaster's "
+    "per-game value alone (the user's ruling of 2026-11-18); two arms of a pair on two beliefs "
+    "share one draft wherever their drafts come out the same, a bbm arm with a yahoo or blend "
+    "arm on every path; --seat-draft "
+    "own names the earlier rule and gives version 13's figures under a table, and the draft "
+    "block names the rule (seat_draft); a run without a table is version 13's. "
     "13: the rivals' adds and bids: a market rival's opponents block may name view (draft, the "
     "draft-day ranking all season, the default; or season, the run's forecaster's per-game value "
     "that morning, a player heard out never picked) and among (one of its best few worth more "
@@ -1373,10 +1466,22 @@ ADP_RIVAL = (
     "growth x pick picks, no bias, one draw a listed player; the players the table does not list "
     "below every listed one, by the run's forecaster's draft-day value"
 )
-ADP_SEAT = (
-    "an arm's seat's board: its own forecaster's per-game value on draft day (a system or blend "
-    "seat's stand-in belief); a player it does not project is not on it"
-)
+#: An arm's seat's board, by the run's rule (``adp.SEAT_DRAFTS``; the draft PR).
+ADP_SEAT = {
+    adp.MARKET_DRAFT: (
+        "an arm's seat's board: a rival's (each listed player's average pick plus a normal draw "
+        "at the spread, the unlisted below by the run's forecaster's draft-day value), on the "
+        "draw the rival in that seat on that path would take, less the players the arm's own "
+        "forecaster has no value for on draft day (a system or blend seat's stand-in belief; a "
+        "yahoo or blend seat's rostered side, the first stand-in's, which is what it reads of "
+        "a player it drafts): it drafts as a rival does and passes on a player it cannot value "
+        "(the user's ruling of 2026-11-18; --seat-draft market, the default)"
+    ),
+    adp.OWN_DRAFT: (
+        "an arm's seat's board: its own forecaster's per-game value on draft day (a system or "
+        "blend seat's stand-in belief); a player it does not project is not on it"
+    ),
+}
 ADP_MARKET = (
     "the market's view: the negative of a listed player's average pick, the unlisted below by "
     "the run's forecaster's draft-day value; the preseason's, never refreshed"
@@ -1385,15 +1490,65 @@ ADP_POOL = (
     "the players with a scheduled game in the season's first {days} days that the run's "
     "forecaster projects or the table lists"
 )
-ADP_LIMIT = (
-    "the arm's seat drafts on per-game value alone, with no regard for the games a player is "
-    "expected to miss or for where the room would take him, so it can finish near the top or "
-    "near the bottom of the room on every path, the paired change in playoff odds then zero with "
-    "no spread; how it should draft is open with the user"
-)
+#: The limit of the arm's seat's draft rule, by rule. ``own``'s is the limit the ruling of
+#: 2026-11-18 answered.
+ADP_LIMIT = {
+    adp.MARKET_DRAFT: (
+        "the arm's seat drafts as a rival does, so its roster is an average manager's on the "
+        "table and not what its own forecaster likes: nothing a seat could gain at the draft is "
+        "in a result; it never drafts a player its forecaster has no line for (a rookie under a "
+        "forecaster built on earlier seasons), where a rival does, so the season's best "
+        "newcomers always start on rivals' rosters; a starting belief taken from the market for "
+        "such a player is not built; and an average roster is no average finish: a seat that "
+        "plays the season harder than its rivals finishes above the middle of the room, and how "
+        "far above is not settled (looks of twelve paths: near the top on every path at one "
+        "seed, out of the playoffs on a share of the paths at two more), so a verdict on "
+        "playoff odds needs more paths than a look plays"
+    ),
+    adp.OWN_DRAFT: (
+        "the arm's seat drafts on per-game value alone, with no regard for the games a player "
+        "is expected to miss or for where the room would take him, so it can finish near the top "
+        "or near the bottom of the room on every path, the paired change in playoff odds then "
+        "zero with no spread; the user's ruling of 2026-11-18 replaced this rule (--seat-draft "
+        "market, the default)"
+    ),
+}
+#: What a pair's draft is, when the two arms share it.
+ADP_SHARED = {
+    adp.MARKET_DRAFT: (
+        "one draft and one league, shared by both arms: the arms' seat drafts as a rival does on "
+        "the same draw for either arm, and the two arms' drafts came out the same league, every "
+        "roster equal (they pass by one table, a yahoo or blend arm by the first stand-in's as "
+        "a bbm arm does; or by two that lack the same players, or differ only on players the "
+        "seat never reached)"
+    ),
+    adp.OWN_DRAFT: "one draft and one league, shared by both arms",
+}
+#: The payload's ``draft`` under a table, by rule.
+ADP_DRAFT = {
+    adp.MARKET_DRAFT: (
+        "snake in which each seat takes the best player left on its own board (adp): every "
+        "seat's on the season's table with a draw of its own, an arm's seat's the rival's in "
+        "its seat less the players its own forecaster cannot value"
+    ),
+    adp.OWN_DRAFT: (
+        "snake in which each seat takes the best player left on its own board (adp): the "
+        "rivals' on the season's table, an arm's seat's on its own forecaster"
+    ),
+}
 ADP_APART = (
     "the two arms' draft-day beliefs differ, so each arm's season is a league of its own from "
     "the draft on, on the same (seed, path) and the same rivals' boards: the pair shares no draft"
+)
+#: The same under ``adp.MARKET_DRAFT``, where two beliefs part a pair only on the paths where
+#: they pass on different players. No record made from the command carries it today: every arm
+#: the command names passes by one table (:func:`passing_label`), so its pairs are one league
+#: on every path; a pair built on two labels that are not a split of one another can part.
+ADP_APART_MARKET = (
+    "on some path the two arms' forecasters pass on different players the seat reached, so "
+    "there each arm's season is a league of its own from the draft on, on the same (seed, path) "
+    "and the same rivals' boards; where the two drafts come out the same league, every roster "
+    "equal, the pair shares it (drafts_per_path)"
 )
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
@@ -1700,10 +1855,13 @@ def no_peek(
             league,
             None,
             league_rules,
+            split,
         )
         setup, second = setups["a"], setups["b"]
     else:
-        draft = room_draft(market, arms, seats, label, projection, pinned, seed, 0, league)
+        draft = room_draft(
+            market, arms, seats, label, projection, pinned, seed, 0, league, None, split
+        )
         setup = second = replay_setup_of(
             season, lines, members, scheduled, projection, draft, league, league_rules
         )
@@ -1904,6 +2062,8 @@ class ReplayPlan:
     short: list[dict[str, Any]]
     shapes_read: list[policy.Shape]
     book: tuple[Mapping[str, Any], str, Path] | None = None
+    #: How an arm's seat drafts under a table (``adp.SEAT_DRAFTS``; the draft PR), None without one.
+    seat_draft: str | None = None
 
 
 def replay_plan(
@@ -2012,6 +2172,13 @@ def replay_plan(
             "run's forecaster and reads none"
         )
         return 2
+    if args.adp == "none" and args.seat_draft is not None:
+        print(
+            f"refused: --seat-draft {args.seat_draft} is how an arm's seat drafts under a "
+            "table; --adp none drafts every seat on the run's forecaster and nobody from a market"
+        )
+        return 2
+    seat_draft = seat_draft_of(args)
     if args.adp != "none":
         if args.adp_spread is None:
             print(
@@ -2078,7 +2245,12 @@ def replay_plan(
         print(
             f"draft market, {t}: {args.adp} table, {len(table.picks)} listed, "
             f"{table.at_ceiling} at the ceiling, log {sha[:12]}; spread {spread.base:g},"
-            f"{spread.growth:g} given"
+            f"{spread.growth:g} given; the arms' seats draft "
+            + (
+                "as rivals do, less the players they cannot value (--seat-draft market)"
+                if seat_draft == adp.MARKET_DRAFT
+                else "on their own forecasters (--seat-draft own)"
+            )
         )
     if not any(r.served for r in reads):
         print("refused: no cell is left: no forecaster named serves any season named")
@@ -2093,6 +2265,7 @@ def replay_plan(
         sources,
         arms,
         {t: table.picks for t, (table, _) in tables.items()},
+        seat_draft,
     )
     if short and named_shape:
         for x in short:
@@ -2145,6 +2318,7 @@ def replay_plan(
         short,
         shapes_read,
         book,
+        seat_draft,
     )
 
 
@@ -2214,7 +2388,7 @@ def replay_tasks(plan: ReplayPlan, args: argparse.Namespace) -> ReplayTasks:
             PAIR if paired else seats,
             args.seed,
             p,
-            None if spread is None else (tables[r.season][0].picks, spread),
+            None if spread is None else (tables[r.season][0].picks, spread, plan.seat_draft),
             grid,
             league_rules,
         )
@@ -2328,11 +2502,8 @@ def replay_payload(
             "draft"
         )
         if spread is None
-        else (
-            "snake in which each seat takes the best player left on its own board (adp): the "
-            "rivals' on the season's table, an arm's seat's on its own forecaster"
-        ),
-        "adp": adp_block(args.adp, spread, tables, keys, results, paired),
+        else ADP_DRAFT[plan.seat_draft],
+        "adp": adp_block(args.adp, spread, tables, keys, results, paired, plan.seat_draft),
         "forecasters": {
             str(r.season): forecasters_block(
                 r.served, r.fixed, r.lines, args.seed, args.shape, sources, r.fits
@@ -2459,7 +2630,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 splits_of(sources, arms),
                 r.weights,
                 paired,
-                None if spread is None else (tables[r.season][0].picks, spread),
+                None if spread is None else (tables[r.season][0].picks, spread, plan.seat_draft),
                 first,
                 league_rules,
             )
@@ -2696,13 +2867,16 @@ def adp_block(
     keys: Sequence[Mapping[str, Any]],
     results: Sequence[Mapping[str, Any]],
     paired: bool,
+    seat_draft: str | None = None,
 ) -> dict[str, Any]:
     """What a replay's league was drafted on (#172, PR D4a): the source and, under a table, the
-    given spread, the rules, and per season the table in counts (no figure: they stay in the
+    given spread, the rules (the arm's seat's by ``seat_draft``, ``adp.SEAT_DRAFTS``; the draft
+    PR), and per season the table in counts (no figure: they stay in the
     log), the log's hash, and the drafted players the run's forecaster does not project, over
     the drafts of the paths that stand."""
     if spread is None:
         return {"source": source}
+    rule = seat_draft or adp.MARKET_DRAFT
     drafted: dict[str, list[int]] = {}
     drafts: dict[str, set[int]] = {}
     for key, res in zip(keys, results, strict=True):
@@ -2729,15 +2903,17 @@ def adp_block(
         "source": source,
         "spread": spread.payload(),
         "rival": ADP_RIVAL,
-        "seat": ADP_SEAT,
+        "seat_draft": rule,
+        "seat": ADP_SEAT[rule],
         "market": ADP_MARKET,
         "pool": ADP_POOL.format(days=rn.OPENING_DAYS),
-        "limit": ADP_LIMIT,
+        "limit": ADP_LIMIT[rule],
         "seasons": seasons,
     }
     if paired:
         apart = any(2 in v for v in drafts.values())
-        out["pair"] = ADP_APART if apart else "one draft and one league, shared by both arms"
+        parted = ADP_APART if rule == adp.OWN_DRAFT else ADP_APART_MARKET
+        out["pair"] = parted if apart else ADP_SHARED[rule]
     return out
 
 
@@ -3123,6 +3299,7 @@ SCREEN_WORLD = (
     "yahoo_as",
     "adp",
     "adp_spread",
+    "seat_draft",
     "grid",
     "league",
     "scoring",
@@ -3271,16 +3448,17 @@ def screen_spec(
     """What a screen's folder is started with and every later piece is held to: the code's
     ``screen_version`` and ``replay_version`` (a pair played under another is another pair), the
     baseline arm's spec verbatim, the levers named (in the list's order), the world's flags
-    (:data:`SCREEN_WORLD`; the seasons as read), the fit's hash and, in a run whose rivals bid on
-    the price book (PR Fd), the book's: a newer book is another world."""
+    (:data:`SCREEN_WORLD`; the seasons as read, and the seat's draft rule in force and not the
+    flag as typed, ``plan.seat_draft``: a run that names no rule under a table and one that
+    names the default are one world), the fit's hash and, in a run whose rivals bid on the
+    price book (PR Fd), the book's: a newer book is another world."""
+    read = {"seasons": list(plan.seasons), "seat_draft": plan.seat_draft}
     return {
         "screen_version": sc.SCREEN_VERSION,
         "replay_version": REPLAY_VERSION,
         "arm": dict(base),
         "levers": list(names),
-        "world": {
-            k: list(plan.seasons) if k == "seasons" else getattr(args, k) for k in SCREEN_WORLD
-        },
+        "world": {k: read[k] if k in read else getattr(args, k) for k in SCREEN_WORLD},
         "fit_sha": plan.sha,
         **({} if plan.book is None else {"book_sha": plan.book[1]}),
     }
@@ -3628,14 +3806,29 @@ def gate_dict(g: vg.Gate) -> dict[str, Any]:
     return {"name": g.name, "passed": g.passed, "season": g.season, "detail": g.detail}
 
 
-#: What each seat's row of gate 5 records beside its count (#172, PR D4a2).
+#: What each seat's row of gate 5 records beside its verdict (#172, PR D4a2; the worths are the
+#: rule's input since PR g5).
 GATE_RECORDS = (
     "per seat and sampled day (detail.records): the exact tier's set and the surrogate's, the add "
-    "and the drop by id; whether they are equal (the gate's input); and each set's worth by the "
-    "exact tier's own objective on that day's problem, the value one evaluator of the exact "
-    "tier's gives it on the key it searches (three weeks, with the season term at a "
-    "season_weight), beside standing still's; a day left out says why. The worths do not enter "
-    "the gate's rule"
+    "and the drop by id; whether they are equal (counted in detail.matched; it does not decide); "
+    "and each set's worth by the exact tier's own objective on that day's problem, the value one "
+    "evaluator of the exact tier's gives it on the key it searches (three weeks, with the season "
+    "term at a season_weight), beside standing still's; a day left out says why. The worths are "
+    "what the gate's rule reads: a tier's gain on a day is its set's worth less standing still's"
+)
+#: Gate 5's rule, as each record says it (#172, PR g5; ``validate.surrogate_gate``).
+GATE_RULE = (
+    f"a seat passes when its surrogate keeps at least {vg.SURROGATE_KEEPS:.0%} of the exact "
+    f"search's gain over its {vg.SURROGATE_OF} league-days, every one of them compared. A day's "
+    "gain is a set's worth by the exact tier's own objective less standing still's "
+    "(detail.records); each tier's is summed over the days (detail.gain), then the two sums are "
+    "compared, surrogate >= share x exact, with no division and less a tolerance "
+    f"({vg.EPS:g} of gain), so a float's last bits never decide: an exact tier that stood still "
+    "asks only that the surrogate lose nothing, and a surrogate that found more passes. An exact "
+    "gain below 0, which the exact search does not give, is held to itself and not to a share of "
+    "it, so the same sets never fail. detail.kept is the surrogate's gain over the exact "
+    "search's (null when the exact gain is not above 0). The days on which the two sets are "
+    "equal are counted (detail.matched) and do not decide. The gate passes when every seat does"
 )
 #: The forecaster gate 5's replay is drafted on and believes by, when ``--forecaster`` names none.
 GATE_FORECASTER = "prior"
@@ -3673,13 +3866,14 @@ def gate_surrogate(
     """Gate 5 on a replay (#172, PR D3): the league, the belief's weights and the world built as
     ``replay`` builds them for ``season`` and forecaster ``f`` (:func:`read_season`,
     :func:`replay_setup_of`, ``run.replay_world`` at the label's own weights), path 0; on each of
-    the :data:`GATE_DAYS` after the first simulated day, for each of :func:`gate_seats`, whether
-    the surrogate's set equals the exact set from day one's rosters (``checks.surrogate_matches``),
+    the :data:`GATE_DAYS` after the first simulated day, for each of :func:`gate_seats`, the
+    surrogate's set against the exact set from day one's rosters (``checks.surrogate_records``),
     at the knobs' defaults (``policy.KNOB_DEFAULTS``) and the fields' (``policy.DEFAULT_FIELDS``),
     in the head-to-head format ``h2h`` (the format PR: one win per matchup by default, so the two
-    tiers are compared in the measure the seats play). One gate row a seat, and the block that
-    names what the gate ran on. Refused (``readers.SimReadError``) when ``f`` cannot serve the
-    season."""
+    tiers are compared in the measure the seats play). A seat passes on the gain its surrogate
+    keeps over its days (``validate.surrogate_gate``, PR g5). One gate row a seat, and the block
+    that names what the gate ran on. Refused (``readers.SimReadError``) when ``f`` cannot serve
+    the season."""
     rules = shapes.LeagueRules(h2h=h2h)
     r = read_season(data, season, [f], None, {}, seed, GATE_SHAPE, rules)
     if not r.served:
@@ -3701,8 +3895,7 @@ def gate_surrogate(
     rows = []
     for seat in seats:
         records = checks.surrogate_records(setup, w, seat, days, knobs, fields)
-        matches = [r["equal"] for r in records if r["left_out"] is None]
-        g = vg.surrogate_gate(matches, season=season)
+        g = vg.surrogate_gate(records, season=season)
         g.detail.update({"seat": seat, "days": [d.isoformat() for d in days], "records": records})
         rows.append(gate_dict(g))
     block = {
@@ -3716,11 +3909,7 @@ def gate_surrogate(
         "knobs": knobs,
         "fields": fields.payload(),
         "weights": r.fits[f.label].payload(),
-        "rule": (
-            f"a seat passes when the surrogate's set equals the exact set on "
-            f"{vg.SURROGATE_NEEDED} of its {vg.SURROGATE_OF} league-days; the gate passes when "
-            "every seat does"
-        ),
+        "rule": GATE_RULE,
         "records": GATE_RECORDS,
         "league": f"the fixed league shape ({shapes.FIXED.label()}); gate 5 is not run on a grid",
         "rules": rules.payload(),
@@ -3738,6 +3927,52 @@ def record_line(seat: int, r: Mapping[str, Any]) -> str:
         f"seat {seat}, {r['day']}: {'equal' if r['equal'] else 'differ'}; worth, exact "
         f"{worth['exact']:.4f}, surrogate {worth['surrogate']:.4f}"
     )
+
+
+def share_tenths(x: float) -> int:
+    """A share in tenths of a percent, cut, not rounded: 0.9499 is 949. (A last bit under a whole
+    tenth, as a product of floats can leave, does not cut it to the tenth below.)"""
+    return math.floor(x * 1000 + 1e-6)
+
+
+def kept_words(d: Mapping[str, Any]) -> str:
+    """The share a seat's surrogate kept as gate 5's line says it, from the row's detail: cut to
+    a tenth of a percent (:func:`share_tenths`), then held to the rule's verdict on the two gains
+    (``validate.keeps``). The rule's tolerance is on the gain (``validate.EPS``) and the cut's is
+    on the share, so within that tolerance of the bar the cut alone can read as the share needed
+    for a seat the rule fails, or under it for one the rule passes. Held, a seat that fails by
+    the gain never reads as at the share needed and one that keeps it never reads under it. A
+    seat that fails only for a day left out is not held under the bar: its share is what it kept
+    on the days compared."""
+    tenths, bar = share_tenths(d["kept"]), d["needs"] * 1000
+    if vg.keeps(d["gain"]["exact"], d["gain"]["surrogate"], d["needs"]):
+        tenths = max(tenths, math.floor(bar + 1e-6))
+    else:
+        tenths = min(tenths, math.ceil(bar - 1e-6) - 1)
+    return f"{tenths / 10:.1f}%"
+
+
+def seat_line(d: Mapping[str, Any]) -> str:
+    """What gate 5 prints for a seat after its verdict, from the row's detail: the share of the
+    exact search's gain its surrogate kept (:func:`kept_words`), with the two gains to four
+    decimals and the share needed (the two gains alone when the exact gain is not above 0, where
+    there is no share); then the days on which the two sets are equal, which do not decide; and,
+    for a seat with a day left out, that a seat needs every day. No player is named."""
+    gain = d["gain"]
+    if d["kept"] is None:
+        kept = (
+            f"the exact search made no gain ({gain['exact']:.4f}), so the surrogate need only "
+            f"not fall below it: its gain {gain['surrogate']:.4f}"
+        )
+    else:
+        kept = (
+            f"the surrogate kept {kept_words(d)} of the exact search's gain "
+            f"({gain['surrogate']:.4f} of {gain['exact']:.4f}; needs {d['needs']:.0%})"
+        )
+    line_ = f"{kept}; equal sets on {d['matched']} of {d['of']} league-days"
+    if d["of"] < vg.SURROGATE_OF:
+        line_ += f"; {d['of']} of {vg.SURROGATE_OF} days compared, and a seat needs every one"
+    return line_
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -3781,10 +4016,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for g in gates:
         d = g["detail"]
         state = "passed" if g["passed"] else "FAILED"
-        print(
-            f"{g['name']:16} {g['season']!s:12} {state} seat {d['seat']}: "
-            f"{d['matched']} of {d['of']} league-days"
-        )
+        print(f"{g['name']:16} {g['season']!s:12} {state} seat {d['seat']}: {seat_line(d)}")
         for r in d.get("records", ()):
             print("  " + record_line(d["seat"], r))
     days = len(block["days"]) * len(block["seats"])
@@ -3869,6 +4101,14 @@ def _world_args(p: argparse.ArgumentParser) -> None:
         metavar="BASE,GROWTH",
         help="with --adp espn: a rival's error about the table, a normal draw at base + growth x "
         "pick picks; given, never fitted here",
+    )
+    p.add_argument(
+        "--seat-draft",
+        choices=adp.SEAT_DRAFTS,
+        default=None,
+        help="with --adp espn: how an arm's seat drafts: market, as the rival in its seat does, "
+        "less the players its own forecaster cannot value (the default); own, on its own "
+        "forecaster's per-game value alone, the rule before 2026-11-18",
     )
     p.add_argument(
         "--grid",
@@ -4051,7 +4291,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     _run_args(sn, paths=SCREEN_PATHS)
     sn.set_defaults(func=cmd_screen)
-    va = sub.add_parser("validate", help="gate 5: the surrogate against the exact set on a replay")
+    va = sub.add_parser(
+        "validate", help="gate 5: the gain the surrogate keeps of the exact search's, on a replay"
+    )
     va.add_argument(
         "--season",
         type=int,

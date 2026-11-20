@@ -39,6 +39,13 @@ his slot (``held_drop``) beside the held-slot move that gives the add an active 
 and its basis is ``churn``. Ties on a horizon go to the season (the guard's own figure); each
 recommended move says which horizon decided it (``decided_by``): the season when keeping its
 drop re-solves to a set worth the same on the horizon.
+
+The user's picks (#434, ``season.picks``) are made before any search, on the roster the pending
+claims leave: each with the drop the user named or the one that costs least on the queue's score,
+the keep rule kept and the season guard not applied. They are folded into the problem like
+pending claims, so the sets are solved around them; the payload's ``picks`` (only with a pick in
+force) lists the moves made, valued on the problem before them (:func:`picked`), and the picks
+skipped with why.
 """
 
 from __future__ import annotations
@@ -57,9 +64,14 @@ import pandas as pd
 from ..season import Player, Season
 from ..season import autopilot as qa
 from ..season import decisions as dl
+from ..season import flags as fl
+from ..season import lift as lf
 from ..season import moves as mv
+from ..season import picks as pk
 from ..season import plans as pl
+from ..season import pool as sp
 from ..season import progress as pg
+from ..season import reserve as rs
 from ..season import stream as st
 from ..season import weekly as wk
 from ..sources.injuries import Listed
@@ -74,7 +86,7 @@ WEEKS_AHEAD = 4
 POOL = 30
 #: The adds the season guard admits that join that pool (#424): the best this many by their best
 #: single move the guard admits, appended to the ``POOL`` without repeating one
-#: (:func:`pool_for`).
+#: (``season.pool.pool_for``, #430).
 GUARD_POOL = 30
 #: A move must add at least this many expected categories to be recommended.
 MIN_GAIN = 0.01
@@ -125,6 +137,16 @@ class Built:
     #: Yahoo's roster as read, the claims not made, its own keep rule's kept: the lineup and the
     #: views that show my roster (:attr:`as_read`); None when no claim is pending.
     real: mv.MoveProblem | None = None
+    #: The user's picks made in the solve (#434, ``season.picks.forced``), folded into ``problem``
+    #: like claims pending: the solver fills the adds left around them.
+    picks: tuple[pk.Forced, ...] = ()
+    #: The league's picks in force that the solve could not make, each with why.
+    skipped_picks: tuple[pk.Skipped, ...] = ()
+    #: The problem before the picks were made, what their moves are valued on; None without one.
+    unpicked: mv.MoveProblem | None = None
+    #: The add reserve and the re-cut rule on this solve (#436, ``season.reserve``); None when
+    #: neither applies.
+    reserve: rs.ReserveRule | None = None
 
     @property
     def as_read(self) -> mv.MoveProblem:
@@ -260,13 +282,25 @@ def build(
     system: str,
     knobs: Mapping[str, Any] | None = None,
     open_claims: Iterable[Mapping[str, Any]] = (),
+    picks: Sequence[pk.Pick] = (),
+    flags: Mapping[int, fl.Flag] | None = None,
+    typical: float | None = None,
 ) -> Built | None:
     """The move problem for my team, or None when the season lacks my team or its weeks; the
     solve runs on ``system`` with ``knobs``, the league's knobs as ``api.season_knobs`` reads
     them (the code's defaults when None), and Yahoo's can't-cut list as the executor last read
     it (``api.season_cantcut``, #220). ``open_claims`` are the queue's entries of the league in its
     open days: those still pending on this read (:func:`pending_claims`) are made in the problem
-    (#360), the lineup and the views keeping Yahoo's roster as read (``Built.real``)."""
+    (#360), the lineup and the views keeping Yahoo's roster as read (``Built.real``). ``picks``
+    are the user's picks in force in the league (#434): those the solve can make are made on that
+    roster first, each with the drop the user named or the one that costs least on the queue's
+    score (``season.picks.forced``), and the solve fills the adds left around them. ``flags``
+    are the league's breakout flags (#435, ``api.season_flags``): a flagged candidate's move that
+    drops one of my marginal players or nobody plays that player on a line lifted by the flag
+    (``season.lift``, the lift's knobs in ``knobs`` else the code's first guesses). ``typical``
+    is the fortnight's typical recommended gain (``autopilot.typical_gain``), the add reserve's
+    and the re-cut rule's price unless the knobs set one (#436, ``season.reserve``); the plan
+    floor when None."""
     s = season.settings
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
@@ -426,7 +460,40 @@ def build(
     )
     base = problem
     problem, rule = fold(base, pending)
-    real = replace(base, kept=mv.keep_rule(base).kept) if pending else None
+    playoff = (opens := season.first_playoff_week) is not None and this.number >= opens
+    made: list[pk.Forced] = []
+    skipped: list[pk.Skipped] = []
+    unpicked = None
+    if picks:
+        weight = 0.0 if playoff else float(knobs.get("three_weight", pl.THREE_WEIGHT))
+        made, skipped = pk.forced(problem, picks, plan_value(weight, playoff))
+        if made:
+            unpicked = problem
+            problem = pk.fold(problem, made)
+            rule = mv.keep_rule(problem)
+            problem = replace(problem, kept=rule.kept | problem.pending)
+    real = replace(base, kept=mv.keep_rule(base).kept) if pending or made else None
+    # The breakout lift (#435), on the roster the claims and the picks leave.
+    lifts = lf.lifts(flags or {}, problem.rates, (c for c, _ in problem.candidates), knobs)
+    if lifts:
+        marginal = mv.marginal_of(problem, int(lf.knobs_of(knobs)[lf.MARGINAL]))
+        problem = replace(problem, lifted=lifts, marginal=marginal)
+    # The add reserve and the re-cut rule (#436), on the same roster.
+    plan = float(knobs["plan_floor_points" if points else "plan_floor_cats"])
+    days = int(rs.knobs_of(knobs)[rs.RECUT_DAYS])
+    recent = rs.added_within(
+        (
+            (t.player.yahoo_id, mv.when_date(t.when, today))
+            for t in season.transactions
+            if t.kind == "add" and t.team_id == mine
+        ),
+        today,
+        days,
+    )
+    levels = {k: f.level for k, f in (flags or {}).items()}
+    reserve = rs.rule_of(
+        problem, today, knobs, plan if typical is None else typical, levels, recent
+    )
     pool = max(1, s.num_teams * problem.spots)
     scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
     # Today's activations, a first choice on the three weeks before any search (#360): the solve
@@ -450,10 +517,14 @@ def build(
         knobs,
         file_system,
         priority,
-        (first := season.first_playoff_week) is not None and this.number >= first,
+        playoff,
         pending,
         base if pending else None,
         real,
+        tuple(made),
+        tuple(skipped),
+        unpicked,
+        reserve,
     )
 
 
@@ -524,7 +595,28 @@ def keep_inputs(
 
 # --------------------------------------------------------------------------- the payloads
 def _move(m: mv.Move, problem: mv.MoveProblem) -> dict[str, Any]:
-    return {"add": m.add, "drop": m.drop, **_day(m, problem)}
+    return {"add": m.add, "drop": m.drop, **_day(m, problem), **lift_of(problem, m)}
+
+
+def lift_of(problem: mv.MoveProblem, m: mv.Move) -> dict[str, Any]:
+    """A lifted move's ``lift`` (#435): the factor on its add's line, the flag's level and its
+    signals' scores; nothing for a move not lifted (``moves.is_lifted``)."""
+    if not mv.is_lifted(problem, m.add, m.drop):
+        return {}
+    return {"lift": problem.lifted[m.add].to_dict()}
+
+
+def lift_payload(built: Built) -> dict[str, Any] | None:
+    """The lift in force (#435): its knobs, my marginal players and each lifted candidate's
+    lift; None when no candidate is lifted."""
+    p = built.problem
+    if not p.lifted:
+        return None
+    return {
+        "knobs": lf.knobs_of(built.knobs),
+        "marginal": sorted(p.marginal),
+        "lifted": {str(k): x.to_dict() for k, x in sorted(p.lifted.items())},
+    }
 
 
 def _day(m: mv.Move, problem: mv.MoveProblem) -> dict[str, str]:
@@ -605,76 +697,6 @@ def decided_by(pm: mv.PricedMove, key: str, season: mv.Season | None) -> str:
     re-solves to a set worth the same on ``key`` (the tie the season broke), else ``key``."""
     tied = pm.price_keep is not None and abs(pm.price_keep) <= mv.EPS
     return dl.SEASON if season is not None and tied else key
-
-
-@dataclass(frozen=True)
-class Pool:
-    """A horizon's search pool (#424): ``players`` in order, the first ``size`` the best by
-    single-move gain (the pool before #424), then ``admitted`` more from the guard's list
-    (:func:`admitted_swaps`)."""
-
-    players: tuple[int, ...]
-    size: int
-    admitted: int
-
-    def counts(self) -> dict[str, int]:
-        return {"size": self.size, "admitted": self.admitted}
-
-
-def ranked_of(swaps: Mapping[int, Sequence[mv.SwapGain]]) -> list[int]:
-    """The candidates whose best single move gains more than ``MIN_GAIN``, best first."""
-    return sorted(
-        (c for c, g in swaps.items() if g and g[0].gain > MIN_GAIN),
-        key=lambda c: -swaps[c][0].gain,
-    )
-
-
-def admitted_swaps(
-    swaps: Mapping[int, Sequence[mv.SwapGain]],
-    allowed: mv.Allowed | None,
-    size: int | None = None,
-) -> list[tuple[int, mv.SwapGain]]:
-    """The guard's list (#424): the best ``size`` (``GUARD_POOL``) adds by their best single
-    move that ``allowed`` admits and that gains more than ``MIN_GAIN``, each with that move's
-    drop and gain, best first; empty without a guard. ``swaps`` is a horizon's
-    ``moves.single_swaps``: every drop each add can come with, best first."""
-    if allowed is None:
-        return []
-    size = GUARD_POOL if size is None else size
-    pairs = sorted(
-        ((c, g) for c, gains in swaps.items() for g in gains if g.gain > MIN_GAIN),
-        key=lambda cg: (-cg[1].gain, cg[0]),
-    )
-    out: list[tuple[int, mv.SwapGain]] = []
-    seen: set[int] = set()
-    for c, g in pairs:
-        if len(out) >= size:
-            break
-        if c in seen or not allowed((mv.Move(c, g.drop),)):
-            continue
-        seen.add(c)
-        out.append((c, g))
-    return out
-
-
-def joined(head: Sequence[int], extra: Iterable[int]) -> Pool:
-    """``head`` and then each of ``extra`` not already in it."""
-    seen = set(head)
-    more = [c for c in extra if not (c in seen or seen.add(c))]
-    return Pool((*head, *more), len(head), len(more))
-
-
-def pool_for(
-    swaps: Mapping[int, Sequence[mv.SwapGain]], allowed: mv.Allowed | None
-) -> tuple[Pool, list[tuple[int, mv.SwapGain]]]:
-    """A horizon's search pool (#424) and the guard's list it took from: the best ``POOL`` by
-    single-move gain (:func:`ranked_of`, in that order), then the guard's list
-    (:func:`admitted_swaps`) without repeating an add. The best ``POOL`` stay, though the guard
-    may refuse each one's best move: one may come with another drop, or join a set the guard
-    admits as a whole. An add below them whose move the guard admits would otherwise never be
-    searched. Without a guard, the ``POOL`` alone."""
-    guarded = admitted_swaps(swaps, allowed)
-    return joined(ranked_of(swaps)[:POOL], (c for c, _ in guarded)), guarded
 
 
 class Watched:
@@ -965,6 +987,93 @@ def three_value(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> float:
     return ev.value("three", moves)
 
 
+def queue_value(built: Built) -> mv.Objective:
+    """The queue's own score on ``built`` (:func:`plan_value`): the week plus ``three_weight``
+    times the three weeks, the matchup odds in a playoff week."""
+    return plan_value(pick_weight(built), built.playoff)
+
+
+def reserve_guard(built: Built, ev: mv.Evaluator) -> mv.Allowed | None:
+    """The add reserve and the re-cut rule (#436) as an ``allowed`` on ``ev``; None when neither
+    applies."""
+    return rs.guard(ev, built.reserve, queue_value(built))
+
+
+def reserve_held(
+    built: Built,
+    ev: mv.Evaluator,
+    key: str,
+    moves: Sequence[mv.Move],
+    free: Sequence[mv.Move] | None,
+) -> dict[str, Any] | None:
+    """The add reserve and the re-cut rule on horizon ``key``'s set ``moves`` (#436):
+    ``held_back`` when ``free``, the set the engine recommends without them, beats it on the
+    horizon. Then that set's moves, each with what it adds to the set, its gain, what the
+    rules' set forgoes on each horizon, the rule that refused it and the price. None when
+    neither rule applies; not held back without a ``free`` set (the rules refused nothing)."""
+    rule = built.reserve
+    if rule is None:
+        return None
+    if free is None or ev.value(key, free) <= ev.value(key, moves) + mv.EPS:
+        return {"held_back": False}
+    p = ev.problem
+    horizons = list(ev.base)
+    why = rs.refusal(ev, rule, queue_value(built), free)
+    rows = [
+        {
+            **_move(m, p),
+            "marginal": {
+                h: _r(ev.value(h, free) - ev.value(h, [x for x in free if x != m]))
+                for h in horizons
+            },
+        }
+        for m in free
+    ]
+    gain = {h: ev.gain(h, free) for h in horizons}
+    return {
+        "held_back": True,
+        "moves": rows,
+        "gain": {h: _r(v) for h, v in gain.items()},
+        "forgone": {h: _r(gain[h] - ev.gain(h, moves)) for h in horizons},
+        "rule": None if why is None else why.rule,
+        "refused": None if why is None else {**_move(why.move, p), "adds": _r(why.adds)},
+        "price": _r(rule.price),
+    }
+
+
+def reserve_adds(built: Built, ev: mv.Evaluator, moves: Sequence[mv.Move]) -> list[dict[str, Any]]:
+    """What each of ``moves`` adds to the set on the queue's score (#436, ``reserve.worths``),
+    the number the rules compare to the price: logged so the queue judges on the same one."""
+    worths = rs.worths(ev, queue_value(built), moves)
+    return [
+        {"add": m.add, "drop": m.drop, "adds": _r(w)} for m, w in zip(moves, worths, strict=True)
+    ]
+
+
+def reserve_payload(built: Built) -> dict[str, Any] | None:
+    """The rules in force on the solve (#436): the week the reserve holds adds in, how many,
+    the price, my players added within the re-cut days and those of them out; None when neither
+    applies."""
+    r = built.reserve
+    if r is None:
+        return None
+    return {
+        "knobs": rs.knobs_of(built.knobs),
+        "week": None
+        if r.week is None
+        else {
+            "start": r.week.start.isoformat(),
+            "end": r.week.end.isoformat(),
+            "adds": r.week.adds,
+        },
+        "reserved": r.reserved,
+        "price": _r(r.price),
+        "exempt": sorted(r.exempt),
+        "recent": {str(k): d.isoformat() for k, d in sorted(r.recent.items())},
+        "out": sorted(r.out),
+    }
+
+
 def plan_value(weight: float, playoff: bool) -> mv.Objective:
     """A plan's worth as the queue scores it (``plans.gate``, #221 part 2) in values, not gains:
     the week plus ``weight`` times the three weeks, or in a playoff week the matchup odds."""
@@ -1131,6 +1240,7 @@ def _payload(built: Built) -> dict[str, Any]:
                 "next_price": _r(best.gain - nxt.gain) if nxt else None,
                 # This horizon's move to the season's end: the move the row's For shows.
                 "ros": ros_move(built, mv.Move(cand, best.drop)),
+                **lift_of(p, move),
             }
         if all(row[key] is None for key in HORIZONS):
             row["reason"] = no_move(p, cand)
@@ -1138,27 +1248,45 @@ def _payload(built: Built) -> dict[str, Any]:
     recommended = {}
     sets: dict[str, list[mv.Move]] = {}
     ros = guard_ros(built)
-    guard = None if ros is None else mv.season_guard(ros)
+    season_guard = None if ros is None else mv.season_guard(ros)
+    # The add reserve and the re-cut rule (#436) hold with the season guard everywhere it does.
+    rules = reserve_guard(built, ev)
+    guard = rs.both(season_guard, rules)
     season = season_of(ros)
-    pools: dict[str, Pool] = {}
+    pools: dict[str, sp.Pool] = {}
     guarded: dict[str, list[tuple[int, mv.SwapGain]]] = {}
     for key in HORIZONS:
         # The pool takes the adds the guard admits beside the best by single move (#424): the
         # guarded solve and the unguarded one behind held_back search the same adds.
-        pools[key], guarded[key] = pool_for(swaps[key], guard)
+        pools[key], guarded[key] = sp.pool_for(swaps[key], season_guard, POOL, GUARD_POOL, MIN_GAIN)
         pool = pools[key]
-        watched = None if guard is None else Watched(guard)
+        watched = None if season_guard is None else Watched(season_guard)
+        held_by = None if rules is None else Watched(rules)
         rec = mv.recommend(
-            ev, key, list(pool.players), min_gain=MIN_GAIN, allowed=watched, season=season
+            ev,
+            key,
+            list(pool.players),
+            min_gain=MIN_GAIN,
+            allowed=rs.both(watched, held_by),
+            season=season,
         )
         sets[key] = [pm.move for pm in rec.moves]
         # The set the engine recommends without the guard, re-solves and all (a re-solve can
         # find the costly set the plain search misses), solved only when the guard refused a set:
-        # else the guarded solve was the unguarded one.
+        # else the guarded solve was the unguarded one. The reserve's rules hold in it.
         free = None
         if watched is not None and watched.refused:
-            unguarded = mv.recommend(ev, key, list(pool.players), min_gain=MIN_GAIN, season=season)
+            unguarded = mv.recommend(
+                ev, key, list(pool.players), min_gain=MIN_GAIN, allowed=rules, season=season
+            )
             free = [pm.move for pm in unguarded.moves]
+        # Likewise the set without the reserve's rules, the season guard holding (#436).
+        unreserved = None
+        if held_by is not None and held_by.refused:
+            plain = mv.recommend(
+                ev, key, list(pool.players), min_gain=MIN_GAIN, allowed=season_guard, season=season
+            )
+            unreserved = [pm.move for pm in plain.moves]
         held = held_by_add(p, sets[key])
         rows = [
             {
@@ -1185,7 +1313,10 @@ def _payload(built: Built) -> dict[str, Any]:
             "comebacks": {h: comebacks_rows(cs) for h, cs in rec.comebacks.items()},
             "season_guard": held_back(built, ev, key, sets[key], ros, free),
         }
+        if (held := reserve_held(built, ev, key, sets[key], unreserved)) is not None:
+            recommended[key]["reserve"] = held
     stream = stream_of(built, ev, sets["week"], guard)
+    picks = picks_payload(built)
     # The week plans' pool takes the chain the three-week guard would refuse, the season guard
     # kept, unless the budget has run out (#306): the plans weigh the week first themselves.
     free = None if mv.budget_out() else stream_of(built, ev, sets["week"], guard, False)
@@ -1225,6 +1356,71 @@ def _payload(built: Built) -> dict[str, Any]:
             "min_gain": MIN_GAIN,
             "seconds": round(time.perf_counter() - began, 3),
         },
+        # The user's picks (#434): only in a league with one in force.
+        **({"picks": picks} if picks is not None else {}),
+        # The breakout lift (#435): only in a league with a lifted candidate.
+        **({"lift": lift} if (lift := lift_payload(built)) is not None else {}),
+        # The add reserve and the re-cut rule (#436): only when one applies.
+        **({"reserve": r} if (r := reserve_payload(built)) is not None else {}),
+    }
+
+
+def picked(built: Built) -> Built:
+    """``built`` on the problem before its picks were made (#434): what their moves are valued
+    on, as any set's moves are on the problem they change."""
+    return built if built.unpicked is None else replace(built, problem=built.unpicked)
+
+
+def pick_weight(built: Built) -> float:
+    """The three weeks' weight in the queue's score (``plan_value``): none in a playoff week."""
+    return 0.0 if built.playoff else float(built.knobs.get("three_weight", pl.THREE_WEIGHT))
+
+
+def picks_payload(built: Built) -> dict[str, Any] | None:
+    """The league's picks in force (#434), None without one: those the solve made (``moves``),
+    each with what it adds to the picks on each horizon and to the queue's score (``score``),
+    its held-slot move or held drop, its rest of the season, the drop named or chosen, the
+    user's bid and the pick's expiry; and those it could not make (``skipped``), each with why."""
+    if not built.picks and not built.skipped_picks:
+        return None
+    b = picked(built)
+    p = b.problem
+    moves = [f.move for f in built.picks]
+    ev = mv.Evaluator(p)
+    held = held_by_add(p, moves)
+    weight = pick_weight(built)
+    rows = []
+    for f in built.picks:
+        m = f.move
+        rest = [x for x in moves if x != m]
+        marginal = {h: ev.value(h, moves) - ev.value(h, rest) for h in HORIZONS}
+        rows.append(
+            {
+                **_move(m, p),
+                "held": held.get(m.add) if mv.needs_spot(p, m) else None,
+                "held_drop": held_drop(p, m),
+                "decided_by": pk.PICK,
+                "named_drop": f.pick.drop is not None and f.pick.drop == m.drop,
+                "marginal": {h: _r(v) for h, v in marginal.items()},
+                "score": _r(marginal["week"] + weight * marginal["three"]),
+                "ros": ros_move(b, m),
+                "bid": f.pick.bid,
+                "expires": f.pick.expires.isoformat(),
+                "by": f.pick.by,
+            }
+        )
+    return {
+        "moves": rows,
+        "skipped": [
+            {
+                "player": x.pick.player,
+                "name": x.pick.name,
+                "reason": x.reason,
+                "expires": x.pick.expires.isoformat(),
+                "by": x.pick.by,
+            }
+            for x in built.skipped_picks
+        ],
     }
 
 
@@ -1266,7 +1462,8 @@ def plan_payload(
     the set's by the floor (``season.stream.floor_of``), else by how much it falls short and
     why: ``short``, under the floor; ``guard``, when the plan with the best week would clear
     it but costs the three weeks after, which the planner never trades; or ``season``, when the
-    season guard (``allowed``, #164) is what keeps it out, its rest of the season below zero.
+    season guard (``allowed``, #164) is what keeps it out, its rest of the season below zero;
+    or ``reserve``, when the add reserve or the re-cut rule (#436, in ``allowed`` too) refuses it.
     The refused plan's steps, games and gains are given (``guard``) so the user can make the
     trade by hand. None without a stream spot or the league's scorer (the keep rule's)."""
     p = built.problem
@@ -1298,7 +1495,10 @@ def plan_payload(
         if wild is not None and wild.steps and not allowed(wild.moves):
             gain = {h: ev.value(h, list(wild.moves)) - value["set"][h] for h in HORIZONS}
             if gain["week"] > floor:
-                reason, guard = "season", _guarded(built, ev, wild, gain, rows)
+                rules = reserve_guard(built, ev)
+                held = rules is not None and not rules(wild.moves)
+                reason = "reserve" if held else "season"
+                guard = _guarded(built, ev, wild, gain, rows)
     kept = set(plan.base)
     base = [
         {k: row[k] for k in ("add", "drop", "from", "held", "marginal", "ros")}
