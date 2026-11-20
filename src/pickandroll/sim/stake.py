@@ -151,7 +151,10 @@ def level(
     ``week``). In one of the bracket's weeks: 0 for a team outside the field by the regular
     season's final standings, 0 for a top seed in the week of its bye (:func:`has_bye`: the
     same standings and the spec, no total of a bracket's week), and 1 for every other team
-    inside the field, whether or not it is still alive (the module's limit). In any other week
+    inside the field, whether or not it is still alive (the module's limit). The bracket's weeks
+    are taken to be its rounds: a playoff week that is no round's (a spec with more playoff
+    weeks than its bracket has rounds, which ``LeagueSpec.from_settings`` refuses and no replay
+    builds) has 1 for the whole field, though the league plays nothing in it. In any other week
     the module's formula (:func:`swing` of the lead and the regular weeks after this one); 0 in
     a league with no cut line, where no win moves the field."""
     if week in spec.playoff_weeks:
