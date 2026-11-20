@@ -26,7 +26,7 @@ from .test_lift import bump
 from .test_moves import WEEKS, build, player, rates, schedule
 from .test_moves_queue import DAY, PLAN, TYPICAL, WEEK, entry, league_day, move, reasons
 from .test_season import LEAGUE, client, fixture_names, projection_csv  # noqa: F401
-from .test_season_guard import built_of
+from .test_season_guard import built_of, drop_clocks
 
 MON, FRI = WEEKS[0][0], WEEKS[0][4]
 #: Between the two moves' worth on the queue's score (4.4 and 0.35).
@@ -198,7 +198,7 @@ def test_no_rule_gives_todays_payload_byte_for_byte():
     p = replace(two_adds(), season_end=WEEKS[-1][-1])
     a, b = sm._payload(built_of(p)), sm._payload(built_of(p, reserve=None))
     for out in (a, b):
-        out["search"].pop("seconds")
+        drop_clocks(out)
     assert json.dumps(a) == json.dumps(b) and "reserve" not in a
     assert "reserve" not in a["recommended"]["three"]
 
@@ -309,7 +309,7 @@ def test_both_rules_at_zero_give_todays_moves_byte_for_byte(client, monkeypatch)
     bump(client)
     off = client.get(f"/seasons/{LEAGUE}/moves").json()
     for out in (before, off):
-        out["search"].pop("seconds")
+        drop_clocks(out)
         out.pop("stale", None)
     assert json.dumps(off, sort_keys=True) == json.dumps(before, sort_keys=True)
 
