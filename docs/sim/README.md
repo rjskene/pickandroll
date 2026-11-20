@@ -969,8 +969,14 @@ task of each pair), so the estimate of a run with a `queue` arm is measured on a
 What the rule does not mirror, each plainly:
 
 1. **The season term is not in the gate** (above).
-2. **The pool.** The sets are searched over the arm's `pool` of candidates by single swap, the
-   simulator's rule; live takes a union pool with the adds the guard admits (#424).
+2. **The pool**, by default only. At `guard_pool` 0, the default, the sets are searched over the
+   arm's `pool` of candidates by single swap, cut before the season guard, where live takes a
+   union with the adds the guard admits (#424). Since PR pool an arm with `guard_pool` above 0,
+   while its guard blocks, searches each of the two sets among a union of its own, as live
+   does: the three weeks' set among `pool.pool_for` on the single swaps the arm ranks, the
+   week's set among it on the week's single swaps ("The pool the exact tier searches", above).
+   The sizes are the arm's own (live passes thirty for each); under the guard `off` the field is
+   not read.
 3. **The season tie-break** live hands its recommended sets is not passed, as for `three`.
 4. **The activation's choice.** Live chooses whom a cleared player's activation drops on the
    queue's own score (`moves.choose_activation`); the simulator's executor has its return rule
