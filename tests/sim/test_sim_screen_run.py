@@ -214,7 +214,10 @@ def test_a_lever_that_cannot_matter_did_nothing_and_one_that_can_moved_the_count
     cell = idle["cells"]["2024"]["prior"]
     assert all(d["mean"] == 0.0 for d in cell["difference"].values() if d["mean"] is not None)
     assert cell["counts"]["a"] == cell["counts"]["b"]
-    assert "did nothing (both arms' counts and outcomes are equal on every path)" in whole[1]
+    assert (
+        "did nothing (both arms' counts and outcomes are equal on every path, less the counts "
+        "that part by construction between two arms): "
+    ) in whole[1]
     moved = rows["surrogate_days-monday"]["result"]
     assert not moved["did_nothing"] and not moved["counts_equal"]
     counts = moved["cells"]["2024"]["prior"]["counts"]

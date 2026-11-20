@@ -94,6 +94,19 @@ SEASON: dict[str, tuple[str, ...]] = {
     "stake": ("stake_mean", "stake_weeks_above_half"),
 }
 
+#: The counts that part by construction between two arms and are no difference of the season:
+#: what a pair's two rows may differ in while the two arms played one season. The screen's
+#: "did nothing" sets them aside when it says whether the two arms' counts are equal
+#: (``screen.result_of`` reads this tuple and names no count itself); both rows are still
+#: recorded whole. The one declaration: a PR whose count is of this kind appends its key here,
+#: a line a key with its reason, and declares nothing of its own elsewhere.
+APART_BY_CONSTRUCTION: tuple[str, ...] = (
+    # The guard PR: an arm on the block has none, by construction. A set an ``off`` arm
+    # decided past the guard and never queued is no difference in the season, and one that is
+    # queued shows in the other counts.
+    "sets_past_guard",
+)
+
 
 class Tally:
     """One variant's counts as its season is played. ``stash``: the run names a stash threshold,
@@ -268,6 +281,7 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
 
 
 __all__ = [
+    "APART_BY_CONSTRUCTION",
     "BIDS",
     "CLAIMS",
     "HALF",

@@ -16,7 +16,9 @@ This module is the list and the rules, and touches no file:
   step for, is listed and not played; a nudge equal to the baseline's value is refused by name.
 - :func:`result_of`, what a played pair's figures say: the paired difference on the measure the
   league's standings count against one standard error, and "did nothing" when the two arms'
-  counts and outcomes are equal on every path.
+  counts and outcomes are equal on every path, less the counts that part by construction
+  between two arms (declared where the counts are defined, ``counts.APART_BY_CONSTRUCTION``;
+  no count is named here).
 
 The command that plays each pair, by the code ``replay`` plays a pair with, is ``cli.cmd_screen``.
 """
@@ -27,6 +29,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import counts as ct
 from . import forecast as fc
 from . import policy
 from . import run as rn
@@ -73,9 +76,9 @@ PLAN_FAAB_NOTE = (
 RULE = (
     "a lever survives when its paired difference (B less A) clears one standard error, either "
     "way, on the measure the league's standings count, in a cell of the run; a lever whose two "
-    "arms' counts and outcomes are equal on every path did nothing (its difference is zero by "
-    "construction) and does not survive; advisory: a survivor is a candidate for the tune, not "
-    "a finding"
+    "arms' counts and outcomes are equal on every path, less the counts that part by "
+    "construction between two arms, did nothing (its difference is zero by construction) and "
+    "does not survive; advisory: a survivor is a candidate for the tune, not a finding"
 )
 #: The measures by name, for the table.
 MEASURE_WORDS = {"matchup_wins": "matchup wins", "category_wins": "category wins"}
@@ -563,6 +566,14 @@ def clears(mean: float | None, se: float | None) -> bool:
     return mean is not None and se is not None and abs(mean) > se
 
 
+def _compared(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A seat's row of counts as "did nothing" compares it: less the counts that part by
+    construction between two arms (``counts.APART_BY_CONSTRUCTION``)."""
+    if row is None:
+        return None
+    return {k: v for k, v in row.items() if k not in ct.APART_BY_CONSTRUCTION}
+
+
 def result_of(
     payload: Mapping[str, Any], standing: Sequence[Mapping[str, Any]], measure: str
 ) -> dict[str, Any]:
@@ -574,10 +585,11 @@ def result_of(
     played one season on every path, as far as a record tells); and whether it survives
     (:data:`RULE`). Both arms play one world, so equal counts with an outcome that differs is a
     lever that changed which moves were made, not how many: it did something. The counts
-    compared are every key of a row, the guard's ``sets_past_guard`` among them (the guard PR):
-    a set an ``off`` arm decided past the guard is the lever acting on a decision, so a pair
-    with one is never "did nothing", even if none of that set was queued (the day's cap, the
-    week's adds, a claim's rule) and the two seasons are equal."""
+    compared are every key of a row less the counts that part by construction between two arms
+    (``counts.APART_BY_CONSTRUCTION``, the one declaration, read here when asked and never
+    written here by name): such a count can differ between two arms that played one season,
+    so it is no difference of the season, and whatever of it reached the season shows in the
+    counts that are compared. Both arms' counts are recorded whole, those among them."""
     cells = {
         t: {
             label: {
@@ -592,7 +604,7 @@ def result_of(
         }
         for t, by_label in payload["results"].items()
     }
-    counts = all(r["counts"]["a"] == r["counts"]["b"] for r in standing)
+    counts = all(_compared(r["counts"]["a"]) == _compared(r["counts"]["b"]) for r in standing)
     outcomes = all(all(not v for v in r["delta"].values()) for r in standing)
     nothing = counts and outcomes
     return {
@@ -622,7 +634,11 @@ def result_words(result: Mapping[str, Any]) -> str:
             parts.append(f"{where}{words} {mean} (SE {se}) over {c['paths']} paths")
     out = "; ".join(parts)
     if result["did_nothing"]:
-        out = "did nothing (both arms' counts and outcomes are equal on every path): " + out
+        # The rule's clause, whatever the declaration holds (:data:`RULE`).
+        out = (
+            "did nothing (both arms' counts and outcomes are equal on every path, less the "
+            "counts that part by construction between two arms): " + out
+        )
     elif result["survives"]:
         out += "; survives"
     if result["voided"]:

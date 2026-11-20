@@ -171,3 +171,22 @@ def test_pooled_rows_are_the_mean_over_the_seats_that_have_each():
 #: this test read before gave (5, 1, 2, 0) and (4, 1, 2, 0) under main at 0b2bacd, before the
 #: counts were per seat.
 BEFORE = [(15, 0, 5, 0), (5, 0, 2, 0)]
+
+
+def test_the_counts_that_part_by_construction_are_declared_once_beside_the_keys():
+    """The one declaration (``counts.APART_BY_CONSTRUCTION``, the guard PR): the counts two
+    arms' rows may differ in though the arms played one season, which the screen's "did
+    nothing" sets aside (``test_sim_screen.py`` holds the reading). Each is a key this module
+    defines, none twice. The guard's count of decided sets is one; none of the nine every run
+    counts is, each of those being a difference of the season."""
+    known = (
+        *ct.METRICS,
+        *ct.CLAIMS,
+        *ct.BIDS,
+        *ct.STASH,
+        *(m for group in ct.SEASON.values() for m in group),
+    )
+    declared = ct.APART_BY_CONSTRUCTION
+    assert isinstance(declared, tuple) and "APART_BY_CONSTRUCTION" in ct.__all__
+    assert len(set(declared)) == len(declared) and set(declared) <= set(known)
+    assert "sets_past_guard" in declared and not set(declared) & set(ct.METRICS)

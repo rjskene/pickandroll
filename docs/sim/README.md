@@ -1777,7 +1777,10 @@ cut it). It is 0 for an arm on the block, by construction. For an arm with the g
 lower bound on how often the block would have turned its decision, not that number: the block
 tests every set a search tries, so its search can be turned at a step and end on another set
 where the set decided under `off` passes as a whole and is not counted; and on the exact tier
-the week set and the week plan's steps are not asked about. In a run where an arm names its
+the week set and the week plan's steps are not asked about. It is a count of decisions, not of
+the season, so the screen's "did nothing" sets it aside (`counts.APART_BY_CONSTRUCTION`): a set
+decided past the guard and never queued is no difference in the season, and one that is queued
+shows in the other counts. In a run where an arm names its
 `stake` only, on the same seats: `stake_mean`, the mean of the week's stake `L` over the weeks
 the seat played, and `stake_weeks_above_half`, the weeks `L` was above a half. They are counted
 for every arm of the run on those two tiers, whichever names the field (an arm on the ranking
@@ -1987,10 +1990,14 @@ mechanism counts.
   every category is a result. With more than one cell, clearing it in one is enough.
 - **Mechanism first.** A lever whose two arms' counts (the same adds, claims, bids and stints)
   and outcomes are equal on every standing path is marked "did nothing" and does not survive:
-  the two arms played one season, and its difference is zero by construction. Both arms play
-  one world, so equal counts with an outcome that differs is a lever that changed which moves
-  were made, not how many; it did something, and the row keeps both facts (`counts_equal`,
-  `outcomes_equal`).
+  the two arms played one season, and its difference is zero by construction. "Did nothing"
+  compares the outcomes and the counts, less the counts that part by construction between two
+  arms. Those are declared once, where the counts are defined (`counts.APART_BY_CONSTRUCTION`;
+  the screen names no count and reads that tuple): a count that can differ between two arms
+  that played one season is no difference of the season. Both rows are recorded whole. Both
+  arms play one world, so equal counts with an outcome that differs is a lever that changed
+  which moves were made, not how many; it did something, and the row keeps both facts
+  (`counts_equal`, `outcomes_equal`).
 - The table prints every row in the list's order, then the survivors.
 
 **What a screen cannot say.** One season, one forecaster and forty-eight paths by default, and a
