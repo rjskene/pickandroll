@@ -31,9 +31,10 @@ from . import policy
 from . import run as rn
 from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 
-#: The screen's version in its record: 1, the list of PR H1. A change to the list, to a nudge or
-#: to a rule below is a new version, and a folder started under another is refused.
-SCREEN_VERSION = 1
+#: The screen's version in its record: 2 since the stash threshold's lever (PR G: two rows more),
+#: 1 the list of PR H1. A change to the list, to a nudge or to a rule below is a new version, and
+#: a folder started under another is refused.
+SCREEN_VERSION = 2
 #: What the Monday step multiplies a plan floor by (``season.hillclimb``'s plan rule, where the
 #: figure is written in the rule itself): the step up of the knob's own grid; the step down
 #: divides by it.
@@ -180,6 +181,16 @@ def _horizon(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[St
     )
 
 
+def _stash(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    """The stash threshold's nudges (PR G): from none to a test with no margin, and to a quarter.
+    The knob has no grid (a floor of 0, no step), so the two are named, not stepped; one equal
+    to the baseline's value is refused by name like any other."""
+    return (
+        Step("0", "to 0", {"stash_threshold": 0.0}),
+        Step("0.25", "to 0.25", {"stash_threshold": 0.25}),
+    )
+
+
 def _sizing(base: rn.Arm, ctx: Context) -> Sequence[Step]:
     return (
         Step("0.5", "to 0.5", {"faab_sizing": 0.5}),
@@ -281,6 +292,7 @@ LEVERS: tuple[Lever, ...] = (
         _horizon,
         "executes weighted",
     ),
+    Lever("stash_threshold", "surrogate", "from none to 0 and to 0.25", _plain(_stash)),
     Lever("faab_sizing", "surrogate", "to 0.5 and to 2", _plain(_sizing)),
     Lever(
         "season_weight",

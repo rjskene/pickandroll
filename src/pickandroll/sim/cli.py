@@ -478,14 +478,27 @@ BIDS_NOTE = {
 }
 
 
-def counts_note(waivers: str = "none") -> dict[str, str]:
+#: What the stash count is (PR G): only in a run where an arm names a stash threshold.
+STASH_NOTE = {
+    "returning_dropped": "players who left the seat's roster (a move's drop, a churn's held "
+    "drop, a drop a returning held player forced) whom the engine read as returning on the "
+    "seat's problem the day before (moves.returning_net: out, back this season and worth "
+    "something then; a claim's drop as read the day the claim was placed); null for a seat "
+    "that builds no problem (a market or a static rival)",
+}
+
+
+def counts_note(waivers: str = "none", stash: bool = False) -> dict[str, str]:
     """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, the claims' too in a
-    waiver run, and in a FAAB run the bids' with the claims' said for bids."""
+    waiver run, and in a FAAB run the bids' with the claims' said for bids; ``stash``: the run
+    names a stash threshold (``run.stash_named``, PR G), and the note says its count."""
     if waivers == "none":
-        return COUNTS_NOTE
-    if waivers == "faab":
-        return {**COUNTS_NOTE, **CLAIMS_NOTE, **FAAB_CLAIMS_NOTE, **BIDS_NOTE}
-    return {**COUNTS_NOTE, **CLAIMS_NOTE}
+        note = COUNTS_NOTE
+    elif waivers == "faab":
+        note = {**COUNTS_NOTE, **CLAIMS_NOTE, **FAAB_CLAIMS_NOTE, **BIDS_NOTE}
+    else:
+        note = {**COUNTS_NOTE, **CLAIMS_NOTE}
+    return {**note, **STASH_NOTE} if stash else note
 
 
 def audited(
@@ -1350,8 +1363,9 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 14 since the arm's seat drafts from the market's board
-#: (#172, the draft PR), 13 since the rivals' adds and bids (PR Fd),
+#: The replay's version in its payload: 15 since the stash threshold (#172, PR G), 14 since the
+#: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
+#: (PR Fd),
 #: 12 since continuous waivers (PR Fc), 11 since the
 #: head-to-head format (the format PR),
 #: 10 since FAAB (PR Fb), 9 since the waivers (PR Fa), 8 since the league rules (PR D4c), 7 since the
@@ -1366,8 +1380,23 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 14
+REPLAY_VERSION = 15
 REPLAY_VERSION_WHY = (
+    "15: the stash threshold: an arm's stash_threshold is set on its seat's problem and read "
+    "there by the engine's searches on the exact and the surrogate tier (a set that drops a "
+    "returning player the threshold keeps is refused; the ranking tier's one swap is not held to "
+    "it, a mirror rival keeps none); a seat that plans with the engine names who leaves the "
+    "morning one of its held players comes back, the drop the engine's plan charges on the seat's "
+    "own problem, and the morning takes him when he is still one of the team's active players "
+    "(else, and for a seat that names none, the least valuable active player, as before); a run "
+    "where an arm names a threshold counts the returning players each seat dropped "
+    "(returning_dropped); a league without held slots with no threshold named has the figures of "
+    "the version before (its record differs in one word, the reads table's row for the knob), "
+    "and a league with held slots may differ from them at any threshold, none included, on the "
+    "mornings a returning held player forces a drop; and no add lands in a held slot: a swap "
+    "whose drop one of the morning's held-slot moves took to a held slot is gone, as a claim "
+    "whose drop is no longer an active player fails (before, an arm that executes its plan beside "
+    "its set could land a step's add in the slot its drop sat in, a season the audit refused). "
     "14: the arm's seat's draft under a table (--adp espn): it drafts as a rival does, from the "
     "market's board (the listed players by average pick plus a draw at the spread, the unlisted "
     "below by the run's forecaster's draft-day value) on the draw the rival in that seat on that "
@@ -2899,7 +2928,16 @@ def room_blocks(
             },
         },
         "counts": {
-            "note": counts_note(waivers),
+            # A run that names a stash threshold carries its count in every row (PR G).
+            "note": counts_note(
+                waivers,
+                any(
+                    m in (row or {})
+                    for r in results
+                    for row in r["counts"].values()
+                    for m in ct.STASH
+                ),
+            ),
             "rivals": None,
             "by_season": {
                 t: {
@@ -3196,7 +3234,7 @@ def paired_blocks(
             },
         },
         "counts": {
-            "note": counts_note(waivers),
+            "note": counts_note(waivers, rn.stash_named(arms.values())),
             "rivals": "the seats other than the pair's, both arms' seasons, as one row",
             "by_season": {
                 t: {

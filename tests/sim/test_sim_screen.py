@@ -61,13 +61,14 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
 
 # --------------------------------------------------------------------------- the list
 def test_the_list_is_written_in_the_code_and_is_the_brief_s():
-    assert sc.SCREEN_VERSION == 1
+    assert sc.SCREEN_VERSION == 2
     assert sc.NAMES == (
         "protection_floor",
         "daily_cap",
         "plan_floor_cats",
         "plan_floor_points",
         "horizon_weight",
+        "stash_threshold",
         "faab_sizing",
         "season_weight",
         "playoff_weight",
@@ -255,6 +256,25 @@ def test_the_playoff_weight_is_played_with_a_season_weight_in_both_arms():
     flat = policy.Shape(bracket=False)
     (unread,) = rows(base(), "playoff_weight", flat, BARE).values()
     assert unread.status == sc.NOT_READ and unread.why == "the league has no bracket read"
+
+
+def test_the_stash_threshold_goes_from_none_to_no_margin_and_to_a_quarter():
+    """PR G's rows: the knob has no grid, so its two nudges are named. It is read with or
+    without a held slot (an active player who is out is a returning player too), on the
+    surrogate tier, and a nudge that is the baseline's value is refused by name."""
+    assert BASE_KNOBS["stash_threshold"] is None
+    both = {"stash_threshold-0": 0.0, "stash_threshold-0.25": 0.25}
+    for shape, ctx in ((EVERY, RICH), (ONE, BARE), (POINTS, POINTS_CTX)):
+        assert to(base(), "stash_threshold", shape, ctx) == both
+    for held in (False, True):
+        assert to(base(), "stash_threshold", policy.Shape(held=held), BARE) == both
+    got = rows(base(), "stash_threshold")
+    assert {r.tier for r in got.values()} == {"surrogate"}
+    assert got["stash_threshold-0"].values == {"a": None, "b": 0.0}
+    at_zero = rows(base({"stash_threshold": 0}), "stash_threshold")
+    assert at_zero["stash_threshold-0"].status == sc.REFUSED
+    assert "to 0 is the baseline's value" in at_zero["stash_threshold-0"].why
+    assert at_zero["stash_threshold-0.25"].status == sc.PLAY
 
 
 def test_the_fields_and_the_spec_keys_take_the_list_s_values():
