@@ -1610,6 +1610,7 @@ class Configured(Protocol):
     with_plan: bool
     execute_plan: bool
     knobs: Mapping[str, Any]
+    guard: str
 
 
 #: What else reads a knob in a FAAB run (#172, PR Fb), said in the refusal's message after
@@ -1690,6 +1691,13 @@ QUEUE_SEASON = (
     "that weighs them against the set are the engine's own score, without the term; the season "
     "guard does not read the term and admits or refuses every plan all the same"
 )
+#: The same for a queue arm whose guard is ``off`` (the guard PR): the rule hands the engine no
+#: allowed set (:func:`draw_queue`), so the note must not say the guard still judges a plan.
+QUEUE_SEASON_OFF = (
+    "under queue the season term is on the three weeks' set only; the week plans and the gate "
+    "that weighs them against the set are the engine's own score, without the term; the arm's "
+    "guard is off, so the season guard refuses no set and no plan"
+)
 #: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
 NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"
 
@@ -1701,9 +1709,13 @@ def _queue(arm: Configured) -> bool:
 
 def read_notes(arm: Configured) -> dict[str, str]:
     """What the reads table says beside its rows for ``arm``, by knob (#172, PR E): for an arm
-    that takes the queue's rule, where its season term stands (:data:`QUEUE_SEASON`); nothing
-    for any other arm, whose record is as it was."""
-    return {"season_weight": QUEUE_SEASON} if _queue(arm) else {}
+    that takes the queue's rule, where its season term stands (:data:`QUEUE_SEASON`, or
+    :data:`QUEUE_SEASON_OFF` when the arm's guard is ``off``: the note never says the season
+    guard judges a plan the rule did not hand it); nothing for any other arm, whose record is
+    as it was."""
+    if not _queue(arm):
+        return {}
+    return {"season_weight": QUEUE_SEASON_OFF if arm.guard == OFF else QUEUE_SEASON}
 
 
 def _odds(arm: Configured, mirrored: bool) -> bool:

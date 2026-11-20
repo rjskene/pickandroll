@@ -560,6 +560,19 @@ def test_the_reads_table_of_an_arm_that_executes_queue():
     assert "without the term" in policy.QUEUE_SEASON
     assert policy.read_notes(three) == {}
     assert policy.read_notes(rn.Arm("S", "surrogate", KNOBS, {}, policy.QUEUE)) == {}
+    # Under the arm's guard off the rule hands the engine no allowed set, and the note says
+    # that: it never says the season guard admits or refuses a plan it was not asked about.
+    off = rn.Arm("Q", "exact", KNOBS, {}, policy.QUEUE, guard=policy.OFF, named=("guard",))
+    assert policy.read_notes(off) == {"season_weight": policy.QUEUE_SEASON_OFF}
+    assert "admits or refuses" in policy.QUEUE_SEASON
+    assert "admits or refuses" not in policy.QUEUE_SEASON_OFF
+    assert "refuses no set and no plan" in policy.QUEUE_SEASON_OFF
+    for words in ("on the three weeks' set only", "without the term"):
+        assert words in policy.QUEUE_SEASON and words in policy.QUEUE_SEASON_OFF
+    assert policy.read_notes(replace(three, guard=policy.OFF)) == {}
+    assert ss.reads_of({"a": q, "b": off}, [cats], True)["b"][cats.label()]["notes"] == {
+        "season_weight": policy.QUEUE_SEASON_OFF
+    }
     assert ss.reads_of({"a": three, "b": q}, [cats], True)["b"][cats.label()]["notes"] == {
         "season_weight": policy.QUEUE_SEASON
     }

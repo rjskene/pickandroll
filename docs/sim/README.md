@@ -664,7 +664,8 @@ constant (`stream.PLAN_FLOOR_ODDS`), ahead of the knob; a seat that would read i
 differs only on `plan_floor_cats` is refused in a one-win run and runs under `each_category` on
 an arm that executes the plan or executes `queue`. For an arm that executes `queue` the table
 carries one block more beside `knobs` and `fields`, `notes` (`policy.read_notes`): where the
-season term stands in the queue's rule; an arm that does not has no such key. The shape's label leaves the format out: one format a run, named in
+season term stands in the queue's rule (and, for an arm whose guard is `off`, that the season
+guard refuses no set and no plan); an arm that does not has no such key. The shape's label leaves the format out: one format a run, named in
 `league.rules.h2h`. A replay refuses two arms
 that differ only in knobs and fields that neither reads in the run: they are the same seat, and
 the message names each such knob, why it is not read and what would read it (a pair that
