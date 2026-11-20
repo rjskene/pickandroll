@@ -4,7 +4,10 @@ tiers that solve it, and the executor that lands what they decide.
 :func:`problem_of` mirrors ``api.season_moves.build`` step for step from in-memory inputs: the
 spans from the setup's calendar, the opponents projected with ``weekly.project_week`` from the
 shared beliefs, the candidates from the pool, the add limits from the league's rule and the adds
-used, the keep rule's inputs from the same beliefs, then the knobs. **Every knob comes in as a
+used, the keep rule's inputs from the same beliefs, then the knobs. This week's opponent and
+both sides' totals so far come from one place, :func:`week_view`; the runner keys a strategy
+that reads the week (:func:`reads_week`) on the same view (PR F2).
+**Every knob comes in as a
 mapping of the twelve names of** :data:`KNOBS` **(the ten the live knob file takes,
 ``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two); a
 missing name raises; nothing here reads the knob file.** The season guard is
@@ -143,8 +146,9 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from statistics import median
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
+from . import bid_policy as bp
 from . import bids
 from .engine import (
     DEFAULTS,
@@ -411,7 +415,12 @@ class Basis:
     (:func:`basis_of`).
     ``sizing`` is the seat's ``faab_sizing`` and ``floor`` its plan floor, the typical gain until
     ten moves (live); ``noise`` the market's draw by move, for each of its moves that is a claim
-    (an empty tuple when none is)."""
+    (an empty tuple when none is).
+
+    ``bid`` is the arm's bid policy when it names one (PR F2, :func:`with_bid`; None bids by the
+    live rule itself), with ``week`` and ``season`` each move's gain on the other horizons the
+    policy weighs, in the order of the decision's moves: its own gain to the set on the week, and
+    the season term's figure for it (none counted 0); each empty at a weight of 0."""
 
     rule: str
     gains: tuple[float, ...]
@@ -419,6 +428,9 @@ class Basis:
     sizing: float | None = None
     floor: float = 0.0
     noise: tuple[float, ...] = ()
+    bid: bp.BidPolicy | None = None
+    week: tuple[float, ...] = ()
+    season: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -543,19 +555,25 @@ def distinct(listed: Iterable[mv.Move]) -> list[mv.Move]:
     one is skipped, :func:`queue`), and of two moves of one drop the second to land finds its
     drop gone (:func:`land`). So a move left out for its add takes nothing, and one left out
     for its drop still holds its add: it is queued, and a later move of that add is skipped all
-    the same. A test holds the two readings together, list by list
+    the same. Its add never arrives, though, so a later move that drops him finds nobody at the
+    landing and is left out too, and so on down a chain (the lead's review of PR E; built in PR
+    F2). A test holds the two readings together, list by list
     (``tests/sim/test_sim_queue.py``). Nothing is taken out of the queue here: the executor
     queues from the whole list, as it did before the names were made with it. In a waiver
     league a claim rule can cut a move of the list first (README, limits, item 7)."""
     adds: set[int] = set()
     drops: set[int] = set()
+    gone: set[int] = set()
     out: list[mv.Move] = []
     for m in listed:
         if m.add in adds:
             continue  # the executor queues one move an add
         adds.add(m.add)
-        if m.drop is not None and m.drop in drops:
-            continue  # queued, and gone at the landing: an earlier move took its drop
+        if m.drop is not None and (m.drop in drops or m.drop in gone):
+            # Queued, and gone at the landing: an earlier move took its drop, or its drop is
+            # the add of a move that is itself gone. Either way its own add never arrives.
+            gone.add(m.add)
+            continue
         if m.drop is not None:
             drops.add(m.drop)
         out.append(m)
@@ -696,6 +714,132 @@ def live_bid(
     return bid_of(gain, typical, dollars, None, sizing, WAIVER_MARK).amount
 
 
+# --------------------------------------------------------------------------- the bid policy (PR F2)
+#: Everything of the seat's bid policy that is not the pure family (``sim/bid_policy.py``) is in
+#: this block and in :func:`queue`'s ``bid``: what a decision carries for it (:func:`with_bid`),
+#: the seat's fortnight on the horizons it weighs (:func:`fortnight_by`), the calendar a pace
+#: reads (:func:`bid_when`) and what a manager sees for one claim (:func:`bid_seen`).
+def with_bid(built: Built, decision: Decision, bid: bp.BidPolicy | None) -> Decision:
+    """``decision`` as an arm that names a ``bid`` block bids on it (#172, PR F2): its live
+    basis names the policy and carries each move's gain on the other horizons the policy weighs,
+    each only at a weight above 0: on the week the move's own gain to the set
+    (:func:`gains_of`, on the engine's plain evaluator, as the basis reads the three weeks), on
+    the season the season term's figure for it (:meth:`SeasonFigure.move` at the arm's
+    ``playoff_weight``; none counts 0). A plan's steps carry nothing more: a step keeps today's
+    value. The decision itself when the arm names no ``bid``, and for one without a live basis
+    (no FAAB league, the ranking tier): the moves are never changed, only what their claims bid
+    on."""
+    basis = decision.basis
+    if bid is None or basis is None or basis.rule != LIVE:
+        return decision
+    week: tuple[float, ...] = ()
+    season: tuple[float, ...] = ()
+    if decision.moves and bid.week > 0:
+        week = gains_of(mv.Evaluator(built.problem), bp.WEEK, decision.moves)
+    if decision.moves and bid.season > 0:
+        figure = SeasonFigure(built, knob(built.knobs, "playoff_weight"))
+        season = tuple(figure.move(m) or 0.0 for m in decision.moves)
+    return replace(decision, basis=replace(basis, bid=bid, week=week, season=season))
+
+
+def fortnight_by(
+    state: SimState, team: int, basis: Basis
+) -> tuple[Mapping[str, Mapping[int, tuple[tuple[date, float], ...]]], dict[str, float | None]]:
+    """``team``'s moves on the other horizons its bid policy weighs (the week, the season; each
+    only at a weight above 0), today's recommended moves counted, as ``SimState.recent_by``
+    keeps them; and its typical gain on each (the lead's working default, 2026-11-19):
+
+    - the fortnight's median by the engine's rule (``autopilot.typical_gain``) when the
+      fortnight holds ``TYPICAL_MIN`` moves or more, as the live rule's;
+    - else the median, by the same rule, of the seat's last ``TYPICAL_MIN`` moves on that
+      horizon whatever their age, once it has made that many: a seat that decides twice a week
+      seldom holds ten moves in a fortnight, and would read no size at all;
+    - else None: before its tenth move a move that gains counts as typical
+      (``bid_policy._ratio``).
+
+    So the state keeps the fortnight's moves and, where they are fewer, the last
+    ``TYPICAL_MIN``. With no ``bid`` named, or neither weight above 0, the state's own and no
+    typical: the three weeks' fortnight (``SimState.recent``) is never changed."""
+    rule = basis.bid
+    kept = state.recent_by
+    typicals: dict[str, float | None] = {}
+    if rule is None:
+        return kept, typicals
+    since = state.day - timedelta(TYPICAL_DAYS)
+    out = dict(kept)
+    for key, weight, today in (
+        (bp.WEEK, rule.week, basis.week),
+        (bp.SEASON, rule.season, basis.season),
+    ):
+        if not weight > 0:
+            continue
+        every = (*kept.get(key, {}).get(team, ()), *((state.day, x) for x in today))
+        last = len(every) - TYPICAL_MIN
+        mine = tuple(e for i, e in enumerate(every) if e[0] > since or i >= last)
+        out[key] = {**kept.get(key, {}), team: mine}
+        fortnight = [x for d, x in mine if d > since]
+        gains = fortnight if len(fortnight) >= TYPICAL_MIN else [x for _, x in mine]
+        typicals[key] = typical_gain(gains, 0.0)[0] if len(gains) >= TYPICAL_MIN else None
+    return out, typicals
+
+
+def bid_when(setup: Setup, day: date) -> bp.When:
+    """The calendar a pace reads for a claim decided on the morning of ``day``: the season's
+    first simulated day, the first day of the bracket's first week (the day after the season's
+    last where no bracket is read: the whole season is then regular) and the last morning a
+    claim can be decided, the season's last day."""
+    last = setup.season_end
+    weeks = set(setup.spec.playoff_weeks) if setup.spec is not None else set()
+    starts = [w.start for w in setup.calendar.weeks if w.number in weeks]
+    first = max(setup.start, min(w.start for w in setup.calendar.weeks))
+    return bp.When(day, first, min(starts) if starts else last + timedelta(1), last)
+
+
+def bid_seen(
+    setup: Setup,
+    state: SimState,
+    team: int,
+    basis: Basis,
+    typical: float,
+    typicals: Mapping[str, float | None],
+    i: int | None,
+    gain: float,
+    clears: date,
+) -> bp.Seen:
+    """What ``team``'s manager sees for the claim of its decision's move ``i``, or of a plan's
+    step when ``i`` is None, decided on ``clears`` (``bid_policy.Seen``, the walls). The
+    executor says which it is (:func:`queue`): under the queue's rule (PR E) a leading plan's
+    steps are queued and none of the set's moves, so a claim's place in the queue is not its
+    place among the decision's moves. Seen:
+    the move's ``gain`` and the seat's ``typical`` on the three weeks, its own dollars and
+    sizing, the league's budget, and only what its policy reads besides: the gains and typicals
+    on the week and the season, every other team's dollars left (the rival cap), the other
+    teams' winning bids of the season so far (the shade; never its own wins, never a bid that
+    lost and never one still sealed) and the calendar (the pace)."""
+    rule = basis.bid or bp.DEFAULT
+    step = i is None
+    more: dict[str, Any] = {}
+    if i is not None and rule.week > 0:
+        more |= {"week": basis.week[i], "typical_week": typicals.get(bp.WEEK)}
+    if i is not None and rule.season > 0:
+        more |= {"season": basis.season[i], "typical_season": typicals.get(bp.SEASON)}
+    if rule.rival_cap:
+        more["others"] = tuple(int(d) for t, d in sorted(state.dollars.items()) if t != team)
+    if rule.shade is not None:
+        more["wins"] = tuple(b for _, t, b in state.won_bids if t != team)
+    if rule.pace is not None:
+        more["when"] = bid_when(setup, clears)
+    return bp.Seen(
+        gain,
+        typical,
+        int(state.dollars.get(team, 0)),
+        basis.sizing,
+        step,
+        budget=setup.budget,
+        **more,
+    )
+
+
 # --------------------------------------------------------------------------- the problem
 def members_of(
     setup: Setup,
@@ -732,6 +876,63 @@ def bracket_days(setup: Setup) -> frozenset[date]:
     return frozenset(d for w in setup.calendar.weeks if w.number in weeks for d in w.days())
 
 
+class WeekView(NamedTuple):
+    """What a team's problem reads of this week beyond ``SimState.key()`` (:func:`week_view`):
+    its opponent, and each side's totals so far this week as the week's span takes them (a
+    points league's as its score). ``so_far_theirs`` is None with no opponent. It is hashable:
+    the runner's decision cache keys a strategy that reads the week on it."""
+
+    opponent: int | None
+    so_far: tuple[tuple[str, float], ...]
+    so_far_theirs: tuple[tuple[str, float], ...] | None
+
+
+def week_view(setup: Setup, state: SimState, me: int, week: int) -> WeekView:
+    """``me``'s view of ``week`` on ``state``: whom it plays (the other team of its pair in the
+    setup's pairings, None in a week they do not hold) and both sides' totals so far. The one
+    source of the week's opponent and totals: :func:`problem_of` builds the week's span from
+    it, and the runner's decision cache keys on it for a strategy that reads the week
+    (:func:`reads_week`), so a decision is never shared across two views the problem tells
+    apart."""
+    points = dict(setup.points) if setup.scoring == "points" and setup.points else None
+
+    def so_far_of(team: int) -> tuple[tuple[str, float], ...]:
+        totals = dict(state.totals.get(week, {}).get(team, {}))
+        return tuple(({wk.FPTS: fpts(totals, points)} if points else totals).items())
+
+    other = next(
+        (b if a == me else a for a, b in setup.pairings.get(week, ()) if me in (a, b)), None
+    )
+    return WeekView(other, so_far_of(me), so_far_of(other) if other is not None else None)
+
+
+def reads_week(
+    tier: str,
+    executes: str = QUEUE_SET,
+    with_plan: bool = True,
+    bid: bp.BidPolicy | None = None,
+) -> bool:
+    """Whether a seat's decision reads the value of this week, so its opponent and the week's
+    totals so far (:func:`week_view`):
+
+    - the exact tier when it executes the weighted set or the queue's rule (PR E:
+      :func:`draw_queue` searches the week's set and the week's plans), or draws the week's plan
+      (:func:`exact`);
+    - a tier that bids (the exact and the surrogate; a mirror rival is the surrogate) on an arm
+      whose ``bid`` weighs the week (PR F2): its decision carries each move's gain on the week
+      for its claims to be sized on (:func:`with_bid`), whatever set it searched.
+
+    The surrogate, the ranking and the exact tier's recommended set on the three weeks search
+    no week, and a ``bid`` that weighs the season reads the schedule and no matchup
+    (:class:`SeasonFigure`): their decisions are the same whatever the view (held by behaviour,
+    ``tests/sim/test_sim_bid_key.py``). A seat that says it reads the week where no claim is
+    ever sized (a league without FAAB) shares a little less and decides the same."""
+    searches = tier == "exact" and (executes in (WEIGHTED, QUEUE) or with_plan)
+    # The ranking tier holds no live basis, so its claims are sized on nothing (``with_bid``).
+    bids = tier in ("exact", "surrogate") and bid is not None and bid.week > 0
+    return searches or bids
+
+
 def problem_of(
     setup: Setup,
     state: SimState,
@@ -743,7 +944,9 @@ def problem_of(
     weeks_ahead: int = WEEKS_AHEAD,
 ) -> Built | None:
     """The move problem for ``me`` on ``state.day``; None with no week left. Mirrors
-    ``api.season_moves.build`` from in-memory inputs."""
+    ``api.season_moves.build`` from in-memory inputs. This week is read through
+    :func:`week_view`: against the pairing's opponent, projected on the same beliefs from its
+    active roster with both sides' totals so far, and against nobody for a team in no pair."""
     knobs = check_knobs(knobs)
     day = state.day
     weeks = setup.calendar.ahead(day, weeks_ahead)
@@ -770,19 +973,14 @@ def problem_of(
             members, beliefs, days, setup.schedule, slots, value, this_week, points=points
         )
 
-    def so_far_of(team: int) -> dict[str, float]:
-        totals = dict(state.totals.get(this.number, {}).get(team, {}))
-        return {wk.FPTS: fpts(totals, points)} if points else totals
-
-    other = next(
-        (b if a == me else a for a, b in setup.pairings.get(this.number, ()) if me in (a, b)), None
-    )
+    view = week_view(setup, state, me, this.number)
+    other = view.opponent
     week_span = mv.WeekSpan(
         tuple(days0),
         True,
         (project(other, days0, True),) if other is not None else (),
-        so_far_of(me),
-        (so_far_of(other),) if other is not None else (),
+        dict(view.so_far),
+        (dict(view.so_far_theirs),) if view.so_far_theirs is not None else (),
         None,
     )
     field_teams = [t for t in setup.teams if t != me]
@@ -1610,6 +1808,7 @@ class Configured(Protocol):
     with_plan: bool
     execute_plan: bool
     knobs: Mapping[str, Any]
+    bid: bp.BidPolicy | None
     guard: str
 
 
@@ -1625,7 +1824,29 @@ WHEN_READ_FAAB: Mapping[str, str] = {
         "in a points FAAB run by a seat that bids (the exact or the surrogate tier, a mirror "
         "rival), its typical gain until ten moves"
     ),
+    # PR F2: the season term's figure a bid weighs counts a bracket game playoff_weight times.
+    "playoff_weight": (
+        "in a FAAB run by a seat that bids (the exact or the surrogate tier, a mirror rival) on "
+        "an arm whose bid weighs the season (bid.season above 0), in a league whose bracket is "
+        "read"
+    ),
 }
+#: What makes an arm's ``bid`` block read (PR F2), for the refusal's message.
+BID_WHEN_READ = "a seat that bids in a FAAB league: the exact or the surrogate tier, a mirror rival"
+#: Why two ``bid`` blocks apart only on a pace at ``k`` 0 are one seat where the block is read
+#: (``bid_policy.BidPolicy.bids``), and what would read the difference.
+PACE_AT_REST = (
+    "the two blocks are apart only on a pace at k 0, which follows no path: its shape and its "
+    "reserve move no bid, and it bids as no pace does"
+)
+PACE_WHEN_READ = "a pace whose k is above 0"
+#: Why a plan floor is not read in a FAAB run by a seat that bids on an arm whose ``bid`` gives
+#: the three weeks no weight (PR F2): the floor is that horizon's typical gain until ten moves,
+#: and the block never reads it for a move of the set.
+NO_THREE = (
+    "the arm's bid gives the three weeks no weight (bid.week and bid.season sum to 1), and a "
+    "seat that bids reads the floor only as its typical gain on the three weeks"
+)
 
 #: What else limits where a knob is read (the format PR), said in the refusal's message after
 #: :data:`WHEN_READ`'s words and :data:`WHEN_READ_FAAB`'s: the categories plan floor is read only
@@ -1749,15 +1970,19 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     # A seat bids by the live rule in a FAAB league on the exact or the surrogate tier, and so
     # does a mirror rival on the arm's knobs (PR Fb): its bid scales by the typical gain, which is
     # the plan floor until ten moves. The ranking tier holds no gain in the engine's units, so its
-    # claims bid $0 and it reads neither. Under the queue's rule (PR E) the floor is the gate a
-    # week plan must clear to take the queue (``plans.gate_floor``): the rule draws and executes
-    # its own plan, so the arm's two plan switches are not asked.
+    # claims bid $0 and it reads neither. That typical is the three weeks': an arm whose ``bid``
+    # gives the three weeks no weight (PR F2) never reads it for a move of its set, and then
+    # only a week plan's own route reads the floor: a streaming plan the arm executes, or the
+    # queue's rule. Under the queue's rule (PR E) the floor is the gate a week plan must clear
+    # to take the queue (``plans.gate_floor``): the rule draws and executes its own plan, so
+    # the arm's two plan switches are not asked, and an arm that executes ``queue`` reads its
+    # league's floor whatever its ``bid`` weighs.
     bids = shape.waivers == "faab" and odds
+    rule = getattr(arm, "bid", None)
+    three = rule is None or rule.three > 0
     queue = _queue(arm)
     for name, scoring in (("plan_floor_cats", "categories"), ("plan_floor_points", "points")):
-        if bids and shape.scoring == scoring:
-            why = READ
-        elif arm.tier != "exact":
+        if arm.tier != "exact":
             why = "only the exact tier draws a week plan"
         elif not queue and not arm.with_plan:
             why = "the arm draws no week plan"
@@ -1767,6 +1992,8 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
             why = f"a {shape.scoring} league"
         else:
             why = READ
+        if bids and shape.scoring == scoring and why != READ:
+            why = READ if three else NO_THREE
         # In a one-win league the engine's floor is its own and the knob reaches nothing (the
         # format PR); a seat that would not read it anyway keeps its reason.
         if why == READ and name == "plan_floor_cats" and shape.one_win:
@@ -1817,7 +2044,28 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
         out["playoff_weight"] = "the league has no bracket read"
     else:
         out["playoff_weight"] = READ
+    # PR F2: a bid that weighs the season reads the season term's figure, which counts a bracket
+    # game ``playoff_weight`` times, whatever the arm's ``season_weight``.
+    if bids and rule is not None and rule.season > 0 and shape.bracket:
+        out["playoff_weight"] = READ
     return {k: out[k] for k in KNOBS}
+
+
+def bid_reads(arm: Configured, shape: Shape, mirrored: bool = False) -> str:
+    """:data:`READ` when ``arm``'s ``bid`` block (PR F2) can change what its seat, or its mirror
+    rivals, bid in a league of ``shape``, else the reason it cannot, as :func:`reads` says of
+    ``faab_sizing``: it is read only in a FAAB league, by a seat that bids by the live rule (the
+    exact or the surrogate tier, a mirror rival). Naming it elsewhere is allowed and moves
+    nothing."""
+    if shape.waivers == "faab" and _odds(arm, mirrored):
+        return READ
+    if shape.waivers == "none":
+        return "the world has no waivers and no budget"
+    if shape.waivers != "faab":
+        return f"waivers by {shape.waivers} carry no budget and no bid"
+    if arm.tier == "ranking":
+        return "the ranking tier holds no gain in the engine's units: it bids $0"
+    return STATIC
 
 
 #: The arm's two season fields beside its knobs and its four fields (#172, the guard PR), in the
@@ -1975,7 +2223,10 @@ def queue(
     the market rivals' typical gain over the fortnight before today, or with ``rival_bids``
     ``book``, PR Fd, ``bids.book_bid`` on the book at its move's rank among the market rivals'
     moves of that fortnight), and $0 for a decision without a basis. A free agent's add carries
-    no bid.
+    no bid. A seat whose arm names a ``bid`` block (PR F2, :func:`with_bid`) bids by the family
+    (``bid_policy.amount``) on what its manager sees that day (:func:`bid_seen`), a pace read on
+    the morning the claim is decided; every claim of a seat that bids by the live rule or the
+    family carries its value in typicals (``Claim.value``), which no decision reads.
 
     Under continuous waivers (``setup.continuous``, PR Fc) every add is a claim: on a player
     nobody dropped lately it clears tomorrow, on a dropped player on his clear date, by the same
@@ -1990,6 +2241,10 @@ def queue(
         scaled = [0.0] * len(moves)
     else:
         scaled = list(basis.gains)
+    # The set's moves gathered: ``moves[i]`` below it is the decision's move ``i``, and from it
+    # on a plan's step (every one when a plan leads). What the bid policy is told (PR F2): a
+    # step keeps today's value, and never reads the set's gains on the week or the season.
+    of_set = len(moves)
     moves += [m for m, _ in due]
     scaled += [basis.plan[j] if basis is not None and basis.plan else 0.0 for _, j in due]
     waiting = setup is not None and setup.waiting
@@ -2015,6 +2270,10 @@ def queue(
     recent, market_recent = state.recent, state.market_recent
     dollars = int(state.dollars.get(team, 0))
     gains: list[float] = []
+    # The bid policy's (PR F2): the seat's three weeks' typical, and its fortnight and typicals
+    # on the other horizons its policy weighs.
+    typical = 0.0
+    recent_by, typicals = state.recent_by, {}
     if basis is not None and basis.rule == LIVE:
         # The seat's fortnight, today's recommended moves counted (the live queue's typical gain
         # is over the days ``today - TYPICAL_DAYS < day <= today``).
@@ -2023,21 +2282,30 @@ def queue(
         own += tuple((state.day, x) for x in basis.gains)
         recent = {**state.recent, team: own}
         gains = [x for _, x in own]
+        typical = typical_gain(gains, basis.floor)[0]
+        recent_by, typicals = fortnight_by(state, team, basis)
     elif basis is not None and basis.rule == MARKET:
         since = state.day - timedelta(RIVAL_BIDS.days)
         market_recent = tuple((d, x) for d, x in state.market_recent if d > since)
         market_recent += tuple((state.day, x) for x in basis.gains)
 
-    def bid(i: int) -> int:
-        """The sealed bid of the claim of ``moves[i]``."""
+    def bid(i: int, clears: date) -> tuple[int, float]:
+        """The sealed bid of the claim of ``moves[i]``, decided on ``clears``, and the claim's
+        value in typicals (PR F2; 0 for a seat that holds none)."""
         assert setup is not None
         if basis is None:
-            return 0
+            return 0, 0.0
         gain = scaled[i]
         if basis.rule == LIVE:
-            return live_bid(gain, gains, basis.floor, dollars, basis.sizing)
+            # The bid policy (PR F2). An arm that names no ``bid`` bids by the live rule itself.
+            at = i if i < of_set else None
+            seen = bid_seen(setup, state, team, basis, typical, typicals, at, gain, clears)
+            worth = bp.value(basis.bid or bp.DEFAULT, seen)
+            if basis.bid is None:
+                return live_bid(gain, gains, basis.floor, dollars, basis.sizing), worth
+            return bp.amount(basis.bid, seen), worth
         if setup.rival_bids == BOOK:
-            return bids.book_bid(
+            on_book = bids.book_bid(
                 gain,
                 state.market_recent,
                 state.day,
@@ -2049,8 +2317,9 @@ def queue(
                 RIVAL_BIDS.days,
                 RIVAL_BIDS.least,
             )
-        typical = market_typical(state.market_recent, state.day, gain)
-        return rival_bid(gain, typical, dollars, setup.rival_scale, basis.noise[i])
+            return on_book, 0.0
+        usual = market_typical(state.market_recent, state.day, gain)
+        return rival_bid(gain, usual, dollars, setup.rival_scale, basis.noise[i]), 0.0
 
     for i, m in enumerate(moves):
         if len(kept) + len(placed) >= max(0, daily_cap):
@@ -2088,7 +2357,9 @@ def queue(
         if m.drop is not None:
             claimed_drops.add(m.drop)
         churn = m.drop is not None and m.drop in held_keys
-        placed.append(Claim(mv.Move(m.add, m.drop), state.day, clears, number, (), churn, bid(i)))
+        placed.append(
+            Claim(mv.Move(m.add, m.drop), state.day, clears, number, (), churn, *bid(i, clears))
+        )
     pending = dict(state.pending)
     pending[team] = tuple(kept)
     # Whom the seat's returning held players send (PR G), for tomorrow morning alone: the
@@ -2138,6 +2409,7 @@ def queue(
         claim_counts=counts,
         recent=recent,
         market_recent=market_recent,
+        recent_by=recent_by,
         sends=sends,
     )
 
@@ -2500,6 +2772,9 @@ def clear_waivers(
         executed[team] = executed.get(team, 0) + 1
 
     dollars = dict(state.dollars)
+    # A FAAB league's (PR F2): the season's winning bids, which every manager sees, and each
+    # team's value won.
+    won_bids, value_won = list(state.won_bids), dict(state.value_won)
     while not bidding:
         team = next((t for t in order if open_.get(t)), None)
         if team is None:
@@ -2565,6 +2840,8 @@ def clear_waivers(
         open_[team].remove(c)
         make(team, c, made)
         dollars[team] = dollars.get(team, 0) - c.bid
+        won_bids.append((day, team, c.bid))
+        value_won[team] = value_won.get(team, 0.0) + c.value
         log.append(Resolved(team, add, drop, WON, behind, c.bid))
         tally(team, WON, behind)
         bump(team, "won_free", int(c.bid == 0))
@@ -2595,6 +2872,8 @@ def clear_waivers(
         resolved=tuple(log),
         claim_counts=counts,
         dollars=dollars,
+        won_bids=tuple(won_bids),
+        value_won=value_won,
     )
 
 

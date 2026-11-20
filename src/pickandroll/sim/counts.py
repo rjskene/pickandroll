@@ -12,7 +12,9 @@ lost: a waiver run's only, so a run without waivers counts as before. In a FAAB 
 also the dollars spent and left at the end, the claims won at $0, lost to a higher bid, lost on a
 tie and won with no other claim on the player, and the dollars won claims paid above the next
 bid that could have been taken and lost claims fell short of the winning bid by: a FAAB run's
-only, the world's knowledge of every bid, which no decision reads. In a run where an arm names a
+only, the world's knowledge of every bid, which no decision reads; and (PR F2) the dollars left
+on the first day of the bracket, the weeks the seat stood at $0 and the value its won claims
+were sized on, for every seat of a FAAB run whatever its bid policy. In a run where an arm names a
 stash threshold (PR G) also the returning players the seat dropped: such a run's only, so a run
 that names none counts as before. In a run where an arm takes the queue's rule (PR E) also the
 days the queue took a week plan instead of the three weeks' set and the steps of those plans the
@@ -62,7 +64,7 @@ CLAIMS = {
 }
 #: The bid counts (PR Fb), a FAAB run's only, after :data:`CLAIMS`, by metric: the key each reads
 #: in ``SimState.claim_counts`` (``state.BID_COUNTS``), or None for the dollars, read on
-#: ``SimState.dollars``.
+#: ``SimState.dollars``, and for the bid policy's three (PR F2, :data:`PACING`).
 BIDS: dict[str, str | None] = {
     "dollars_spent": None,
     "dollars_left": None,
@@ -72,7 +74,17 @@ BIDS: dict[str, str | None] = {
     "claims_won_alone": "alone",
     "bid_over_next": "over",
     "bid_short": "short",
+    "dollars_at_bracket": None,
+    "weeks_at_zero": None,
+    "value_won": None,
 }
+#: The bid policy's three counts (PR F2), the last of :data:`BIDS`, for every seat of a FAAB run
+#: whatever its ``bid`` (so a pair compares): did it pace (the dollars left on the first
+#: simulated day of the bracket's first week, after that morning's claims; None where no bracket
+#: is read), did it run dry (the days it stood at $0, in weeks; 0 when it never did), and what a
+#: dollar bought (the summed value in typicals of the claims it won, ``Claim.value``, to divide
+#: by ``dollars_spent``; 0 for a seat that holds no such value: the ranking tier, a market rival).
+PACING = ("dollars_at_bracket", "weeks_at_zero", "value_won")
 
 
 #: The stash count (PR G), after :data:`BIDS`, only in a run where an arm names a stash
@@ -115,6 +127,10 @@ APART_BY_CONSTRUCTION: tuple[str, ...] = (
     # decided past the guard and never queued is no difference in the season, and one that is
     # queued shows in the other counts.
     "sets_past_guard",
+    # PR F2: the summed value in typicals of the claims a seat won is measured in the arm's own
+    # weights, so a weight of the bid block moves it by itself, whatever the arm then bids. Two
+    # arms apart in it alone placed the same claims at the same bids and played one season.
+    "value_won",
 )
 
 
@@ -145,6 +161,11 @@ class Tally:
         self.waiting = setup.waiting
         self.bidding = setup.bidding
         self.budget = setup.budget
+        #: The bid policy's counts (PR F2): the first week of the bracket (None when it is not
+        #: read), each team's dollars on its first simulated day, and its days at $0.
+        self.bracket = min(setup.spec.playoff_weeks, default=None) if setup.spec else None
+        self.at_bracket: dict[int, int] = {}
+        self.dry = dict.fromkeys(self.teams, 0)
         first = setup.week_of(setup.start)
         #: Adds charged to each week, by team; the adds made before day one count in its week.
         self.adds: dict[int, dict[int, int]] = {t: {} for t in self.teams}
@@ -207,7 +228,8 @@ class Tally:
 
     def day(self, week: int, state: SimState) -> None:
         """A simulated day of ``week``: each held player's stint goes on or begins; on the
-        week's first, a counted seat's stake for the week is kept (``SimState.stakes``)."""
+        week's first, a counted seat's stake for the week is kept (``SimState.stakes``); in a
+        FAAB league each team's dollars are read, once the morning's claims are decided."""
         if week not in self.weeks:
             for t, by_week in self.stakes.items():
                 if t in state.stakes:
@@ -218,6 +240,12 @@ class Tally:
             self.stints[t] += len(now - self._held[t])
             self.held_days[t] += len(now)
             self._held[t] = now
+            if self.bidding:
+                left = int(state.dollars.get(t, self.budget))
+                if week == self.bracket:
+                    self.at_bracket.setdefault(t, left)
+                if left <= 0:
+                    self.dry[t] += 1
 
     def played(
         self,
@@ -256,11 +284,16 @@ class Tally:
             if self.bidding:
                 bids = state.claim_counts.get(t, {})
                 left = int(state.dollars.get(t, self.budget))
-                dollars = {"dollars_spent": self.budget - left, "dollars_left": left}
-                out[t] |= {
-                    m: float(dollars[m] if key is None else bids.get(key, 0))
-                    for m, key in BIDS.items()
+                own: dict[str, float | None] = {
+                    "dollars_spent": self.budget - left,
+                    "dollars_left": left,
+                    "dollars_at_bracket": self.at_bracket.get(t),
+                    "weeks_at_zero": self.dry[t] / 7,
+                    "value_won": state.value_won.get(t, 0.0),
                 }
+                for m, key in BIDS.items():
+                    x = own[m] if key is None else bids.get(key, 0)
+                    out[t][m] = None if x is None else float(x)
             if self.stash:
                 n = self.returning_dropped.get(t)
                 out[t]["returning_dropped"] = None if n is None else float(n)
@@ -312,6 +345,7 @@ __all__ = [
     "CLAIMS",
     "HALF",
     "METRICS",
+    "PACING",
     "PLANS",
     "SEASON",
     "STASH",

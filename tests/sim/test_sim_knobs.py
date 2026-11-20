@@ -831,6 +831,7 @@ FULL_SPEC = {
     "min_gain": 0.02,
     "weeks_ahead": 3,
     "surrogate_days": [0, 3],
+    "bid": {"routine": 1},
     "guard": "off",
     "stake": 0,
     "fit_sha": "abc",

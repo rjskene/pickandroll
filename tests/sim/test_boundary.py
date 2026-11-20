@@ -250,6 +250,7 @@ CORE = (
     "bids",
     "screen",
     "stake",
+    "bid_policy",
 )
 #: What the core never imports: files, processes, the network, stores on disk.
 NO_IO = {

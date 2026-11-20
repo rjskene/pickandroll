@@ -1007,8 +1007,10 @@ def test_the_part_of_a_list_that_can_land_together_takes_each_add_and_each_drop_
     is left out. A move left out for its add takes nothing (the executor never queues it); one
     left out for its drop still holds its add (it is queued, and gone at the landing); an add
     with no drop shares none; a step that drops an earlier move's add (a streaming plan's
-    chain) stays."""
-    a, b, c, x, y = 1, 2, 3, 11, 12
+    chain) stays, unless that add's own move was left out for its drop: he never arrives, so
+    the step that drops him is left out too, and the one that drops that step's add after it
+    (the lead's review of PR E, built in PR F2)."""
+    a, b, c, d, x, y = 1, 2, 3, 4, 11, 12
     first = mv.Move(a, x)
     assert policy.distinct([]) == []
     assert policy.distinct([first, mv.Move(a, y)]) == [first]
@@ -1019,6 +1021,16 @@ def test_the_part_of_a_list_that_can_land_together_takes_each_add_and_each_drop_
     assert policy.distinct([mv.Move(a), mv.Move(b), mv.Move(a)]) == [mv.Move(a), mv.Move(b)]
     chain = [first, mv.Move(b, a), mv.Move(c, y)]
     assert policy.distinct(chain) == chain
+    # A chain behind a move that is gone: its add never arrives, nor does the next one's.
+    assert policy.distinct([first, mv.Move(b, x), mv.Move(c, b)]) == [first]
+    assert policy.distinct([first, mv.Move(b, x), mv.Move(c, b), mv.Move(d, c)]) == [first]
+    assert policy.distinct([first, mv.Move(b, x), mv.Move(c, b), mv.Move(d, y)]) == [
+        first,
+        mv.Move(d, y),
+    ]
+    # A move left out for its add takes nothing: the add it repeats does arrive, and a later
+    # move may drop him.
+    assert policy.distinct([first, mv.Move(a, y), mv.Move(b, a)]) == [first, mv.Move(b, a)]
     # A date is not read: a step is the move it makes.
     assert policy.distinct([first, mv.Move(a, x, cats().start)]) == [first]
 
@@ -1066,6 +1078,22 @@ def test_the_moves_the_names_are_made_with_are_the_moves_the_morning_lands():
             met["the whole list lands"] += len(kept) == len(listed)
     assert all(met[k] > 0 for k in ("a step skipped", "a step gone", "both in one list"))
     assert met["the whole list lands"] > 0
+    # One list more (the lead's review of PR E): a step due repeats the set's drop, so its add
+    # never arrives, and a second step due drops that add. The landing finds neither.
+    a, x = every[0].add, every[0].drop
+    c, d = wire[1], wire[2]
+    plan = (mv.Move(c, x, tomorrow), mv.Move(d, c, tomorrow))
+    decision = policy.Decision((every[0],), (), plan, 1, "x")
+    first, due = policy.gathered(decision, True, lambda add: tomorrow)
+    listed = [*first, *(s for s, _ in due)]
+    assert [(m.add, m.drop) for m in listed] == [(a, x), (c, x), (d, c)]
+    assert [(m.add, m.drop) for m in policy.distinct(listed)] == [(a, x)]
+    night = policy.queue(state, 1, decision, 9, 9, True, spots, setup)
+    assert [(m.add, m.drop) for m in night.pending[1]] == [(a, x), (c, x), (d, c)]
+    landed = policy.land(night, [1], spots, counts, {}, value)
+    roster = {k for k, _ in landed.rosters[1]}
+    assert a in roster and x not in roster and not {c, d} & roster
+    assert (landed.executed, landed.gone) == (1, 2)
 
 
 def test_a_seat_that_holds_no_player_names_nobody_and_its_decision_is_untouched():
@@ -1640,13 +1668,22 @@ def pair_digest(setup) -> tuple[str, int]:
     The pair's plan floors are below zero, so the first arm takes each plan the stream draws
     (as ``test_sim_knobs.py``'s read cases do) and the digest holds the executor's plan path. At
     ``KNOBS``' floor of 0 the every-category digest moved with the process's hash seed: a plan
-    that ties its set was taken or not on a float's last bit."""
+    that ties its set was taken or not on a float's last bit.
+
+    The three count keys PR F2 adds to a FAAB run (``counts.PACING``) are set aside, as
+    ``test_sim_continuous.season_digest`` sets them aside for main's pins (the lead's answer to
+    F2's first question): the digests pinned before them still compare every figure they
+    covered, and the new keys have their own tests (``test_sim_bid_seat.py``)."""
     knobs = {**KNOBS, "daily_cap": 3, "plan_floor_cats": -1.0, "plan_floor_points": -1.0}
     three = rn.Arm("A", "exact", knobs, {"kind": "market"}, policy.QUEUE_SET, True, True)
     weighted = rn.Arm("B", "exact", knobs, {"kind": "market"}, policy.WEIGHTED, False, False)
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *PATH)
     days: list[rn.DayRecord] = []
     out = rounded(rn.paired(setup, w, three, weighted, 1, on_day=days.append))
+    out["counts"] = {
+        side: {m: x for m, x in row.items() if m not in ct.PACING}
+        for side, row in out["counts"].items()
+    }
     planned = sum(1 for r in days if r.variant == 0 and r.decisions[1].plan)
     digest = hashlib.sha256(json.dumps(out, sort_keys=True, default=str).encode()).hexdigest()
     return digest, planned

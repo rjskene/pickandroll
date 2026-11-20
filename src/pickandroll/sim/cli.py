@@ -353,6 +353,52 @@ def hash_seed() -> str:
     return os.environ.get("PYTHONHASHSEED") or "random"
 
 
+#: What an arm's ``bid`` block is (#172, PR F2), beside the block in the payload of a run whose
+#: arm names one.
+BID_NOTE = (
+    "an arm listed under bid names a bid block, every key here with its value in force: in a "
+    "FAAB run its seat on the exact or the surrogate tier, and its mirror rivals, bid by the "
+    "bid policy family (sim/bid_policy.py) in place of the live rule the league's FAAB note "
+    "describes: the move's value in typicals weighed over the week, the three weeks (the rest "
+    "of the weight) and the season; times a pace, the seat's share of the budget left over a "
+    "spending path, to the power k, read on the morning the claim is decided; a base of one "
+    "typical or less bids the routine dollars, a larger one the base times faab_sizing; then "
+    "at most the richest other team's dollars left plus one (rival_cap), at most a quantile of "
+    "the other teams' winning bids of the season so far plus one (shade), and the clamp to the "
+    "dollars left. It reads only what a manager sees: no sealed bid, no losing bid, nothing of "
+    "the rivals' bid model. A plan's step keeps the live rule's value. With every key at its "
+    "default it is the live rule; an arm not listed names none and bids by the live rule "
+    "itself; outside a FAAB run the block is read by nobody (reads)"
+)
+
+
+def bid_block(arms: Mapping[str, rn.Arm] | None) -> dict[str, Any]:
+    """The arms' bid policies for the payload (#172, PR F2): under ``bid``, by the arm's key,
+    every key of the block with its value in force (``bid_policy.BidPolicy.payload``) for each
+    arm that names one, and :data:`BID_NOTE` beside it; nothing at all in a run whose arms name
+    none (Rule 1)."""
+    named = {k: arm.bid.payload() for k, arm in (arms or {}).items() if arm.bid is not None}
+    return {"bid": named, "bid_note": BID_NOTE} if named else {}
+
+
+def bid_lines(
+    arms: Mapping[str, rn.Arm], shapes: Sequence[policy.Shape], rivals: bool
+) -> list[str]:
+    """What a run says of each arm that names a ``bid`` block (#172, PR F2), before any path, in
+    a dry run and in the no-peek check alike: the block in words, and why the run's league does
+    not read it when it does not (``policy.bid_reads``)."""
+    out = []
+    for key, arm in arms.items():
+        if arm.bid is None:
+            continue
+        mirror = rivals and rn.mirrored(arm)
+        whys = [policy.bid_reads(arm, shape, mirror) for shape in shapes]
+        unread = "" if policy.READ in whys or not whys else f"; not read in this run: {whys[0]}"
+        whose = f"arm {key.upper()} ({arm.name})" if rivals else f"arm {key}"
+        out.append(f"bid policy, {whose}: {arm.bid.label()}{unread}")
+    return out
+
+
 def base_payload(
     kind: str,
     name: str,
@@ -372,7 +418,8 @@ def base_payload(
     model (``policy.executions_of`` its waivers, PR Fa, and its waiver rule, PR Fc); ``measure``, what the run's format gives
     a seat that weighs (``policy.measure``, the format PR; a replay's, beside it); ``book``, the
     price book its rivals bid on (``readers.newest_book``, PR Fd): its hash, its file and its
-    table's hash beside the fit's, in a run that names it only. An arm's ``fields`` carry its
+    table's hash beside the fit's, in a run that names it only. An arm that names a ``bid``
+    block (PR F2) is listed under ``bid`` (:func:`bid_block`). An arm's ``fields`` carry its
     guard and its stake (the guard PR) when its spec names them, and only then."""
     fields = {k: arm.fields for k, arm in (arms or {}).items()} or {"gate": policy.Fields()}
     season = {k: arm.season_payload() for k, arm in (arms or {}).items()}
@@ -404,6 +451,7 @@ def base_payload(
             k: {"pool": f.pool, "days": list(f.surrogate_days), "plan": "daily"}
             for k, f in fields.items()
         },
+        **bid_block(arms),
         "period_calendar": {
             "source": reader.PERIOD_SOURCE,
             "period_one": {str(k): v.isoformat() for k, v in reader.PERIOD_ONE.items()},
@@ -477,6 +525,15 @@ BIDS_NOTE = {
     "bid_over_next": "dollars won claims paid above the next bid that could have been taken (the "
     "whole bid when there was none): the world's knowledge, not the seat's",
     "bid_short": "dollars lost claims fell short of the winning bid by: the world's knowledge",
+    "dollars_at_bracket": "dollars left on the first day of the bracket, after that morning's "
+    "claims (none where no bracket is read)",
+    "weeks_at_zero": "weeks the seat stood at $0: its days with nothing left, over seven (0 "
+    "when it never ran dry)",
+    "value_won": "the value of the claims won, in typicals: what each bid was sized on when it "
+    "was placed (the bid policy's value; the three weeks' gain over the seat's typical gain by "
+    "default), summed, to divide by dollars_spent; a claim whose gain is 0 or less on a typical "
+    "at or below 0 counts 0 and one whose gain is above 0 there counts 1; 0 for a seat that "
+    "holds no gain in the engine's units (the ranking tier, a market rival)",
 }
 
 
@@ -714,7 +771,8 @@ def reads_of(
 ) -> dict[str, Any]:
     """The reads table by arm and by each shape of the run: each knob and field ``read`` or the
     reason it is not (``policy.reads``, ``policy.field_reads``), an arm's guard and stake among
-    its fields when its spec names them (``policy.season_reads``, the guard PR); and for an arm
+    its fields when its spec names them (``policy.season_reads``, the guard PR); for an arm
+    that names a ``bid`` block (PR F2) the block's row (``policy.bid_reads``); and for an arm
     that executes ``queue`` only (PR E), ``notes``: what the table says beside a row
     (``policy.read_notes``: where the season term stands in the queue's rule)."""
     out: dict[str, Any] = {}
@@ -726,6 +784,7 @@ def reads_of(
                 "knobs": policy.reads(arm, shape, mirror),
                 "fields": policy.field_reads(arm, mirror)
                 | {k: v for k, v in policy.season_reads(arm, shape).items() if k in arm.named},
+                **({} if arm.bid is None else {"bid": policy.bid_reads(arm, shape, mirror)}),
                 **({"notes": notes} if notes else {}),
             }
             for shape in sorted(set(shapes), key=lambda s: s.label())
@@ -1423,8 +1482,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 17 since the queue's rule (#172, PR E), 16 since the
-#: season guard as an arm's choice and the
+#: The replay's version in its payload: 18 since the bid policy (#172, PR F2), 17 since the
+#: queue's rule (#172, PR E), 16 since the season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
 #: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
 #: (PR Fd),
@@ -1442,8 +1501,25 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 17
+REPLAY_VERSION = 18
 REPLAY_VERSION_WHY = (
+    "18: the bid policy: an arm's spec may name a bid block; its seat on the exact or the "
+    "surrogate tier, and its mirror rivals, then bid in a FAAB league by a family of rules whose "
+    "default member is the live rule (the gain weighed over the week, the three weeks and the "
+    "season; a pace against a spending path; the routine dollar; a cap at the richest other "
+    "team's dollars left plus one; a shade at a quantile of the other teams' winning bids plus "
+    "one); a week plan's step keeps the live value, under the queue's rule too, where the "
+    "executor says which claim is a step; the bid reads the season figure with no stake; the "
+    "reads table has the block's row, playoff_weight is read by a seat that bids on an arm whose "
+    "bid weighs the season, and a plan floor is not read as a seat's typical gain where the bid "
+    "gives the three weeks no weight; a run whose arm names a block records it under bid; a "
+    "decision is shared between two variants only on one view of the week (its team's opponent "
+    "and both sides' totals so far) for a strategy that reads the week: the exact tier on the "
+    "weighted set, the queue's rule or a week's plan, and a seat or a mirror rival whose bid "
+    "weighs the week; with no bid named the figures are version 17's, but for two arms of one "
+    "name whose seat reads the week (apart only in their rivals or in execute_plan), which "
+    "could be handed each other's decision before, and a FAAB run's counts gain three keys "
+    "(dollars_at_bracket, weeks_at_zero, value_won). "
     "17: the queue's rule: an exact arm's executes may name queue, the live queue's rule (the "
     "three weeks' set as three finds it, then the week plan the engine's plans.for_queue takes "
     "instead of it: the plan with the highest score that beats the set by the plan floor, the "
@@ -1563,9 +1639,9 @@ ADP_LIMIT = {
         "in a result; it never drafts a player its forecaster has no line for (a rookie under a "
         "forecaster built on earlier seasons), where a rival does, so the season's best "
         "newcomers always start on rivals' rosters; a starting belief taken from the market for "
-        "such a player is not built; and an average roster is no average finish: a seat that "
-        "plays the season harder than its rivals finishes above the middle of the room, and how "
-        "far above is not settled (looks of twelve paths: near the top on every path at one "
+        "such a player is not built; and an average roster is no average finish: a surrogate "
+        "seat that plays the season harder than its rivals finishes above the middle of the room, "
+        "and how far above is not settled (looks of twelve paths: near the top on every path at one "
         "seed, out of the playoffs on a share of the paths at two more), so a verdict on "
         "playoff odds needs more paths than a look plays"
     ),
@@ -2356,6 +2432,8 @@ def replay_plan(
     if same:
         print(f"refused: {same}")
         return 2
+    for line_ in bid_lines(arms, shapes_read, paired):
+        print(line_)
     for r in reads:
         for line_ in weights_lines(r.fits):
             print(line_.replace("belief weights, ", f"belief weights, {r.season}, ", 1))

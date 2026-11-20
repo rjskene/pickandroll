@@ -11,7 +11,8 @@ roster change in one arm reshuffles nothing for any player: common random number
 :func:`simulate` advances several variants of one league through the same world day by day: the
 moves decided yesterday land, each seat decides on the day's beliefs, the lineup is set, the day
 is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
-states agree share one solve (the lockstep of the design note); from the first divergence each
+states agree share one solve (the lockstep of the design note; a strategy that reads the week,
+on one view of the week too: :func:`decision_key`, PR F2); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
 of the season's outcomes, B less A; :func:`room` runs a league's seats under named arms rotated
 across paths.
@@ -34,6 +35,7 @@ from typing import Any
 import numpy as np
 
 from . import adp, audit, policy, shapes, world
+from . import bid_policy as bp
 from . import counts as ct
 from . import league as lg
 from . import opponents as op
@@ -111,6 +113,9 @@ class Arm:
     guard: str = policy.BLOCK
     stake: float = 0.0
     named: tuple[str, ...] = ()
+    #: The arm's bid policy (PR F2, ``bid_policy.of`` its spec's ``bid`` block); None when the
+    #: spec names none, and the seat bids by the live rule itself.
+    bid: bp.BidPolicy | None = None
 
     def seat(self) -> op.Seat:
         return op.Seat(
@@ -123,6 +128,7 @@ class Arm:
             self.forecaster,
             guard=self.guard,
             stake=self.stake,
+            bid=self.bid,
         )
 
     def season_payload(self) -> dict[str, Any]:
@@ -143,6 +149,7 @@ SPEC_KEYS = (
     "execute_plan",
     *policy.FIELDS,
     *policy.SEASON_FIELDS,
+    "bid",
     "fit_sha",
 )
 
@@ -155,14 +162,15 @@ PLAN_KEYS = ("with_plan", "execute_plan")
 def arm_of(spec: Mapping[str, Any]) -> Arm:
     """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
     four fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
-    ``surrogate_days``; ``policy.fields_of``), and its guard and its stake when it names them
-    (the guard PR, ``policy.season_of``); a key the simulator does not read
+    ``surrogate_days``; ``policy.fields_of``), its guard and its stake when it names them
+    (the guard PR, ``policy.season_of``) and its ``bid`` block (PR F2,
+    ``bid_policy.of``); a key the simulator does not read
     (:data:`SPEC_KEYS`, and ``opponents.SPEC_KEYS`` under ``opponents``), a knob missing,
     unknown or out of the engine's bounds, a field out of its own, a tier unknown, a guard named
-    on a tier that has none or a stake with no season weight to scale is refused by name. So is
-    ``executes: queue`` on a tier other than the exact one (``policy.queue_refused``), and
-    ``with_plan`` or ``execute_plan`` named beside it, whatever its value: the queue's rule
-    draws and executes its own plan (#172, PR E)."""
+    on a tier that has none, a stake with no season weight to scale or a ``bid`` key unknown or
+    out of its own is refused by name. So is ``executes: queue`` on a tier other than the exact
+    one (``policy.queue_refused``), and ``with_plan`` or ``execute_plan`` named beside it,
+    whatever its value: the queue's rule draws and executes its own plan (#172, PR E)."""
     unknown = [k for k in spec if k not in SPEC_KEYS]
     if unknown:
         raise ValueError(
@@ -200,6 +208,7 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
         guard=guard,
         stake=stake,
         named=named,
+        bid=bp.of(spec["bid"]) if "bid" in spec else None,
     )
 
 
@@ -224,7 +233,11 @@ def same_seat(
     play, as in a comparison, so a mirror reads), each such name with why it is not read and what
     would make it read: the two are then the same seat, and a run of them a no-op by
     construction. None when they differ in anything else, in a name one of them reads in some
-    shape, or in nothing at all (the same arm twice, a check that the difference is zero)."""
+    shape, or in nothing at all (the same arm twice, a check that the difference is zero). The
+    arms' ``bid`` blocks (PR F2) are one more such name, compared as the policy in force (an arm
+    that names none holds the default member) and read as ``policy.bid_reads`` says; where the
+    block is read, two blocks that bid alike on every claim (``BidPolicy.bids``: apart only on
+    a pace at ``k`` 0, which follows no path) are still one seat, by that reason."""
 
     def identity(arm: Arm) -> tuple[Any, ...]:
         return (
@@ -243,7 +256,9 @@ def same_seat(
         + [f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)]
         + [f for f in policy.SEASON_FIELDS if getattr(a, f) != getattr(b, f)]
     )
-    if not names:
+    rule_a, rule_b = a.bid or bp.DEFAULT, b.bid or bp.DEFAULT
+    bids = rule_a != rule_b
+    if not names and not bids:
         return None
     out = []
     for name in names:
@@ -266,6 +281,18 @@ def same_seat(
             + (f", and {also}" if also else "")
             + (f"; {only}" if only else "")
         )
+    if bids:
+        rows = [
+            policy.bid_reads(arm, shape, rivals and mirrored(arm))
+            for arm in (a, b)
+            for shape in shapes
+        ]
+        if policy.READ not in rows:
+            out.append(f"bid ({rows[0]}; read by {policy.BID_WHEN_READ})")
+        elif rule_a.bids() != rule_b.bids():
+            return None
+        else:
+            out.append(f"bid ({policy.PACE_AT_REST}; read by {policy.PACE_WHEN_READ})")
     return out
 
 
@@ -748,6 +775,33 @@ def queue_named(variants: Sequence[Mapping[int, op.Strategy]]) -> bool:
     )
 
 
+def decision_key(
+    setup: Setup, state: SimState, team: int, strat: op.Strategy, week: int
+) -> tuple[Any, ...]:
+    """What two variants must hold alike on a day to share ``team``'s decision: the team, the
+    strategy in its seat (its ``repr``) and ``SimState.key()``; and for a strategy that reads
+    the week (``policy.reads_week``: the exact tier on the weighted set, the queue's rule or a
+    week's plan; a seat or a mirror whose ``bid`` weighs the week), the team's view of the week
+    too (``policy.week_view``: its opponent and both sides' totals so far), which the state's
+    key does not hold (PR F2). Before it, two variants that held one such ``repr`` in a seat,
+    two arms of one name or one mirror rival of two arms, could be handed each other's decision
+    once their states agreed again on other totals. Every other strategy's decision is the same
+    whatever the view.
+
+    A seat that reads a stake (the guard PR) decides on its own week's figure too
+    (``SimState.stakes``, which the state's key leaves out), so the key holds it, None for a
+    seat with no stake."""
+    level = state.stakes.get(team) if getattr(strat, "stake", 0.0) > 0 else None
+    view = policy.week_view(setup, state, team, week) if _reads_week(strat) else None
+    return (team, repr(strat), state.key(), level, view)
+
+
+def _reads_week(strat: op.Strategy) -> bool:
+    """A strategy that does not say (a static or a market rival, a test's double) does not
+    read the week."""
+    return bool(getattr(strat, "reads_week", False))
+
+
 def simulate(
     setup: Setup,
     w: World,
@@ -894,9 +948,7 @@ def simulate(
                 strat = variants[vi].get(team)
                 if strat is None or strat.kind == "static":
                     continue
-                # A seat that reads a stake decides on its own week's figure too.
-                level = state.stakes.get(team) if getattr(strat, "stake", 0.0) > 0 else None
-                key = (team, repr(strat), state.key(), level)
+                key = decision_key(setup, state, team, strat, week.number)
                 if key in cache:
                     decision = cache[key]
                     shared[vi] += decision.solves
@@ -1014,7 +1066,7 @@ def _counted(arms: Sequence[Arm], seated: Mapping[int, Arm]) -> dict[int, tuple[
 
 
 def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
-    other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields)
+    other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields, arm.bid)
     return {t: other for t in setup.teams if t != me}
 
 

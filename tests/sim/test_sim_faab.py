@@ -460,6 +460,11 @@ def test_a_faab_run_s_counts_carry_the_dollars_and_the_bids_after_the_claims():
         "claims_won_alone": 0.0,
         "bid_over_next": 2.0,
         "bid_short": 0.0,
+        # PR F2's three: the made-up morning is no simulated day, so no day was read; the
+        # claims' bids were set by hand, so they carry no value.
+        "dollars_at_bracket": None,
+        "weeks_at_zero": 0.0,
+        "value_won": 0.0,
     }
     assert (rows[3]["claims_lost_bid"], rows[3]["bid_short"], rows[3]["dollars_left"]) == (
         1,

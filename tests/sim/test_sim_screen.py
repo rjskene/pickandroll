@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from pickandroll.sim import bid_policy as bp
 from pickandroll.sim import counts as ct
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
@@ -29,6 +30,16 @@ BARE = sc.Context()
 RICH = sc.Context("categories", "faab", 0.8, sc.NO_RATIO)
 POINTS_CTX = sc.Context("points", "none", 0.8, sc.NO_RATIO)
 ARM_KEYS = ("tier", "executes", "with_plan", "execute_plan")
+#: The bid policy's levers (PR F2), each a key of an arm's ``bid`` block by its dotted name.
+BID_NAMES = (
+    "bid.week",
+    "bid.season",
+    "bid.pace.k",
+    "bid.pace.reserve",
+    "bid.routine",
+    "bid.rival_cap",
+    "bid.shade",
+)
 
 
 def base(knobs: dict[str, Any] | None = None, **more: Any) -> dict[str, Any]:
@@ -62,12 +73,13 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
         {k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]}
         | {f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)}
         | {k for k in (*ARM_KEYS, *policy.SEASON_FIELDS) if getattr(a, k) != getattr(b, k)}
+        | {n for n in BID_NAMES if sc.value_of(a, n) != sc.value_of(b, n)}
     )
 
 
 # --------------------------------------------------------------------------- the list
 def test_the_list_is_written_in_the_code_and_is_the_brief_s():
-    assert sc.SCREEN_VERSION == 4
+    assert sc.SCREEN_VERSION == 5
     assert sc.NAMES == (
         "protection_floor",
         "daily_cap",
@@ -89,6 +101,7 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "blend",
         "guard",
         "stake",
+        *BID_NAMES,
     )
     exact = {lever.name for lever in sc.LEVERS if lever.tier == "exact"}
     assert exact == {
@@ -100,8 +113,13 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "execute_plan",
     }
     assert all(lever.tier in ("exact", "surrogate") and lever.nudge for lever in sc.LEVERS)
-    # Every name is a knob, a field or a key of an arm's spec: nothing the arm parser refuses.
-    assert set(sc.NAMES) <= {*policy.KNOBS, *policy.FIELDS, *rn.SPEC_KEYS}
+    # Every name is a knob, a field or a key of an arm's spec, or a key of its ``bid`` block by
+    # its dotted name: nothing the arm parser refuses.
+    assert set(sc.NAMES) - set(BID_NAMES) <= {*policy.KNOBS, *policy.FIELDS, *rn.SPEC_KEYS}
+    assert "bid" in rn.SPEC_KEYS and all(n.startswith(sc.BID) for n in BID_NAMES)
+    for name in BID_NAMES:
+        key, *sub = name.removeprefix(sc.BID).split(".")
+        assert key in bp.KEYS and (not sub or sub[0] in (*bp.PACE_KEYS, *bp.SHADE_KEYS)), name
     # A plan floor is on the list twice (PR E): beside the set, and under queue with rows of
     # its own; every other lever once. No two rows of the list start their keys alike.
     twice = [lever.name for lever in sc.LEVERS if lever.key]
@@ -234,6 +252,21 @@ def test_a_plan_floor_is_screened_on_the_exact_tier_executing_the_plan():
     # A baseline that draws no plan is set to draw one.
     drawn = rows(base(with_plan=False), "plan_floor_cats")["plan_floor_cats-up"]
     assert drawn.both == {"tier": "exact", "with_plan": True, "execute_plan": True}
+
+
+def test_a_plan_floor_s_row_adds_no_note_where_the_bid_gives_the_three_weeks_no_weight():
+    """The note a plan floor's row adds in a FAAB run says a seat that bids also reads the floor,
+    as its typical gain until ten moves. Under a baseline whose ``bid`` gives the three weeks
+    no weight no seat's set reads that typical (``policy.reads``, PR F2), so the row adds
+    nothing; at any weight above 0 on the three weeks it adds the note."""
+    for block, note in (
+        ({"week": 1}, None),
+        ({"week": 0.5, "season": 0.5}, None),
+        ({"week": 0.75}, sc.PLAN_FAAB_NOTE),
+        ({}, sc.PLAN_FAAB_NOTE),
+    ):
+        r = rows(base(bid=block), "plan_floor_cats")["plan_floor_cats-up"]
+        assert r.status == sc.PLAY and r.note == note, block
 
 
 def test_a_plan_floor_is_screened_under_queue_in_rows_of_its_own():
@@ -461,6 +494,152 @@ def test_the_two_sources_levers_follow_the_reads_table_on_the_surrogate():
     assert all(r.both == {"system": "blend", "blend": 0.5} for r in mix.values())
     own = rows(base({"system": "blend", "blend": 0.4}), "blend")
     assert all(r.both == {} and r.values["a"] == 0.4 for r in own.values())
+
+
+# --------------------------------------------------------------------------- the bid policy's levers
+def test_a_bid_weight_steps_once_each_way_and_a_step_the_block_refuses_is_not_played():
+    assert sc.WEIGHT_STEP == 0.25
+    for key in ("week", "season"):
+        lever = f"bid.{key}"
+        got = rows(base(), lever)
+        down, up = got[f"{lever}-down"], got[f"{lever}-up"]
+        assert (down.status, down.why) == (sc.NOT_PLAYED, f"bid {key} -0.25: a number from 0 to 1")
+        assert up.status == sc.PLAY and up.values == {"a": 0.0, "b": 0.25} and up.both == {}
+        assert up.nudge == "one step up: 0 to 0.25"
+        # Arm A is the baseline as it is written, with no block; arm B names the one key.
+        assert "bid" not in up.a and up.b["bid"] == {key: 0.25}
+    assert to(base(bid={"week": 0.75}), "bid.week") == {"bid.week-down": 0.5, "bid.week-up": 1.0}
+    top = rows(base(bid={"week": 1}), "bid.week")["bid.week-up"]
+    assert (top.status, top.why) == (sc.NOT_PLAYED, "bid week 1.25: a number from 0 to 1")
+    # The two weights sum to at most 1: a step past that is the block's own refusal.
+    full = rows(base(bid={"week": 0.5, "season": 0.5}), "bid.season")
+    assert full["bid.season-down"].values == {"a": 0.5, "b": 0.25}
+    assert (full["bid.season-up"].status, full["bid.season-up"].why) == (
+        sc.NOT_PLAYED,
+        "bid week 0.5 and season 0.75: their sum is at most 1 (the three weeks take the rest)",
+    )
+    # The baseline's other keys stand in both arms.
+    kept = rows(base(bid={"week": 0.75, "routine": 1}), "bid.season")["bid.season-up"]
+    assert kept.a["bid"] == {"week": 0.75, "routine": 1}
+    assert kept.b["bid"] == {"week": 0.75, "routine": 1, "season": 0.25}
+
+
+def test_the_pace_s_levers_are_played_on_a_pace_in_both_arms():
+    assert sc.PACE_PATH == {"k": 1.0, "shape": 1.0, "reserve": 0.2} and sc.RESERVE_STEP == 0.2
+    # A baseline that names no pace holds the list's path at k 0 in both arms.
+    at_zero = {"k": 0.0, "shape": 1.0, "reserve": 0.2}
+    got = rows(base(), "bid.pace.k")
+    assert {k: r.values for k, r in got.items()} == {
+        "bid.pace.k-0.5": {"a": 0.0, "b": 0.5},
+        "bid.pace.k-1": {"a": 0.0, "b": 1.0},
+    }
+    assert all(r.status == sc.PLAY and r.both == {"bid.pace": at_zero} for r in got.values())
+    assert got["bid.pace.k-1"].a["bid"] == {"pace": at_zero}
+    assert got["bid.pace.k-1"].b["bid"] == {"pace": {**at_zero, "k": 1.0}}
+    # At k 0 no path is read, so arm A bids as the baseline: wherever it stands, on no calendar.
+    a, plain = rn.arm_of(got["bid.pace.k-1"].a), rn.arm_of(base())
+    assert plain.bid is None
+    for dollars in (5, 50, 100):
+        seen = bp.Seen(4.0, 1.0, dollars, budget=100)
+        assert bp.amount(a.bid, seen) == bp.amount(bp.DEFAULT, seen)
+    # The baseline's own pace stands, its k alone moved.
+    own = rows(base(bid={"pace": {"k": 0, "shape": 2, "reserve": 0.3}}), "bid.pace.k")
+    assert all(r.both == {} for r in own.values())
+    assert own["bid.pace.k-0.5"].b["bid"] == {"pace": {"k": 0.5, "shape": 2, "reserve": 0.3}}
+    # The reserve is nudged on a pace that follows its path in both arms: the list's ...
+    (r,) = rows(base(), "bid.pace.reserve").values()
+    assert (r.key, r.status, r.values) == ("bid.pace.reserve-up", sc.PLAY, {"a": 0.2, "b": 0.4})
+    assert r.both == {"bid.pace": dict(sc.PACE_PATH)}
+    # ... the baseline's shape and reserve at the list's k where the baseline holds k 0 ...
+    still = base(bid={"pace": {"k": 0, "shape": 2, "reserve": 0.3}})
+    (r,) = rows(still, "bid.pace.reserve").values()
+    assert r.values == {"a": 0.3, "b": 0.5}
+    assert r.both == {"bid.pace": {"k": 1.0, "shape": 2.0, "reserve": 0.3}}
+    # ... and the baseline's own where it follows one.
+    (r,) = rows(
+        base(bid={"pace": {"k": 2, "shape": 2, "reserve": 0.3}}), "bid.pace.reserve"
+    ).values()
+    assert r.both == {} and r.values == {"a": 0.3, "b": 0.5}
+    assert rn.arm_of(r.a).bid.pace.k == rn.arm_of(r.b).bid.pace.k == 2
+    # A reserve of 1 or more is the block's refusal.
+    (r,) = rows(
+        base(bid={"pace": {"k": 1, "shape": 2, "reserve": 0.8}}), "bid.pace.reserve"
+    ).values()
+    assert (r.status, r.why) == (
+        sc.NOT_PLAYED,
+        "bid pace reserve 1.0: a number, 0 or more and below 1",
+    )
+
+
+def test_the_routine_the_cap_and_the_shade_take_the_list_s_values():
+    assert to(base(), "bid.routine") == {"bid.routine-flipped": 1}
+    assert to(base(bid={"routine": 1}), "bid.routine") == {"bid.routine-flipped": 0}
+    assert to(base(), "bid.rival_cap") == {"bid.rival_cap-on": True}
+    assert sc.SHADE_ON == {"q": 0.9, "least": 10}
+    assert to(base(), "bid.shade") == {"bid.shade-on": {"q": 0.9, "least": 10}}
+    # A baseline that shades at another quantile is moved to the list's.
+    other = rows(base(bid={"shade": {"q": 0.5, "least": 3}}), "bid.shade")["bid.shade-on"]
+    assert other.status == sc.PLAY
+    assert other.nudge == "to on: {q 0.5, least 3} to {q 0.9, least 10}"
+    assert rows(base(), "bid.shade")["bid.shade-on"].nudge == "to on: none to {q 0.9, least 10}"
+    assert rows(base(), "bid.rival_cap")["bid.rival_cap-on"].nudge == "to on: false to true"
+    # On already, at the list's value: the nudge is the baseline's and is refused by name.
+    cases = (
+        (base(bid={"rival_cap": True}), "bid.rival_cap", "to on is the baseline's value (true)"),
+        (
+            base(bid={"shade": dict(sc.SHADE_ON)}),
+            "bid.shade",
+            "to on is the baseline's value ({q 0.9, least 10})",
+        ),
+        (base(bid={"pace": dict(sc.PACE_PATH)}), "bid.pace.k", "to 1 is the baseline's value (1)"),
+    )
+    for spec, lever, why in cases:
+        refused = [r for r in rows(spec, lever).values() if r.status == sc.REFUSED]
+        assert len(refused) == 1, lever
+        assert refused[0].why.startswith(f"lever {lever}: ") and why in refused[0].why
+
+
+def test_a_bid_lever_is_read_only_in_a_faab_run_by_the_block_s_own_reason():
+    unread = (
+        (ONE, "the world has no waivers and no budget"),
+        (policy.Shape(waivers="priority"), "waivers by priority carry no budget and no bid"),
+    )
+    arm = rn.arm_of(base())
+    for lever in BID_NAMES:
+        for shape, why in unread:
+            (r,) = sc.rows_of(base(), [lever], [shape], BARE)
+            assert (r.status, r.key, r.a, r.b, r.why) == (sc.NOT_READ, lever, None, None, why)
+            assert sc.read_why(lever, arm, [shape]) == policy.bid_reads(arm, shape) == why
+        # Read by FAAB in either format, and where one of the run's leagues is by FAAB.
+        for shapes_ in ([policy.Shape(waivers="faab")], [EVERY], [ONE, EVERY]):
+            got = sc.rows_of(base(), [lever], shapes_, BARE)
+            assert any(r.status == sc.PLAY for r in got), lever
+            assert sc.read_why(lever, arm, shapes_) is None
+    # A baseline on another tier is screened on the surrogate, as every lever of that tier.
+    r = rows({**base(), "tier": "ranking"}, "bid.routine")["bid.routine-flipped"]
+    assert r.status == sc.PLAY and r.both == {"tier": "surrogate"}
+    # A baseline whose block the arm parser refuses is refused as it refuses it.
+    with pytest.raises(ValueError, match="bid week 2: a number from 0 to 1"):
+        sc.rows_of(base(bid={"week": 2}), ["bid.week"], [EVERY], RICH)
+
+
+def test_a_dotted_name_writes_into_the_bid_block_and_reads_the_policy_in_force():
+    plain = base()
+    change = {"bid.week": 0.25, "bid.pace": dict(sc.PACE_PATH), "bid.pace.k": 0.5}
+    spec = sc.applied(plain, change)
+    assert spec["bid"] == {"week": 0.25, "pace": {"k": 0.5, "shape": 1.0, "reserve": 0.2}}
+    assert "bid" not in plain and change["bid.pace"] == sc.PACE_PATH
+    # A key written into a block the baseline names leaves the baseline's own alone.
+    named = base(bid={"pace": {"k": 1, "shape": 2, "reserve": 0.3}, "routine": 1})
+    moved = sc.applied(named, {"bid.pace.reserve": 0.5})
+    assert moved["bid"] == {"pace": {"k": 1, "shape": 2, "reserve": 0.5}, "routine": 1}
+    assert named["bid"]["pace"]["reserve"] == 0.3
+    # What an arm holds under a dotted name is its policy in force: the default member's where
+    # it names no block, and None for a figure of a pace it does not name.
+    assert [sc.value_of(rn.arm_of(spec), n) for n in BID_NAMES] == [0.25, 0.0, 0.5, 0.2, 0, False, None]  # fmt: skip
+    assert [sc.value_of(rn.arm_of(plain), n) for n in BID_NAMES] == [0.0, 0.0, None, None, 0, False, None]  # fmt: skip
+    assert sc.value_of(rn.arm_of(moved), "bid.pace") == {"k": 1.0, "shape": 2.0, "reserve": 0.5}
+    assert sc.shown(dict(sc.PACE_PATH)) == "{k 1, shape 1, reserve 0.2}"
 
 
 # --------------------------------------------------------------------------- what a league reads
@@ -746,6 +925,31 @@ def test_the_screen_reads_the_declaration_and_names_no_count(monkeypatch):
         assert {name: read(paths) for name, paths in plain.items()} == before
         same = sc.result_of(flat, plain["same"], "matchup_wins")
         assert sc.result_words(same) == words and LESS in words
+
+
+def test_a_pair_apart_only_in_the_value_its_claims_were_sized_on_did_nothing():
+    """``value_won`` (PR F2) is what a seat's won claims were sized on, in typicals: for the
+    bid's weight on the week or on the season it restates the lever's own setting, whatever the
+    arm then bids. A pair whose two arms place the same claims at the same bids, win the same
+    ones and finish alike played one season, and is marked "did nothing" (found in review: the
+    count alone kept the mark off). Every other count of the bids still tells two seasons apart,
+    and so does the value won beside one of them."""
+    flat = pair({("2024", "prior"): {}})
+    bids = {"claims_won": 3.0, "dollars_spent": 7.0, "dollars_at_bracket": 40.0}
+    a, b = {**bids, "value_won": 2.5}, {**bids, "value_won": 3.25}
+    got = sc.result_of(flat, [path(), path(a=a, b=b)], "matchup_wins")
+    assert got["counts_equal"] and got["outcomes_equal"] and got["did_nothing"]
+    assert not got["survives"] and sc.result_words(got).startswith("did nothing (")
+    # It is declared with the counts that part by construction (the one declaration).
+    assert "value_won" in ct.APART_BY_CONSTRUCTION and "value_won" in ct.BIDS
+    # The record keeps the count in both arms' rows, as every other.
+    assert set(got["cells"]["2024"]["prior"]["counts"]) == {"a", "b"}
+    for key, count in bids.items():
+        moved = sc.result_of(flat, [path(a=a, b={**b, key: count + 1})], "matchup_wins")
+        assert not moved["counts_equal"] and not moved["did_nothing"], key
+    # An outcome that differs is a lever that did something, whatever the counts.
+    odd = sc.result_of(flat, [path(a=a, b=b, delta=1.0)], "matchup_wins")
+    assert odd["counts_equal"] and not odd["outcomes_equal"] and not odd["did_nothing"]
 
 
 def test_a_result_keeps_every_outcome_and_both_arms_counts_by_cell():
