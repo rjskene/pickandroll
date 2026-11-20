@@ -178,6 +178,36 @@ def test_the_weeks_add_windows_are_the_weeks_own_days_under_the_rule():
     assert later[0].adds == today[0].adds == base.max_weekly_adds
 
 
+def test_a_claim_clearing_on_a_weeks_first_morning_is_the_week_befores_to_the_executor():
+    """The one difference with the live build, held as it is (the README, "A league whose adds
+    play the same day"). Under the rule the problem weighs a claim that clears on a week's first
+    morning against the new week's adds (his effective day falls in the next week's window,
+    the weeks' own days), while the executor charges the claim to the week of the day before
+    it lands, as under the default rule: the morning's landing is charged to the day before's
+    week, and the week starts over after it. So on a Sunday a seat at its week's limit has such
+    a claim refused by the queue (placed nowhere, counted nowhere), and one with an add left has
+    it placed and charged to the week that ends that day."""
+    base = replace(make_setup(teams=4, max_weekly_adds=2), waivers="priority", waiver_days=2)
+    setup = same_day(base)
+    spots, _ = spots_of(setup)
+    week = setup.calendar.weeks[1]
+    sunday, monday = week.end, week.end + DAY
+    s = initial(setup)
+    x = min(s.pool)
+    s = replace(s, day=sunday, waivers={x: Waiting(monday, 2)})
+    p = built_on(setup, sunday, state=s).problem
+    assert p.effective[x] == monday
+    first, second = p.limits[0], p.limits[1]
+    assert (first.start, first.end, second.start) == (sunday, sunday, monday)
+    drop = setup.rosters[1][-1][0]
+    claim = policy.Decision((mv.Move(x, drop),))
+    full = policy.queue(replace(s, adds_used={1: 2}), 1, claim, 1, 2, False, spots, setup)
+    assert full.claims.get(1, ()) == () and full.pending.get(1, ()) == ()
+    room = policy.queue(replace(s, adds_used={1: 1}), 1, claim, 1, 2, False, spots, setup)
+    (placed,) = room.claims[1]
+    assert placed.clears == monday and placed.week == week.number
+
+
 def test_a_plans_step_of_a_free_agent_is_due_today_and_a_claims_on_its_clear_date():
     setup = replace(make_setup(teams=4), waivers="priority", waiver_days=2)
     day = setup.start + DAY
