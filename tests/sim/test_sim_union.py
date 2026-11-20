@@ -30,6 +30,7 @@ from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
 from pickandroll.sim import engine, nopeek, policy, shapes
 from pickandroll.sim import opponents as op
+from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, sg, wk
@@ -698,6 +699,22 @@ def test_a_room_of_the_two_counts_both_arms_seats(h2h):
     assert {k: room["counts"]["A"][k] for k in UNION_KEYS} == dict.fromkeys(UNION_KEYS, 0.0)
 
 
+def test_a_pair_played_apart_counts_the_union_as_the_pair_played_together():
+    """A pair under a draft table plays its two seasons apart (``run.paired_apart``), each
+    through a world of its own. On one league and one ``(seed, path)`` twice that is the pair
+    played together: the same counts on both arms' seats, the union's among them, the arm at
+    0 its zeros. One format: what is asked is the counts' road, not what a seat weighs."""
+    setup = refusing(now=True)
+    off, on = armed("A", pool=2), armed("B", pool=2, guard_pool=30)
+    together = rn.paired(setup, replay_of(setup, 2, 0), off, on, 1)
+    apart = rn.paired_apart(
+        setup, replay_of(setup, 2, 0), setup, replay_of(setup, 2, 0), off, on, 1
+    )
+    assert apart["breaches"] == [] and apart["counts"] == together["counts"]
+    assert apart["counts"]["b"]["union_days"] > 1 and apart["counts"]["b"]["union_taken_days"] >= 1
+    assert {k: apart["counts"]["a"][k] for k in UNION_KEYS} == dict.fromkeys(UNION_KEYS, 0.0)
+
+
 @pytest.mark.parametrize("h2h", FORMATS)
 def test_rule_1_a_run_of_arms_at_zero_has_no_new_key_and_guard_pool_zero_named_is_unnamed(h2h):
     """Rule 1 in a season: two arms that leave the field off, one of them naming 0, play the
@@ -932,11 +949,19 @@ WEEKS = 3
 PATHS = 2
 #: A replay records no market rate, so the arms name their rivals' own.
 RIVALS = {"kind": "market", "rate": 0.4}
+#: The screen's baseline: a surrogate arm whose head (200) holds every add that clears its
+#: ``min_gain``, so the guard's list can bring none the head does not hold, and which draws no
+#: week plan (that set is searched among the first ``pool`` candidates: the whole wire here).
+BASE = {
+    **spec("B", "surrogate", pool=200, min_gain=0.5, with_plan=False),
+    "opponents": RIVALS,
+}
 SPECS = {
     "A": {**spec("A", pool=2), "opponents": RIVALS},
     "B": {**spec("B", pool=2, guard_pool=30), "opponents": RIVALS},
     "S": {**spec("S", "surrogate"), "opponents": RIVALS},
     "SG": {**spec("SG", "surrogate", guard_pool=30), "opponents": RIVALS},
+    "base": BASE,
 }
 
 
@@ -1009,3 +1034,47 @@ def test_the_command_refuses_a_pair_that_differs_only_in_the_field_where_it_is_u
     assert code == 2, out
     assert "refused: arms a and b are the same seat: they differ only in guard_pool (the " in out
     assert "read by the exact tier" in out and "tasks (" not in out
+
+
+def test_the_screen_plays_the_row_on_the_exact_tier_and_reads_did_nothing_by_the_rule(
+    data: Path, small
+):
+    """The row through the command, one format (the command's default). The baseline is a
+    surrogate arm, and the pair is played on the exact tier in both arms, which the row and
+    the pair's record say. Its head holds every add that clears ``min_gain``, so the list
+    brings nothing, the two arms play one season (the seat moves in both) and the row reads
+    "did nothing", though the arm with the list counts a union on every decision day and the
+    arm at 0 none: those counts are recorded whole and not compared
+    (``counts.APART_BY_CONSTRUCTION``)."""
+    argv = ["--data", str(data), "--rooms", "0", "screen", "--arm", str(data / "base.json")]
+    argv += ["--workers", "1", "--seed", "5", "--paths", str(PATHS), "--seasons", "2024"]
+    argv += ["--levers", "guard_pool", "--name", "row"]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = ss.main(argv)
+    out = buf.getvalue()
+    assert code == 0, out
+    rec = reader.read_screen(data, "row")
+    assert rec is not None
+    (row,) = rec["rows"]
+    assert (row["key"], row["status"], row["tier"]) == ("guard_pool-30", sc.PLAYED, "exact")
+    assert row["both"] == {"tier": "exact"} and row["values"] == {"a": 0, "b": 30}
+    got = reader.read_screen_pair(data, "row", "guard_pool-30")
+    assert got is not None
+    assert got["specs"]["a"] == {**BASE, "tier": "exact"}
+    assert got["specs"]["b"] == {
+        **BASE,
+        "tier": "exact",
+        "guard_pool": 30,
+        "name": "B:guard_pool-30",
+    }
+    assert got["audit"]["paths_voided"] == 0 and got["screen"]["tier"] == "exact"
+    assert set(got["fields"]["a"]) == set(FOUR) and got["fields"]["b"]["guard_pool"] == 30
+    result = row["result"]
+    counts = result["cells"]["2024"]["prior"]["counts"]
+    assert counts["a"]["union_days"]["mean"] == 0 and counts["b"]["union_days"]["mean"] > 1
+    assert counts["b"]["union_admitted"]["mean"] == 0 == counts["b"]["union_taken_days"]["mean"]
+    assert counts["a"]["landed"] == counts["b"]["landed"] and counts["a"]["landed"]["mean"] > 0
+    assert result["counts_equal"] and result["outcomes_equal"] and result["did_nothing"]
+    assert not result["survives"]
+    assert "guard_pool-30: did nothing (" in out
