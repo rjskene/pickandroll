@@ -296,19 +296,28 @@ What a bracket week does not model, each plainly:
 5. **The season's last week on the three weeks' set.** The three weeks' set holds the weeks
    after this one, so in the last week it is empty: a seat that executes it, with no season
    term, makes no gain-based move there, as live's three weeks' set does not.
-6. **A weighted set's claims in the season's last week bid $0.** In a FAAB league a claim of a
-   seat's set bids on its move's own gain on the three weeks, whatever set the seat executes
-   (**FAAB**, the `gain` row), and in the last week the three weeks hold nothing. So every claim
-   a weighted set places there is sized on a gain of exactly 0 and bids $0, whatever the week
-   is worth against the round's opponent and whatever the seat has left: it wins a player only
-   when no other team bids above $0 for him (a tie at $0 goes by priority). Before this PR no
-   season with a bracket met the case: its last week was blind, the weighted set had nothing to
-   gain there, and the seat placed no claim in it. A plan's step in the same week bids on its
-   week gain, so one seat's two kinds of claim are sized on two things; and the set's zeros
-   count in the seat's fortnight of gains, whose median a later bid of that week scales by (a
-   step's bid, for an arm that weighs and executes its plan). How a set's claim is sized is not
-   changed here: an arm sizes a claim on the week by naming a `bid` with a week weight (the bid
-   policy's PR).
+6. **A set's claims in the season's last week bid $0.** In a FAAB league a claim of a seat's
+   set bids on its move's own gain on the three weeks, whatever set the seat executes and
+   without the season term (**FAAB**, the `gain` row), and in the last week the three weeks hold
+   nothing. So every claim a set places there is sized on a gain of exactly 0 and bids $0,
+   whatever the week is worth against the round's opponent, whatever the season term saw in the
+   move and whatever the seat has left: it wins a player only when no other team bids above $0
+   for him (a tie at $0 goes by priority). Under continuous waivers that is every add of the
+   set; under the default rule, its claim on a dropped player. Two kinds of seat place such
+   claims:
+   - **A seat with a season term** (a `season_weight` above 0), on the weighted set or the
+     three weeks', on the exact tier or the surrogate. The term counts a player's games to the
+     season's last day, so the seat can move in the last week whether or not the week has an
+     opponent. This was so before this PR, in the blind week, and is not changed by it.
+   - **A weighted set with no season term**, which is new with this PR. In a season with a
+     bracket its last week was blind: it had nothing to gain there and the seat placed no claim
+     in it. Now a finalist weighs its matchup, and any claim of the set it finds goes in at $0.
+
+   A plan's step in the same week bids on its week gain, so one seat's two kinds of claim are
+   sized on two things; and the set's zeros count in the seat's fortnight of gains, whose
+   median a later bid of that week scales by (a step's bid, for an arm that executes its plan
+   beside such a set). How a set's claim is sized is not changed here: an arm sizes a claim on
+   the week by naming a `bid` with a week weight (the bid policy's PR).
 
 ## The knobs, the fields and the season term (`sim/policy.py`, PR C)
 
