@@ -208,6 +208,60 @@ def test_the_surrogate_and_the_ranking_count_a_candidates_games_from_the_day_he_
             assert p.value.get(add, 0.0) * games[add] == best
 
 
+def test_a_plans_step_dated_tomorrow_waits_for_tomorrow_under_the_rule():
+    """An arm that executes its plan: under the rule a step of a free agent dated today is sent
+    today and one dated tomorrow is not (it is sent tomorrow, to land then); under the default
+    rule a step dated tomorrow is sent today, to land tomorrow."""
+    base = make_setup(teams=4)
+    spots, _ = spots_of(base)
+    day = base.start + DAY
+    f, g = sorted(initial(base).pool)[:2]
+    one, two = base.rosters[1][-1][0], base.rosters[1][-2][0]
+    plan = (mv.Move(f, one, day), mv.Move(g, two, day + DAY))
+    sent = {}
+    for setup in (base, same_day(base)):
+        s = replace(initial(setup), day=day)
+        s = policy.queue(s, 1, policy.Decision(plan=plan), 2, 4, True, spots, setup)
+        sent[setup.lineup_from] = [m.add for m in s.pending[1]]
+    assert sent == {TOMORROW: [f, g], TODAY: [f]}
+
+
+def test_the_surrogates_pool_and_the_rankings_swap_count_games_from_the_day_he_plays():
+    """The surrogate's candidates are the best by value times games this week from the day a
+    candidate would first play, and so is the ranking's add: under the rule from today, under
+    the default rule from tomorrow. Each is held to a hand count on both rules, on a day (found
+    in the first week, asserted) where the two rules' pools differ."""
+    base = make_setup(teams=4, pool=12)
+    fields = replace(policy.DEFAULT_FIELDS, pool=3)
+
+    def hand(built, day):
+        p = built.problem
+        days = [d for d in p.horizons["week"][0].days if d >= day]
+        games = {
+            k: sum(1 for d in days if m.nba_team in p.schedule.get(d, ())) for k, m in p.candidates
+        }
+        order = sorted(
+            p.candidates, key=lambda m: (-p.value.get(m[0], 0.0) * max(1, games[m[0]]), m[0])
+        )
+        best = max(p.candidates, key=lambda m: (p.value.get(m[0], 0.0) * games[m[0]], -m[0]))
+        return [k for k, _ in order[: fields.pool]], best[0], games
+
+    differ = 0
+    for i in range(6):
+        pools = {}
+        for setup in (base, same_day(base)):
+            day = setup.start + i * DAY
+            built = built_on(setup, day)
+            pool, best, games = hand(built, day + setup.lands_after)
+            assert policy._surrogate_pool(built, fields) == pool, (i, setup.lineup_from)
+            swap = policy.ranking(built)
+            if swap.moves and games[best] > 0:
+                assert swap.moves[0].add == best, (i, setup.lineup_from)
+            pools[setup.lineup_from] = pool
+        differ += pools[TODAY] != pools[TOMORROW]
+    assert differ, "no day of the first week where the two rules' pools differ"
+
+
 # --------------------------------------------------------------------------- the day's landing
 def test_two_seats_on_one_free_agent_the_same_day_the_rotation_decides_and_the_loser_keeps_its_drop():
     """Both seats decide on the morning's wire and queue the same free agent; the day's landing
