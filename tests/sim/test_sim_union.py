@@ -19,7 +19,7 @@ import json
 import re
 import sys
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -36,7 +36,7 @@ from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, sg, wk
 from pickandroll.sim.shapes import CONTINUOUS
-from pickandroll.sim.state import Member, initial
+from pickandroll.sim.state import Claim, Member, initial
 from tests.sim.sim_league import (
     KNOBS,
     NINE,
@@ -742,6 +742,69 @@ def test_a_head_add_is_counted_refused_only_on_a_move_that_gains_more_than_min_g
     # horizon (0.02 is not more than 0.02) and is never asked about; 3 is admitted.
     assert union == policy.PoolUnion(admitted=2, took=(8, 7), refused=1)
     assert union.taken == 2 and asked == [(1, 11), (3, 13)]
+
+
+def test_an_add_listed_on_its_best_admitted_move_counts_no_refused_head_add():
+    """The refused count is of the head's adds only. A listed add is listed by its best move the
+    guard admits, so its best move overall can be one the guard refuses: such an add, with no
+    head add refused, counts 0."""
+    pool = engine.sp.joined([1, 2], [7])
+    week = {
+        1: [mv.SwapGain(11, 0.5)],
+        2: [mv.SwapGain(12, 0.4)],
+        7: [mv.SwapGain(17, 0.9), mv.SwapGain(18, 0.3)],
+    }
+
+    def allowed(moves) -> bool:
+        return not any((m.add, m.drop) == (7, 17) for m in moves)
+
+    assert engine.sp.admitted_swaps(week, allowed, 4, 0.02)[-1] == (7, mv.SwapGain(18, 0.3))
+    union = policy._union_of(pool, (week,), allowed, 0.02, ())
+    assert union == policy.PoolUnion(admitted=1, took=(), refused=0)
+
+
+def test_the_weighted_union_takes_each_horizon_s_list_in_turn_after_the_head():
+    """The weighted search's union pool on hand-built swaps: the head as at 0, then each
+    horizon's guard's list taken in turn by ``strategy.pool_of``. Two adds the guard admits
+    only on the week and two only on the three weeks are all in the pool, in the turn's order
+    (the week's best, the three weeks' best, the week's next, the three weeks' next), the head's
+    two refused adds first."""
+    fields = policy.Fields(pool=2, guard_pool=4)
+    swaps = {
+        "week": {1: [mv.SwapGain(11, 0.9)], 21: [mv.SwapGain(15, 0.5)], 23: [mv.SwapGain(15, 0.3)]},
+        "three": {
+            2: [mv.SwapGain(12, 0.9)],
+            22: [mv.SwapGain(16, 0.5)],
+            24: [mv.SwapGain(16, 0.3)],
+        },
+    }
+
+    def allowed(moves) -> bool:
+        return not any(m.add in (1, 2) for m in moves)
+
+    pool = policy._weighted_union(swaps, allowed, fields)
+    assert pool == engine.sp.Pool(players=(1, 2, 21, 22, 23, 24), size=2, admitted=4)
+
+
+def test_a_union_taken_day_reads_only_the_set_s_own_moves_sent_today():
+    """``run.set_sent``: the adds the seat sent today by one of its set's own moves, as a free
+    agent's add queued or a claim placed today. A plan's step of a set's add by another drop is
+    not one (on a day the plan leads the set is not queued), nor a claim placed the day before,
+    nor a queued add the set does not hold."""
+    day = date(2024, 1, 10)
+    decision = policy.Decision((mv.Move(5, 50), mv.Move(6, 60)))
+    s = initial(make_setup(teams=4))
+    step = replace(s, pending={1: (mv.Move(5, 51),)})
+    assert rn.set_sent(decision, step, 1, day) == set()
+    own = replace(s, pending={1: (mv.Move(5, 50), mv.Move(9, 90))})
+    assert rn.set_sent(decision, own, 1, day) == {5}
+    claims = (
+        Claim(mv.Move(6, 60), day, day + timedelta(2), None),
+        Claim(mv.Move(5, 50), day - timedelta(1), day + timedelta(1), None),
+    )
+    claimed = replace(s, claims={1: claims})
+    assert rn.set_sent(decision, claimed, 1, day) == {6}
+    assert rn.set_sent(decision, replace(own, claims={1: claims}), 2, day) == set()
 
 
 @pytest.mark.parametrize("h2h", FORMATS)

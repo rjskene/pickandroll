@@ -22,7 +22,7 @@ from pickandroll.season import picks as pk
 from .test_moves import WEEKS, build, player, streaming_league
 from .test_moves_queue import DAY, NEXT, PLAN, TYPICAL, WEEK, entry, league_day, move, reasons
 from .test_season import LEAGUE, client, fixture_names, projection_csv  # noqa: F401
-from .test_season_guard import built_of, resting_league
+from .test_season_guard import built_of, drop_clocks, resting_league
 
 OBJECTIVE = sm.plan_value(0.33, False)
 LAST = date(2026, 11, 30)
@@ -151,7 +151,7 @@ def test_no_picks_gives_todays_payload_byte_for_byte():
     plain, empty = sm._payload(built_of(p)), sm._payload(built_of(p, picks=(), skipped_picks=()))
     assert "picks" not in plain
     for out in (plain, empty):
-        out["search"].pop("seconds")
+        drop_clocks(out)
     assert json.dumps(plain) == json.dumps(empty)
 
 
@@ -286,7 +286,7 @@ def test_a_pick_set_by_name_is_made_in_the_moves_and_removed_again(client):  # n
     assert client.delete(f"/autopilot/picks/{pid}").status_code == 404
     after = client.get(f"/seasons/{LEAGUE}/moves").json()
     for out in (before, after):
-        out["search"].pop("seconds")
+        drop_clocks(out)
     assert after == before
 
 

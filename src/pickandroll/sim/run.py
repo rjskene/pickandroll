@@ -647,6 +647,18 @@ class VariantResult:
     breaches: tuple[audit.Breach, ...] = ()
 
 
+def set_sent(decision: policy.Decision, state: SimState, team: int, day: date) -> set[int]:
+    """The adds of ``decision``'s set that ``team`` sent today (PR pool), the day's cap and the
+    week's adds applied: a free agent's add queued, or a claim placed today, by one of the set's
+    own moves. A plan's step is not one, even a step of a set's add by another drop: on a day
+    the plan leads the set is not queued and its step is (``policy.gathered``). No made-up
+    season of the tests has met such a day; this function is held on hand-built ones."""
+    mine = {(m.add, m.drop) for m in decision.moves}
+    sent = [*state.pending.get(team, ())]
+    sent += [c.move for c in state.claims.get(team, ()) if c.placed == day]
+    return {m.add for m in sent if (m.add, m.drop) in mine}
+
+
 def _record(
     setup: Setup,
     variant: int,
@@ -994,12 +1006,8 @@ def simulate(
                     tallies[vi].took(team, len(state.pending.get(team, ())) + placed)
                 if decision.union is not None:
                     # The union pool's counts (PR pool) read which of the set's own moves the
-                    # seat sent today, the day's cap and the week's adds applied: a free
-                    # agent's add for the morning, or a claim placed. A plan's step is not one.
-                    mine = {(m.add, m.drop) for m in decision.moves}
-                    sent = [*state.pending.get(team, ())]
-                    sent += [c.move for c in state.claims.get(team, ()) if c.placed == day]
-                    adds = {m.add for m in sent if (m.add, m.drop) in mine}
+                    # seat sent today (:func:`set_sent`).
+                    adds = set_sent(decision, state, team, day)
                     tallies[vi].searched(team, decision.union, adds)
             states[vi] = state
             lineup = {
