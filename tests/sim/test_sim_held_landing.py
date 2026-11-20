@@ -1,12 +1,16 @@
 """A held move lands only if the slot still accepts the player (#172): a queued move is carried
 out against the day it lands. The held-slot move is made only while the slot has room and accepts
 the player's status that morning (``moves.eligible``); one it does not accept is refused
-(``held_refused``), frees no spot, and the add that needed the spot meets the usual check."""
+(``held_refused``), frees no spot, and the add that needed the spot meets the usual check.
+
+And no add lands in a held slot (PR E's second fix round): a swap whose drop one of the morning's
+held-slot moves took to a held slot is gone."""
 
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
@@ -16,6 +20,7 @@ from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import initial
 from tests.sim.sim_league import arm, every_category, make_setup, replay_of
+from tests.sim.test_sim_held_morning import found
 
 
 def queued_for(kind: str = "IL"):
@@ -87,6 +92,46 @@ def test_without_statuses_the_executor_is_unchanged():
     landed = policy.land(queued, [1], spots, counts)
     assert dict(landed.rosters[1])[hurt] == "IL" and add in landed.active(1)
     assert landed.held_refused == 0 and landed.executed == 1 and landed.gone == 0
+
+
+def test_a_swap_whose_drop_went_to_a_held_slot_that_morning_is_gone():
+    """An arm that executes its streaming plan beside its set queues two plans together, and
+    the list cannot always land whole. Team 1's six active spots are full, ``out`` among them
+    (heard out), and its IL slot holds ``left`` (out). The set is a churn, ``left`` for ``a``,
+    with the held-slot move that makes ``a`` room: ``out`` to the IL. A plan step due drops
+    ``out`` for ``b``. The morning: ``left`` leaves, ``out`` goes to the slot, ``a`` takes the
+    active spot. The step then finds its drop off the active roster and is gone, as a claim
+    whose drop is no longer active fails (``policy.clear_waivers``): ``out`` stays in the slot
+    and ``b`` on the wire. Before, ``b`` took the slot his drop sat in, a healthy player in
+    the IL (the audit's ``held_kind``; met in made-up seasons of such an arm under a stash
+    threshold). An arm that does not execute its plan queues no step: the same roster."""
+    setup = make_setup(weeks=6, held_slots=("IL",))
+    state = initial(setup)
+    left, fill, a, b, *wire = sorted(state.pool)
+    drafted = [k for k, _ in state.rosters[1]]
+    out = drafted[-1]
+    roster = (*((k, "BN") for k in (*drafted, fill)), (left, "IL"))
+    state = replace(state, rosters={**state.rosters, 1: roster}, pool=frozenset((a, b, *wire)))
+    status = {left: "O", out: "O"}
+    spots, counts = setup.spots(), Counter(setup.roster_slots)
+    assert len(state.active(1)) == spots
+    step = mv.Move(b, out, state.day + timedelta(1))
+    decision = policy.Decision((mv.Move(a, left),), ((out, "IL"),), (step,), 1, "x")
+    night = policy.queue(state, 1, decision, 2, 4, True, spots, setup)
+    assert night.pending[1] == (mv.Move(a, left), mv.Move(b, out))
+    assert night.pending_held[1] == ((out, "IL"),)
+    landed = policy.land(night, [1], spots, counts, status, values(setup))
+    slots = dict(landed.rosters[1])
+    assert slots.get(out) == "IL" and slots.get(a) == "BN" and left in landed.pool
+    assert b not in slots and b in landed.pool
+    assert landed.held(1) == ((out, "IL"),) and len(landed.active(1)) == spots
+    assert landed.executed == 1 and landed.gone == 1 and landed.held_refused == 0
+    morning = replace(landed, day=night.day + timedelta(1))
+    assert found(setup, night, morning, status) == []
+    plain = policy.queue(state, 1, decision, 2, 4, False, spots, setup)
+    assert plain.pending[1] == (mv.Move(a, left),)
+    unplanned = policy.land(plain, [1], spots, counts, status, values(setup))
+    assert unplanned.rosters == landed.rosters and unplanned.gone == 0
 
 
 def test_no_held_slot_ever_holds_a_player_it_does_not_accept():

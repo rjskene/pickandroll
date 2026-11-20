@@ -18,6 +18,7 @@ from pickandroll.sim import counts as ct
 from pickandroll.sim import forecast as fc
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
+from pickandroll.sim import validate as vg
 from pickandroll.sim.engine import EACH_CATEGORY, wk
 from tests.sim.sim_fixtures import synthetic_lines
 from tests.sim.test_gamelogs import body, entry, line
@@ -277,7 +278,7 @@ def test_a_replay_records_its_run(run_data: Path):
     # The seats believe only the games played: the payload names the belief, its weights and
     # where they came from (no season before 2024 has its prior season on file: the default),
     # the newcomer's rule, the pool and the news spread.
-    assert payload["replay_version"] == 13 and payload["belief"]["kind"] == "causal"
+    assert payload["replay_version"] == 18 and payload["belief"]["kind"] == "causal"
     weights = payload["belief"]["weights"]["2024"]["prior"]
     assert weights["source"] == "the default" and weights["left_out"] == {
         "2023": "prior: season 2022 is not on file"
@@ -385,7 +386,7 @@ def test_a_replay_keys_its_figures_by_forecaster(blocks_data: Path, capsys):
     out = capsys.readouterr().out
     assert "2 tasks (2 cells x 1 paths)" in out
     payload = json.loads(_written(out).read_text())
-    assert payload["replay_version"] == 13 and payload["oracle_shape"] == "stat"
+    assert payload["replay_version"] == 18 and payload["oracle_shape"] == "stat"
     assert list(payload["forecasters"]["2024"]) == ["espn", "oracle:0.2"]
     assert set(payload["results"]["2024"]) == {"espn", "oracle:0.2"}
     assert set(payload["counts"]["by_season"]["2024"]) == {"espn", "oracle:0.2"}
@@ -792,10 +793,189 @@ def test_gate_five_records_what_it_compared(wire_data: Path, wire_validate):
         assert checks.surrogate_matches(setup, w, seat, [day], knobs) == [matches[3]]
 
 
+def test_gate_five_passes_a_seat_on_the_gain_its_surrogate_keeps(wire_validate):
+    """Gate 5's verdict is read from the worths its records hold (PR g5): each row's detail holds
+    the two tiers' gains over the seat's five days, the share kept and the share needed, and the
+    seat passes when its surrogate keeps that share, whatever the count of days with equal sets.
+    Under every category, the format the fixture names; ``test_sim_format`` reads the same keys
+    under the default."""
+    payload, _ = wire_validate
+    rows, block = payload["gates"], payload["surrogate_gate"]
+    assert block["rule"] == ss.GATE_RULE
+    differing = 0
+    for g in rows:
+        d = g["detail"]
+        assert "needed" not in d and d["needs"] == vg.SURROGATE_KEEPS and d["of"] == 5
+        gain = {
+            tier: sum(x["worth"][tier] - x["worth"]["standing"] for x in d["records"])
+            for tier in ("exact", "surrogate")
+        }
+        assert d["gain"] == pytest.approx(gain)
+        assert gain["exact"] > 0  # the exact tier moves on this replay, so there is a share
+        assert d["kept"] == pytest.approx(gain["surrogate"] / gain["exact"])
+        assert g["passed"] is vg.keeps(gain["exact"], gain["surrogate"])
+        # The row is the pure rule's answer on the records it carries.
+        own = vg.surrogate_gate(d["records"], season=g["season"])
+        assert own.passed is g["passed"] and own.detail == {k: d[k] for k in own.detail}
+        differing += d["matched"] < d["of"]
+    assert differing == 2  # not vacuous: two seats' sets differ on a day
+    assert payload["passed"] is all(g["passed"] for g in rows)
+
+
+def test_gate_fives_seat_line_says_the_share_kept_then_the_equal_days():
+    d = {"matched": 3, "of": 5, "gain": {"exact": 2.0, "surrogate": 1.899}, "needs": 0.95}
+    assert ss.seat_line({**d, "kept": 0.9495}) == (
+        "the surrogate kept 94.9% of the exact search's gain (1.8990 of 2.0000; needs 95%); "
+        "equal sets on 3 of 5 league-days"
+    )
+    # A share is cut to a tenth of a percent, never rounded up to the bar.
+    cut = [ss.share_tenths(x) for x in (0.9499, 0.95, 0.957, 1.0, 1.0312, -0.0051)]
+    assert cut == [949, 950, 957, 1000, 1031, -6]
+    # An exact search that made no gain leaves no share to name: the two gains are said.
+    still = {"matched": 5, "of": 5, "gain": {"exact": 0.0, "surrogate": 0.0}, "kept": None}
+    assert ss.seat_line({**still, "needs": 0.95}) == (
+        "the exact search made no gain (0.0000), so the surrogate need only not fall below it: "
+        "its gain 0.0000; equal sets on 5 of 5 league-days"
+    )
+    # A seat with a day left out fails, and its line says why after what it kept on the others.
+    short = {"matched": 4, "of": 4, "gain": {"exact": 2.0, "surrogate": 2.0}, "kept": 1.0}
+    assert ss.seat_line({**short, "needs": 0.95}) == (
+        "the surrogate kept 100.0% of the exact search's gain (2.0000 of 2.0000; needs 95%); "
+        "equal sets on 4 of 4 league-days; 4 of 5 days compared, and a seat needs every one"
+    )
+    assert "95%" in ss.GATE_RULE and "do not decide" in ss.GATE_RULE
+    # The record's sentence says the whole rule as built: the tolerance, and the bar where the
+    # exact gain is below 0 (``validate.keeps``).
+    assert "exact gain below 0" in ss.GATE_RULE and "held to itself" in ss.GATE_RULE
+    assert "less a tolerance" in ss.GATE_RULE
+    assert "do not enter" not in ss.GATE_RECORDS and "rule reads" in ss.GATE_RECORDS
+
+
+def _gate_day(exact: float, surrogate: float, equal: bool = True, day: str = "2023-10-24") -> dict:
+    """One compared day's record written by hand, in the shape ``checks.surrogate_records``
+    gives: each tier's gain over standing still's worth, and whether the two sets are equal. The
+    sets themselves are left empty: neither the rule nor a printed line reads them."""
+    return {
+        "day": day,
+        "left_out": None,
+        "exact": [],
+        "surrogate": [],
+        "equal": equal,
+        "worth": {"exact": 10.0 + exact, "surrogate": 10.0 + surrogate, "standing": 10.0},
+    }
+
+
+def test_gate_fives_seat_line_never_reads_against_the_verdict():
+    """The rule's tolerance is on the gain (``validate.EPS``) and the line's cut is on the share,
+    so within a billionth of the bar the cut alone could say 95.0% for a seat the rule fails, or
+    94.9% for one it passes. The printed share is held to the rule's verdict on the two gains: a
+    seat that fails by the gain never reads as at the share needed, and one that keeps it never
+    reads under it."""
+    still = _gate_day(0.0, 0.0)
+    # An exact gain above 1: short of the bar by more than the tolerance, and the cut reads 95.0%.
+    g = vg.surrogate_gate([_gate_day(5.0, 4.75 - 3e-9, equal=False), *[still] * 4])
+    assert not g.passed and ss.share_tenths(g.detail["kept"]) == 950
+    assert ss.seat_line(g.detail).startswith(
+        "the surrogate kept 94.9% of the exact search's gain (4.7500 of 5.0000; needs 95%)"
+    )
+    # An exact gain below 1: short by less than the tolerance, so it passes, and the cut reads
+    # 94.9%.
+    g = vg.surrogate_gate([_gate_day(0.02, 0.019 - 5e-10, equal=False), *[still] * 4])
+    assert g.passed and ss.share_tenths(g.detail["kept"]) == 949
+    assert ss.seat_line(g.detail).startswith(
+        "the surrogate kept 95.0% of the exact search's gain (0.0190 of 0.0200; needs 95%)"
+    )
+    # Around the bar, at gains small and large: the line reads the share needed or more exactly
+    # when the rule passes the two gains.
+    passed = set()
+    for exact in (0.01, 0.02, 0.3, 1.0, 5.0, 40.0):
+        for off in (-1e-3, -1e-6, -3e-9, -1.5e-9, -5e-10, 0.0, 5e-10, 1e-6, 1e-3):
+            surrogate = vg.SURROGATE_KEEPS * exact + off
+            d = {"matched": 0, "of": 5, "gain": {"exact": exact, "surrogate": surrogate}}
+            line_ = ss.seat_line({**d, "kept": surrogate / exact, "needs": vg.SURROGATE_KEEPS})
+            reads = float(line_.removeprefix("the surrogate kept ").split("%")[0])
+            assert (reads >= 95.0) is vg.keeps(exact, surrogate), (exact, off, line_)
+            passed.add(vg.keeps(exact, surrogate))
+    assert passed == {True, False}
+    # Away from the bar the share is the cut, whatever the verdict.
+    d = {"matched": 5, "of": 5, "needs": 0.95}
+    assert "kept 64.2% of" in ss.seat_line(
+        {**d, "gain": {"exact": 1.4, "surrogate": 0.9}, "kept": 0.9 / 1.4}
+    )
+    assert "kept 103.1% of" in ss.seat_line(
+        {**d, "gain": {"exact": 1.0, "surrogate": 1.0312}, "kept": 1.0312}
+    )
+    # A seat that fails for a day left out alone is not read under the bar: it kept everything.
+    g = vg.surrogate_gate([_gate_day(0.5, 0.5)] * 4)
+    assert not g.passed and "kept 100.0% of" in ss.seat_line(g.detail)
+
+
+def test_validate_says_a_seat_that_fails_and_exits_as_a_gate_that_ran(
+    run_data: Path, monkeypatch, capsys
+):
+    """The gate's failing road through the command, and both verdicts the rule changed (PR g5).
+    The three seats' records are stood in, so nothing is solved and no seat weighs: the command
+    is walked in both formats on the same records. Seat 1 has equal sets on four days and loses
+    too much on the fifth (the rule replaced passed it); seat 6 has different sets of one worth
+    on every day (the rule replaced failed it); seat 12 keeps everything and has a day left out.
+    The record's ``passed`` is false, each seat's line says its verdict, and the exit code is
+    0: a gate that ran, whatever it said."""
+    gains = {
+        1: [(0.1, 0.1, True)] * 4 + [(1.0, 0.5, False)],
+        6: [(0.3, 0.3, False)] * 5,
+        12: [(0.5, 0.5, True)] * 4,
+    }
+
+    def stood_in(setup, w, seat, days, knobs, fields):
+        out = []
+        for i, day in enumerate(days):
+            if i < len(gains[seat]):
+                out.append(_gate_day(*gains[seat][i], day=day.isoformat()))
+            else:
+                out.append({"day": day.isoformat(), "left_out": checks.OUTSIDE})
+        return out
+
+    monkeypatch.setattr(checks, "surrogate_records", stood_in)
+    base = ["--data", str(run_data), "--rooms", "0", "validate", "--season", "2024"]
+    for name, flags in (("stood-in", []), ("stood-in-each", ["--h2h", EACH_CATEGORY])):
+        code = ss.main([*base, "--name", name, *flags])
+        out = capsys.readouterr().out
+        payload = json.loads(_written(out).read_text())
+        rows = {g["detail"]["seat"]: g for g in payload["gates"]}
+        assert [rows[s]["passed"] for s in (1, 6, 12)] == [False, True, False], out
+        assert payload["passed"] is False
+        assert code == 0, out
+        assert [rows[s]["detail"]["matched"] for s in (1, 6, 12)] == [4, 0, 4]
+        assert [rows[s]["detail"]["of"] for s in (1, 6, 12)] == [5, 5, 4]
+        assert rows[1]["detail"]["kept"] == pytest.approx(0.9 / 1.4)
+        lines = [x for x in out.splitlines() if x.startswith("surrogate")]
+        heads = {s: x for s in rows for x in lines if f" seat {s}: " in x}
+        assert len(lines) == len(heads) == 3
+        assert " FAILED seat 1: the surrogate kept 64.2% of the exact search's gain" in heads[1]
+        assert "equal sets on 4 of 5 league-days" in heads[1]
+        assert " passed seat 6: the surrogate kept 100.0% of the exact search's gain" in heads[6]
+        assert heads[6].endswith("equal sets on 0 of 5 league-days")
+        assert " FAILED seat 12: the surrogate kept 100.0% of the exact search's" in heads[12]
+        assert heads[12].endswith("; 4 of 5 days compared, and a seat needs every one")
+        # Under a seat, a line a day; the day left out says why.
+        last = payload["surrogate_gate"]["days"][-1]
+        assert f"  seat 12, {last}: left out, {checks.OUTSIDE}" in out
+        assert payload["surrogate_gate"]["rule"] == ss.GATE_RULE
+        assert payload["surrogate_gate"]["rules"]["h2h"] == (EACH_CATEGORY if flags else ss.ONE_WIN)
+
+
 def test_validate_prints_each_seat_days_record_and_names_no_player(wire_data: Path, wire_validate):
     payload, out = wire_validate
     rows = payload["gates"]
     assert all(len(g["detail"]["records"]) == g["detail"]["of"] for g in rows)
+    # A seat's line: its verdict, the share kept, then the equal days (PR g5).
+    heads = [x for x in out.splitlines() if x.startswith("surrogate")]
+    assert len(heads) == len(rows)
+    for x, g in zip(heads, rows, strict=True):
+        d = g["detail"]
+        state = "passed" if g["passed"] else "FAILED"
+        assert x.endswith(f"{state} seat {d['seat']}: {ss.seat_line(d)}")
+        assert x.index("the surrogate kept") < x.index(f"equal sets on {d['matched']} of 5")
     lines = [x for x in out.splitlines() if x.startswith("  seat ")]
     assert len(lines) == sum(len(g["detail"]["records"]) for g in rows)
     assert all(("equal;" in x or "differ;" in x) and "worth, exact " in x for x in lines)
@@ -812,8 +992,9 @@ def test_gate_five_runs_on_a_replay_of_the_season_named(wire_data: Path, capsys)
     rows, block = ss.gate_surrogate(wire_data, 2024, fc.parse_one("prior"), 1, 1)
     assert [r["detail"]["seat"] for r in rows] == [1, 6, 12] == block["seats"]
     assert all(r["name"] == "surrogate" and r["season"] == 2024 for r in rows)
-    assert all(r["detail"]["of"] == 5 and r["detail"]["needed"] == 4 for r in rows)
-    # The surrogate matches the exact tier on the synthetic replay, seat by seat.
+    assert all(r["detail"]["of"] == 5 and r["detail"]["needs"] == 0.95 for r in rows)
+    assert "at least 95% of the exact search's gain over its 5 league-days" in block["rule"]
+    # Each seat's surrogate keeps that share on the synthetic replay.
     assert all(r["passed"] for r in rows), [r["detail"] for r in rows]
     days = [date.fromisoformat(d) for d in block["days"]]
     assert [(d - days[0]).days for d in days] == list(ss.GATE_DAYS)

@@ -22,6 +22,7 @@ from pickandroll.sim import forecast as fc
 from pickandroll.sim import league as lg
 from pickandroll.sim import policy, shapes
 from pickandroll.sim import run as rn
+from pickandroll.sim import validate as vg
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, st, wk
 from pickandroll.sim.state import initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, of_format
@@ -309,9 +310,10 @@ def test_a_pair_apart_only_on_plan_floor_cats_is_one_seat_in_a_one_win_run_and_t
     (why,) = rn.same_seat(PLANS, b, [policy.Shape(h2h=ONE_WIN)], rivals=False)
     assert why == (
         f"plan_floor_cats ({policy.ONE_WIN_FLOOR}; read by the exact tier drawing and executing "
-        "the week plan in a categories league), and in a categories FAAB run by a seat that bids "
-        "(the exact or the surrogate tier, a mirror rival), its typical gain until ten moves; "
-        "either only in a league that counts every category (--h2h each_category)"
+        "the week plan, or executing queue, in a categories league), and in a categories FAAB "
+        "run by a seat that bids (the exact or the surrogate tier, a mirror rival), its typical "
+        "gain until ten moves; either only in a league that counts every category "
+        "(--h2h each_category)"
     )
     assert rn.same_seat(PLANS, b, [policy.Shape(h2h=EACH_CATEGORY)], rivals=False) is None
 
@@ -450,12 +452,21 @@ def test_a_replay_s_seats_and_its_standings_follow_one_format(formats, h2h):
 
 def figures_digest(p: dict) -> str:
     """SHA-256 of a run's results, counts and season scale figures, each rounded to nine places
-    (as ``test_sim_seasons.figures_digest``)."""
+    (as ``test_sim_seasons.figures_digest``). The scale's ``paths_with_ratio`` is left out: the
+    guard PR's one key in every run that has a scale (how many paths its ratio rests on), which
+    the commit the pin is of did not write; every figure that commit gave is hashed as it was."""
+    scale = {
+        t: {
+            arm: row and {k: v for k, v in row.items() if k != "paths_with_ratio"}
+            for arm, row in by_arm.items()
+        }
+        for t, by_arm in p["season_scale"]["by_season"].items()
+    }
     figures = rounded(
         {
             "results": p["results"],
             "counts": p["counts"]["by_season"],
-            "scale": p["season_scale"]["by_season"],
+            "scale": scale,
         }
     )
     return hashlib.sha256(json.dumps(figures, sort_keys=True).encode()).hexdigest()
@@ -488,8 +499,9 @@ ONE_WIN_MATCHES = {
 def test_validate_plays_gate_five_in_the_format_named(wire: Path):  # noqa: F811
     """``validate`` under the default compares the two tiers in the matchup's odds: its block
     names the format, and its answers are :data:`ONE_WIN_MATCHES`, on days where the exact tier's
-    set holds a move (not vacuous: two empty sets agree too). A format it does not know is
-    refused before any solve."""
+    set holds a move (not vacuous: two empty sets agree too). Each seat's verdict is by the gain
+    its surrogate keeps (PR g5), a gain in the matchup's odds here, and its line says the share.
+    A format it does not know is refused before any solve."""
     base = ["--data", str(wire), "--rooms", "0", "validate", "--season", "2024"]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -510,7 +522,13 @@ def test_validate_plays_gate_five_in_the_format_named(wire: Path):  # noqa: F811
         assert [x["equal"] for x in d["records"]] == ONE_WIN_MATCHES[d["seat"]]
         assert d["matched"] == sum(ONE_WIN_MATCHES[d["seat"]])
         moved += sum(1 for x in d["records"] if x["equal"] and x["exact"])
+        gain = d["gain"]
+        assert d["needs"] == vg.SURROGATE_KEEPS and gain["exact"] > 0
+        assert d["kept"] == pytest.approx(gain["surrogate"] / gain["exact"])
+        assert g["passed"] is vg.keeps(gain["exact"], gain["surrogate"])
+        assert f"seat {d['seat']}: {ss.seat_line(d)}" in out
     assert moved > 0  # days where the two tiers agree on a set that holds a move
+    assert p["surrogate_gate"]["rule"] == ss.GATE_RULE
     assert "under the nine categories, no held slot, one win per matchup" in out
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

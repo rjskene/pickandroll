@@ -7,15 +7,22 @@ knob file and reads no live league.
 This module is the list and the rules, and touches no file:
 
 - :data:`LEVERS`, the levers and their nudges, written before any result. A lever is added by
-  the PR that builds it; no flag invents a nudge.
+  the PR that builds it; no flag invents a nudge. Since PR E the list holds the queue's rule:
+  ``executes`` goes to each other choice (``queue`` among them), ``three_weight`` is nudged under
+  ``queue``, a plan floor is screened twice (where the streaming plan is drawn and executed
+  beside the set, and under ``queue``), and the plan is one lever, ``execute_plan``, with the
+  plan drawn in both arms; ``with_plan`` is not a lever of a season (:data:`NOT_LEVERS`).
 - :func:`rows_of`, the pairs a baseline arm gives: for each lever, arm A is the baseline on the
   cheapest tier that reads the lever, set to whatever else makes it read, and arm B is A with the
-  one nudge. A lever the run's league does not read (``policy.reads``, ``policy.field_reads``) is
+  one nudge. A lever the run's league does not read (``policy.reads``, ``policy.field_reads``,
+  and for the guard and the stake ``policy.season_reads``) is
   listed with the reason and not played; a nudge the knob's own bounds refuse, or the grid has no
   step for, is listed and not played; a nudge equal to the baseline's value is refused by name.
 - :func:`result_of`, what a played pair's figures say: the paired difference on the measure the
   league's standings count against one standard error, and "did nothing" when the two arms'
-  counts and outcomes are equal on every path.
+  counts and outcomes are equal on every path, less the counts that part by construction
+  between two arms (declared where the counts are defined, ``counts.APART_BY_CONSTRUCTION``;
+  no count is named here).
 
 The command that plays each pair, by the code ``replay`` plays a pair with, is ``cli.cmd_screen``.
 """
@@ -26,14 +33,25 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import bid_policy as bp
+from . import counts as ct
 from . import forecast as fc
 from . import policy
 from . import run as rn
 from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 
-#: The screen's version in its record: 1, the list of PR H1. A change to the list, to a nudge or
-#: to a rule below is a new version, and a folder started under another is refused.
-SCREEN_VERSION = 1
+#: The screen's version in its record: 5 since PR F2 (seven rows more, the bid policy's levers,
+#: each a key of an arm's ``bid`` block, played on the surrogate tier and read only under FAAB;
+#: and one more count among those "did nothing" sets aside, the declaration's own), 4 since
+#: PR E (``executes`` goes to each other choice,
+#: ``three_weight`` is nudged under ``queue``, a plan floor is on the list twice, beside the set
+#: and under ``queue``, the plan is one lever, ``execute_plan`` with the plan drawn in both
+#: arms, and ``with_plan`` is off the list), 3 since the guard PR (two rows more, ``guard`` and
+#: ``stake``, and the rule's clause: "did nothing" sets aside the counts that part by
+#: construction between two arms, ``counts.APART_BY_CONSTRUCTION``), 2 since the stash
+#: threshold's lever (PR G: two rows more), 1 the list of PR H1. A change to the list, to a
+#: nudge or to a rule below is a new version, and a folder started under another is refused.
+SCREEN_VERSION = 5
 #: What the Monday step multiplies a plan floor by (``season.hillclimb``'s plan rule, where the
 #: figure is written in the rule itself): the step up of the knob's own grid; the step down
 #: divides by it.
@@ -61,19 +79,54 @@ SCALE_NOTE = (
     "season term is the week gain's size); measured once, before any pair, and kept with the "
     "screen so a later piece uses the same figure"
 )
-#: The one sentence a plan floor's row adds in a FAAB run.
+#: The one sentence a plan floor's row adds in a FAAB run, unless the baseline's ``bid`` gives
+#: the three weeks no weight (PR F2: no seat's set then reads the floor, ``policy.NO_THREE``).
 PLAN_FAAB_NOTE = (
     "in a FAAB run a seat that bids also reads this floor as its typical gain until ten moves, "
     "on the surrogate tier too; that is not what this row screens, which is the plan's floor on "
     "the exact tier executing the plan (whose own bids read it as well)"
 )
+#: The bid policy's levers (PR F2), each a key of an arm's ``bid`` block by its dotted name and
+#: read only in a FAAB run (``policy.bid_reads``). Their steps are the list's own, written
+#: before any result: a horizon weight moves by :data:`WEIGHT_STEP`; a pace that the baseline
+#: does not name takes :data:`PACE_PATH`'s shape and reserve, and its reserve moves by
+#: :data:`RESERVE_STEP`; the shade goes on at :data:`SHADE_ON`.
+BID = "bid."
+WEIGHT_STEP = 0.25
+RESERVE_STEP = 0.2
+PACE_PATH: Mapping[str, Any] = {"k": 1.0, "shape": 1.0, "reserve": 0.2}
+SHADE_ON: Mapping[str, Any] = {"q": 0.9, "least": 10}
+#: Why a plan floor's rows beside the set are not played from a baseline that executes ``queue``
+#: (PR E): the queue's rule draws and executes its own plan, and the floor under it has rows of
+#: its own.
+QUEUE_BASELINE = (
+    "the baseline executes queue, which draws and executes its own plan: the floor under queue "
+    "has its own rows"
+)
+#: What a row says when its lever is played on another tier than the exact one from a baseline
+#: that executes ``queue`` (PR E): the pair is played without the key.
+QUEUE_OFF_TIER = (
+    "the baseline executes queue, the exact tier's: this pair is played on the {tier} tier, "
+    "which reads nothing an arm executes, so both arms leave executes out"
+)
+#: Why ``execute_plan`` is not read by an arm that executes ``queue``.
+QUEUE_PLANS = "the arm executes queue, whose rule draws and executes its own plan"
+#: Spec keys that are no lever of a season, each with why (PR E, from H1's review): asked for by
+#: name they are refused with the reason.
+NOT_LEVERS: Mapping[str, str] = {
+    "with_plan": (
+        "a week plan only drawn changes no season: from a baseline that executes its plan, "
+        "not drawing it is the season of not executing it, which the lever execute_plan plays "
+        "with the plan drawn in both arms"
+    ),
+}
 #: The bar a lever survives at, for the record and the table.
 RULE = (
     "a lever survives when its paired difference (B less A) clears one standard error, either "
     "way, on the measure the league's standings count, in a cell of the run; a lever whose two "
-    "arms' counts and outcomes are equal on every path did nothing (its difference is zero by "
-    "construction) and does not survive; advisory: a survivor is a candidate for the tune, not "
-    "a finding"
+    "arms' counts and outcomes are equal on every path, less the counts that part by "
+    "construction between two arms, did nothing (its difference is zero by construction) and "
+    "does not survive; advisory: a survivor is a candidate for the tune, not a finding"
 )
 #: The measures by name, for the table.
 MEASURE_WORDS = {"matchup_wins": "matchup wins", "category_wins": "category wins"}
@@ -111,13 +164,16 @@ Make = Callable[[rn.Arm, Context], tuple[Mapping[str, Any], Sequence[Step]]]
 class Lever:
     """One row of the list: the lever's name (the knob, field or spec key it nudges), the
     cheapest tier that reads it, its nudges in words, what both arms are set to so that it
-    reads, in words, and how its pair is made."""
+    reads, in words, and how its pair is made. ``key`` is what its rows' keys start with when a
+    lever is on the list twice (a plan floor under ``queue``, PR E); the lever's name when
+    empty."""
 
     name: str
     tier: str
     nudge: str
     make: Make
     both: str = ""
+    key: str = ""
 
 
 def _figure(x: float) -> float:
@@ -145,29 +201,68 @@ def _cap(base: rn.Arm, ctx: Context) -> Sequence[Step]:
     )
 
 
-def _plan(name: str, scoring: str) -> Make:
-    def make(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
-        both = {"with_plan": True, "execute_plan": True}
-        at = float(base.knobs[name])
-        if at <= 0:
-            why = "a floor at or below zero has no step: the grid multiplies"
-            return both, (
-                Step("down", "one step down", unmade=why),
-                Step("up", "one step up", unmade=why),
-            )
-        cap = round(PLAN_CAP * PLAN_DEFAULT[scoring], 4)
-        up = min(round(at * PLAN_STEP, 4), cap)
-        return both, (
-            Step("down", "one step down", {name: round(at / PLAN_STEP, 4)}),
-            Step(
-                "up",
-                "one step up",
-                {name: up},
-                None if up > at else "the floor is at its cap",
-            ),
+def _plan_steps(name: str, scoring: str, base: rn.Arm) -> Sequence[Step]:
+    """A plan floor's two steps on the Monday step's grid, from the baseline's value."""
+    at = float(base.knobs[name])
+    if at <= 0:
+        why = "a floor at or below zero has no step: the grid multiplies"
+        return (
+            Step("down", "one step down", unmade=why),
+            Step("up", "one step up", unmade=why),
         )
+    cap = round(PLAN_CAP * PLAN_DEFAULT[scoring], 4)
+    up = min(round(at * PLAN_STEP, 4), cap)
+    return (
+        Step("down", "one step down", {name: round(at / PLAN_STEP, 4)}),
+        Step(
+            "up",
+            "one step up",
+            {name: up},
+            None if up > at else "the floor is at its cap",
+        ),
+    )
+
+
+def _plan(name: str, scoring: str) -> Make:
+    """A plan floor where the streaming plan is drawn and executed beside the set. A baseline
+    that executes ``queue`` plays no set with a plan beside it: its rows are not played (the
+    floor under ``queue`` is :func:`_queue_plan`'s)."""
+
+    def make(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+        steps = _plan_steps(name, scoring, base)
+        if base.executes == policy.QUEUE:
+            return {}, tuple(Step(s.tag, s.words, unmade=s.unmade or QUEUE_BASELINE) for s in steps)
+        return {"with_plan": True, "execute_plan": True}, steps
 
     return make
+
+
+def _queue_plan(name: str, scoring: str) -> Make:
+    """A plan floor under the queue's rule (PR E), where it is the gate a week plan clears to
+    take the queue: both arms execute ``queue``."""
+
+    def make(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+        return {"executes": policy.QUEUE}, _plan_steps(name, scoring, base)
+
+    return make
+
+
+def _three_weight(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+    return {"executes": policy.QUEUE}, (
+        Step("0", "to 0", {"three_weight": 0.0}),
+        Step("0.67", "to 0.67", {"three_weight": 0.67}),
+    )
+
+
+def _executes(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    return tuple(Step(e, f"to {e}", {"executes": e}) for e in policy.EXECUTES if e != base.executes)
+
+
+def _execute_plan(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+    """The plan as one lever (PR E): executed or not, drawn in both arms. An arm that executes
+    ``queue`` reads neither switch (:func:`read_why`), and its spec names neither."""
+    step = Step("flipped", "flipped", {"execute_plan": not base.execute_plan})
+    return ({} if base.executes == policy.QUEUE else {"with_plan": True}), (step,)
 
 
 def _horizon(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
@@ -177,6 +272,16 @@ def _horizon(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[St
         Step(keys[j], f"to its neighbour {keys[j]}", {"horizon_weight": keys[j]})
         for j in (i - 1, i + 1)
         if 0 <= j < len(keys)
+    )
+
+
+def _stash(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    """The stash threshold's nudges (PR G): from none to a test with no margin, and to a quarter.
+    The knob has no grid (a floor of 0, no step), so the two are named, not stepped; one equal
+    to the baseline's value is refused by name like any other."""
+    return (
+        Step("0", "to 0", {"stash_threshold": 0.0}),
+        Step("0.25", "to 0.25", {"stash_threshold": 0.25}),
     )
 
 
@@ -248,6 +353,67 @@ def _blend(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step
     )
 
 
+def _guard(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    return (Step("off", "to off", {"guard": policy.OFF}),)
+
+
+def _stake(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    return (
+        Step("0.5", "to 0.5", {"stake": 0.5}),
+        Step("1", "to 1", {"stake": 1.0}),
+    )
+
+
+def _bid_weight(key: str) -> Callable[[rn.Arm, Context], Sequence[Step]]:
+    """A horizon weight of the bid policy, one step each way; a step the block refuses (below
+    0, above 1, a sum above 1) is listed and not played."""
+    name = f"{BID}{key}"
+
+    def steps(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+        at = float(value_of(base, name))
+        return (
+            Step("down", "one step down", {name: round(at - WEIGHT_STEP, 4)}),
+            Step("up", "one step up", {name: round(at + WEIGHT_STEP, 4)}),
+        )
+
+    return steps
+
+
+def _pace_of(base: rn.Arm, k: float | None = None) -> dict[str, Any]:
+    """The baseline's pace as a block, the list's path (:data:`PACE_PATH`) where it names none;
+    its ``k`` set to ``k`` when one is given."""
+    named = (base.bid or bp.DEFAULT).pace
+    block = dict(PACE_PATH) if named is None else named.payload()
+    return block if k is None else {**block, "k": k}
+
+
+def _pace_k(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+    """The pace's ``k`` to 0.5 and to 1. A baseline that names no pace holds ``k`` 0 on the
+    list's path in both arms: at ``k`` 0 a pace reads no path, so arm A bids as the baseline."""
+    both = {} if (base.bid or bp.DEFAULT).pace is not None else {f"{BID}pace": _pace_of(base, 0.0)}
+    return both, (
+        Step("0.5", "to 0.5", {f"{BID}pace.k": 0.5}),
+        Step("1", "to 1", {f"{BID}pace.k": 1.0}),
+    )
+
+
+def _pace_reserve(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step]]:
+    """The path's reserve one step up, on a pace that follows the path in both arms: the
+    baseline's; the baseline's own ``shape`` and ``reserve`` at the list's ``k`` where it holds
+    ``k`` 0; the list's path (:data:`PACE_PATH`) where it names none."""
+    named = (base.bid or bp.DEFAULT).pace
+    follows = named is not None and named.k > 0
+    block = _pace_of(base) if follows else _pace_of(base, PACE_PATH["k"])
+    both = {} if follows else {f"{BID}pace": block}
+    up = round(float(block["reserve"]) + RESERVE_STEP, 4)
+    return both, (Step("up", "one step up", {f"{BID}pace.reserve": up}),)
+
+
+def _routine(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    at = int(value_of(base, f"{BID}routine"))
+    return (Step("flipped", "flipped", {f"{BID}routine": 1 - at}),)
+
+
 #: The list (Rule 2: written before any result), one row a lever, in the order the table prints.
 #: A floor's step is the Monday step's own grid: the protection floor's a game by scoring
 #: (``FLOOR_STEP``), a plan floor's times and divided by :data:`PLAN_STEP`, never above
@@ -268,11 +434,27 @@ LEVERS: tuple[Lever, ...] = (
         "the week plan drawn and executed",
     ),
     Lever(
+        "plan_floor_cats",
+        "exact",
+        "one step each way, under queue",
+        _queue_plan("plan_floor_cats", "categories"),
+        "executes queue",
+        "plan_floor_cats-queue",
+    ),
+    Lever(
         "plan_floor_points",
         "exact",
         "one step each way",
         _plan("plan_floor_points", "points"),
         "the week plan drawn and executed",
+    ),
+    Lever(
+        "plan_floor_points",
+        "exact",
+        "one step each way, under queue",
+        _queue_plan("plan_floor_points", "points"),
+        "executes queue",
+        "plan_floor_points-queue",
     ),
     Lever(
         "horizon_weight",
@@ -281,6 +463,8 @@ LEVERS: tuple[Lever, ...] = (
         _horizon,
         "executes weighted",
     ),
+    Lever("three_weight", "exact", "to 0 and to 0.67", _three_weight, "executes queue"),
+    Lever("stash_threshold", "surrogate", "from none to 0 and to 0.25", _plain(_stash)),
     Lever("faab_sizing", "surrogate", "to 0.5 and to 2", _plain(_sizing)),
     Lever(
         "season_weight",
@@ -309,24 +493,8 @@ LEVERS: tuple[Lever, ...] = (
         "Monday only",
         _plain(lambda b, c: (Step("monday", "Monday only", {"surrogate_days": [0]}),)),
     ),
-    Lever(
-        "executes",
-        "exact",
-        "to weighted",
-        _plain(lambda b, c: (Step("weighted", "to weighted", {"executes": policy.WEIGHTED}),)),
-    ),
-    Lever(
-        "with_plan",
-        "exact",
-        "flipped",
-        _plain(lambda b, c: (Step("flipped", "flipped", {"with_plan": not b.with_plan}),)),
-    ),
-    Lever(
-        "execute_plan",
-        "exact",
-        "flipped",
-        _plain(lambda b, c: (Step("flipped", "flipped", {"execute_plan": not b.execute_plan}),)),
-    ),
+    Lever("executes", "exact", "to each other choice", _plain(_executes)),
+    Lever("execute_plan", "exact", "flipped", _execute_plan, "the week plan drawn"),
     Lever(
         "system",
         "surrogate",
@@ -334,27 +502,88 @@ LEVERS: tuple[Lever, ...] = (
         _plain(_system),
     ),
     Lever("blend", "surrogate", "to 0.25 and to 0.75", _blend, "system blend"),
+    # The guard PR's two: the season guard off, and the stake (read only where the baseline has
+    # a season weight to scale, in a league whose bracket is read).
+    Lever("guard", "surrogate", "the block to off", _plain(_guard)),
+    Lever("stake", "surrogate", "to 0.5 and to 1", _plain(_stake)),
+    Lever(f"{BID}week", "surrogate", "one step each way", _plain(_bid_weight("week"))),
+    Lever(f"{BID}season", "surrogate", "one step each way", _plain(_bid_weight("season"))),
+    Lever(
+        f"{BID}pace.k",
+        "surrogate",
+        "to 0.5 and to 1",
+        _pace_k,
+        "a pace: the baseline's, or with none k 0 on the list's path",
+    ),
+    Lever(
+        f"{BID}pace.reserve",
+        "surrogate",
+        "one step up",
+        _pace_reserve,
+        (
+            "a pace that follows its path: the baseline's, at the list's k 1 where it holds "
+            "k 0; the list's where it names none"
+        ),
+    ),
+    Lever(f"{BID}routine", "surrogate", "flipped", _plain(_routine)),
+    Lever(
+        f"{BID}rival_cap",
+        "surrogate",
+        "to on",
+        _plain(lambda b, c: (Step("on", "to on", {f"{BID}rival_cap": True}),)),
+    ),
+    Lever(
+        f"{BID}shade",
+        "surrogate",
+        "to on, at the list's quantile",
+        _plain(lambda b, c: (Step("on", "to on", {f"{BID}shade": dict(SHADE_ON)}),)),
+    ),
 )
-#: The levers' names, in the list's order.
-NAMES: tuple[str, ...] = tuple(lever.name for lever in LEVERS)
+#: The levers' names, in the list's order (a lever on the list twice named once).
+NAMES: tuple[str, ...] = tuple(dict.fromkeys(lever.name for lever in LEVERS))
 
 
 # --------------------------------------------------------------------------- a lever's pair
 def applied(spec: Mapping[str, Any], change: Mapping[str, Any]) -> dict[str, Any]:
-    """``spec`` with ``change``: a knob's value under ``knobs``, any other name a spec key's."""
+    """``spec`` with ``change``: a knob's value under ``knobs``, a key of the ``bid`` block by
+    its dotted name (``bid.week``, ``bid.pace.k``, PR F2) inside that block, any other name a
+    spec key's. The result is a spec the arm parser takes where ``spec`` was one (PR E): one
+    that executes ``queue`` leaves the two plan switches out (the queue's rule draws and
+    executes its own plan), and one moved off the exact tier leaves ``executes: queue`` out (no
+    other tier reads what an arm executes, and the parser refuses ``queue`` there)."""
     out = dict(spec)
     knobs = dict(spec.get("knobs") or {})
     for name, value in change.items():
         if name in policy.KNOBS:
             knobs[name] = value
+        elif name.startswith(BID):
+            *path, last = name[len(BID) :].split(".")
+            block = out["bid"] = dict(out.get("bid") or {})
+            for key in path:
+                block[key] = dict(block.get(key) or {})
+                block = block[key]
+            block[last] = value
         else:
             out[name] = value
     out["knobs"] = knobs
+    if out.get("executes") == policy.QUEUE:
+        if out.get("tier") == "exact":
+            for key in rn.PLAN_KEYS:
+                out.pop(key, None)
+        elif "tier" in change:
+            del out["executes"]
     return out
 
 
 def value_of(arm: rn.Arm, name: str) -> Any:
-    """What ``arm`` holds under ``name``: a knob's value, a field's, or a spec key's."""
+    """What ``arm`` holds under ``name``: a knob's value, a field's, a key of its bid policy in
+    force by its dotted name (the default member's where the arm names no ``bid``; None for a
+    figure of a pace it does not name), or a spec key's."""
+    if name.startswith(BID):
+        at: Any = (arm.bid or bp.DEFAULT).payload()
+        for key in name[len(BID) :].split("."):
+            at = None if at is None else at[key]
+        return at
     if name in policy.KNOBS:
         return arm.knobs[name]
     if name in policy.FIELDS:
@@ -371,25 +600,37 @@ def shown(value: Any) -> str:
         return f"{value:g}"
     if isinstance(value, list | tuple):
         return "[" + ", ".join(shown(v) for v in value) + "]"
+    if isinstance(value, Mapping):
+        return "{" + ", ".join(f"{k} {shown(v)}" for k, v in value.items()) + "}"
     return str(value)
 
 
 def read_why(name: str, arm: rn.Arm, shapes: Sequence[policy.Shape]) -> str | None:
     """Why the run's league does not read lever ``name`` on ``arm`` in any of ``shapes``; None
     when it does in one. A knob and a field by the reads table (``policy.reads``,
-    ``policy.field_reads``; a mirror's rivals read what the surrogate reads). The three spec
-    keys by what they are: ``executes`` is read on the exact tier; a week plan only recorded
-    changes no season, so ``with_plan`` is read only by an arm that executes the plan and
-    ``execute_plan`` only by one that draws it."""
+    ``policy.field_reads``; a mirror's rivals read what the surrogate reads). The guard and the
+    stake by theirs (``policy.season_reads``); the stake must be read in every shape, since an
+    arm with a stake is refused in a run that holds a league whose bracket is not read. The
+    spec keys by what they are: ``executes`` is read on the exact tier; ``execute_plan`` only by
+    an arm that draws the plan it would execute, and never by one that executes ``queue``,
+    whose rule draws and executes its own (PR E). A key of the ``bid`` block (PR F2) as the
+    block is read (``policy.bid_reads``): in a FAAB run, by a seat that bids."""
     mirror = rn.mirrored(arm)
-    if name in policy.KNOBS:
+    if name.startswith(BID):
+        whys = [policy.bid_reads(arm, shape, mirror) for shape in shapes]
+    elif name in policy.KNOBS:
         whys = [policy.reads(arm, shape, mirror)[name] for shape in shapes]
     elif name in policy.FIELDS:
         whys = [policy.field_reads(arm, mirror)[name]]
+    elif name in policy.SEASON_FIELDS:
+        whys = [policy.season_reads(arm, shape)[name] for shape in shapes]
+        unread = [w for w in whys if w != policy.READ]
+        if name == "stake" and unread:
+            return unread[0]
     elif arm.tier != "exact":
         whys = [f"only the exact tier reads {name}"]
-    elif name == "with_plan" and not arm.execute_plan:
-        whys = ["the plan is drawn and not executed"]
+    elif name == "execute_plan" and arm.executes == policy.QUEUE:
+        whys = [QUEUE_PLANS]
     elif name == "execute_plan" and not arm.with_plan:
         whys = ["the arm draws no week plan"]
     else:
@@ -443,19 +684,23 @@ def _lever_rows(
     a = rn.arm_of(a_spec)
     both = {k: value_of(a, k) for k in ("tier", *sets) if value_of(a, k) != value_of(plain, k)}
     floor = lever.name in ("plan_floor_cats", "plan_floor_points")
-    note = PLAN_FAAB_NOTE if floor and ctx.waivers == "faab" else None
+    typical = (a.bid or bp.DEFAULT).three > 0
+    note = PLAN_FAAB_NOTE if floor and ctx.waivers == "faab" and typical else None
+    if plain.executes == policy.QUEUE and a.executes != policy.QUEUE and a.tier != "exact":
+        note = QUEUE_OFF_TIER.format(tier=a.tier)
 
     def row(key: str, nudge: str, status: str, **more: Any) -> Row:
         return Row(
             lever.name, key, nudge, lever.tier, status, **{"both": both, "note": note, **more}
         )
 
+    stem = lever.key or lever.name
     why = read_why(lever.name, a, shapes)
     if why is not None:
-        return [row(lever.name, lever.nudge, NOT_READ, why=why, note=None)]
+        return [row(stem, lever.nudge, NOT_READ, why=why, note=None)]
     out = []
     for step in steps:
-        key = f"{lever.name}-{step.tag}"
+        key = f"{stem}-{step.tag}"
         if step.unmade is not None:
             # A pair that waits on the scale holds a stand-in for it, which is no setting.
             kept = {k: v for k, v in both.items() if k == "tier"} if step.scale else both
@@ -495,6 +740,14 @@ def _lever_rows(
     return out
 
 
+def unlisted(name: str) -> str:
+    """Why ``name`` is not a lever to screen: a spec key that is no lever of a season with its
+    reason (:data:`NOT_LEVERS`), else a name the list does not hold."""
+    if name in NOT_LEVERS:
+        return f"lever {name!r} is not a lever of a season: {NOT_LEVERS[name]}"
+    return f"lever {name!r} is not in the screen's list: one of {NAMES}"
+
+
 def rows_of(
     spec: Mapping[str, Any],
     names: Sequence[str],
@@ -504,10 +757,10 @@ def rows_of(
     """The screen's rows for the baseline arm ``spec`` and the levers ``names``, in the list's
     order (whatever order they are named in), on a run whose league shapes are ``shapes``. The
     baseline is parsed as every arm is (``run.arm_of``: ValueError, KeyError by name); a name
-    not in the list is a KeyError."""
+    not in the list is a KeyError (:func:`unlisted`)."""
     unknown = [n for n in names if n not in NAMES]
     if unknown:
-        raise KeyError(f"lever {unknown[0]!r} is not in the screen's list: one of {NAMES}")
+        raise KeyError(unlisted(unknown[0]))
     return [
         r for lever in LEVERS if lever.name in names for r in _lever_rows(lever, spec, shapes, ctx)
     ]
@@ -527,6 +780,14 @@ def clears(mean: float | None, se: float | None) -> bool:
     return mean is not None and se is not None and abs(mean) > se
 
 
+def _compared(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A seat's row of counts as "did nothing" compares it: less the counts that part by
+    construction between two arms (``counts.APART_BY_CONSTRUCTION``)."""
+    if row is None:
+        return None
+    return {k: v for k, v in row.items() if k not in ct.APART_BY_CONSTRUCTION}
+
+
 def result_of(
     payload: Mapping[str, Any], standing: Sequence[Mapping[str, Any]], measure: str
 ) -> dict[str, Any]:
@@ -537,7 +798,12 @@ def result_of(
     the two arms and whether its outcomes are; whether the lever did nothing (both: the two arms
     played one season on every path, as far as a record tells); and whether it survives
     (:data:`RULE`). Both arms play one world, so equal counts with an outcome that differs is a
-    lever that changed which moves were made, not how many: it did something."""
+    lever that changed which moves were made, not how many: it did something. The counts
+    compared are every key of a row less the counts that part by construction between two arms
+    (``counts.APART_BY_CONSTRUCTION``, the one declaration, read here when asked and never
+    written here by name): such a count can differ between two arms that played one season,
+    so it is no difference of the season, and whatever of it reached the season shows in the
+    counts that are compared. Both arms' counts are recorded whole, those among them."""
     cells = {
         t: {
             label: {
@@ -552,7 +818,7 @@ def result_of(
         }
         for t, by_label in payload["results"].items()
     }
-    counts = all(r["counts"]["a"] == r["counts"]["b"] for r in standing)
+    counts = all(_compared(r["counts"]["a"]) == _compared(r["counts"]["b"]) for r in standing)
     outcomes = all(all(not v for v in r["delta"].values()) for r in standing)
     nothing = counts and outcomes
     return {
@@ -582,7 +848,11 @@ def result_words(result: Mapping[str, Any]) -> str:
             parts.append(f"{where}{words} {mean} (SE {se}) over {c['paths']} paths")
     out = "; ".join(parts)
     if result["did_nothing"]:
-        out = "did nothing (both arms' counts and outcomes are equal on every path): " + out
+        # The rule's clause, whatever the declaration holds (:data:`RULE`).
+        out = (
+            "did nothing (both arms' counts and outcomes are equal on every path, less the "
+            "counts that part by construction between two arms): " + out
+        )
     elif result["survives"]:
         out += "; survives"
     if result["voided"]:
@@ -649,6 +919,7 @@ __all__ = [
     "LEFT",
     "LEVERS",
     "NAMES",
+    "NOT_LEVERS",
     "NOT_PLAYED",
     "NOT_READ",
     "NO_RATIO",
@@ -656,6 +927,9 @@ __all__ = [
     "PLAN_STEP",
     "PLAY",
     "PLAYED",
+    "QUEUE_BASELINE",
+    "QUEUE_OFF_TIER",
+    "QUEUE_PLANS",
     "REFUSED",
     "RULE",
     "SCALE_NOTE",
@@ -676,5 +950,6 @@ __all__ = [
     "spec_differs",
     "status_words",
     "table",
+    "unlisted",
     "value_of",
 ]

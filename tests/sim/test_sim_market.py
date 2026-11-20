@@ -1,12 +1,14 @@
 """The draft market (#172, PR D4a): the rivals' boards on a table of average draft positions, the
-arm's seat on its own forecaster, the market's view, and a pair whose arms draft apart."""
+arm's seat's board by the run's rule (the draft PR: as a rival's by default, ``--seat-draft own``
+on its own forecaster), the market's view, and a pair whose arms draft apart under ``own``."""
 
 from __future__ import annotations
 
 import contextlib
 import io
 import json
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -16,6 +18,7 @@ import pytest
 from pickandroll.sim import adp, opponents, world
 from pickandroll.sim import belief as bf
 from pickandroll.sim import cli as ss
+from pickandroll.sim import forecast as fc
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
@@ -264,14 +267,18 @@ def _pair(data: Path, a: str, b: str, mp: pytest.MonkeyPatch, *extra: str):
     return results, boards
 
 
+#: The rule the tests written before the draft PR pin: the arm's seat on its own forecaster.
+OWN = ("--seat-draft", "own")
+
+
 def test_two_arms_on_one_belief_give_one_draft(pair_data, monkeypatch):
-    results, boards = _pair(pair_data, "A", "C", monkeypatch)
+    results, boards = _pair(pair_data, "A", "C", monkeypatch, *OWN)
     (r,) = results  # a dry run plays the first task only
     assert r["drafts"] == 1 and len(boards) == 1 and len(r["drafted_unprojected"]) == 1
 
 
 def test_two_arms_on_two_beliefs_give_two_leagues_on_the_same_rivals_boards(pair_data, monkeypatch):
-    results, boards = _pair(pair_data, "A", "B", monkeypatch)
+    results, boards = _pair(pair_data, "A", "B", monkeypatch, *OWN)
     (r,) = results
     me = r["seat"]
     assert r["drafts"] == 2 and len(r["drafted_unprojected"]) == 2
@@ -282,6 +289,75 @@ def test_two_arms_on_two_beliefs_give_two_leagues_on_the_same_rivals_boards(pair
     assert all(r["delta"][k] is not None for k in rn.METRICS)
 
 
+def test_under_the_market_rule_a_pair_on_two_beliefs_drafts_on_the_rival_s_board(
+    pair_data, monkeypatch
+):
+    """The command's pair under a table that names no rule (#172, the draft PR), its arms on two
+    beliefs, a ``bbm`` arm and a ``yahoo`` arm: the seat is named under the market's rule and
+    its board is the rival's in its seat on the path's own draw, in its order, less the players
+    the first stand-in cannot value. Both arms pass by that one table (a split seat by its
+    rostered side, ``cli.passing_label``; the second stand-in, the oracle, projects everyone
+    who played, so the split arm's available side would pass on fewer), so the pair meets one
+    draft and one league where under ``own`` it drafts apart (the test above).
+    ``test_sim_seat_draft.py`` holds a pair that parts under ``market``, on made-up labels."""
+    seen, leagues = [], []
+    real, setup_of = rn.draft_boards, ss.replay_setup_of
+
+    def spy(*t, **kw):
+        seen.append(t)
+        return real(*t, **kw)
+
+    def spy_setup(*t, **kw):
+        out = setup_of(*t, **kw)
+        if len(t) > 5 and t[5] is not None:  # a league drafted on the table
+            leagues.append(out)
+        return out
+
+    monkeypatch.setattr(rn, "draft_boards", spy)
+    monkeypatch.setattr(ss, "replay_setup_of", spy_setup)
+    results, boards = _pair(pair_data, "A", "B", monkeypatch)
+    (r,) = results
+    me = r["seat"]
+    ((da, draftable, value, *_),) = seen
+    assert da.rule == adp.MARKET_DRAFT and set(da.seats) == {me}
+    g = world.rng(da.seed, 0, me, 0, world.STREAMS["draft"])
+    rival = adp.rival_board(da.picks, draftable, value, da.spread, g)
+    ((path, board),) = boards
+    assert path == da.path == 0
+    first = reader.prior_rates(pair_data, 2024)
+    assert board[me] == [k for k in rival if k in first]
+    assert set(board[me]) < set(rival)  # the table lists players the first has no line for
+    (league,) = leagues
+    assert r["drafts"] == 1 and len(r["drafted_unprojected"]) == 1
+    assert all(k in first for k, _ in league.rosters[me])
+    assert all(r["delta"][k] is not None for k in rn.METRICS)
+
+
+def _dry(data: Path, *extra: str) -> tuple[int, str]:
+    """A pair's dry run under the table (its first task played and audited): A, a ranking seat,
+    against C, a static one."""
+    buf = io.StringIO()
+    args = ["--data", str(data), "--rooms", "0", "replay", "--seasons", "2024"]
+    args += ["--arms", str(data / "A.json"), str(data / "C.json")]
+    args += ["--bbm-as", "prior", "--yahoo-as", "oracle:0.2", "--adp", "espn"]
+    args += ["--adp-spread", "2,0.1", "--paths", "1", "--workers", "1", "--dry-run"]
+    with contextlib.redirect_stdout(buf):
+        code = ss.main([*args, *extra])
+    return code, buf.getvalue()
+
+
+def test_the_dry_run_prints_the_seat_s_rule(pair_data):
+    code, out = _dry(pair_data)
+    assert code == 0 and "draft market, 2024: espn table" in out, out
+    assert (
+        "given; the arms' seats draft as rivals do, less the players they cannot value "
+        "(--seat-draft market)"
+    ) in out
+    code, out = _dry(pair_data, *OWN)
+    assert code == 0, out
+    assert "given; the arms' seats draft on their own forecasters (--seat-draft own)" in out
+
+
 def test_the_market_flags_are_refused_by_name(pair_data, capsys):
     base = ["--data", str(pair_data), "--rooms", "0", "replay", "--seasons", "2024"]
     seats = ["--seats", str(pair_data / "A.json"), str(pair_data / "C.json")]
@@ -290,6 +366,8 @@ def test_the_market_flags_are_refused_by_name(pair_data, capsys):
         (["--adp-spread", "1,0"], "--adp none drafts on the run's forecaster"),
         (["--adp", "espn", "--adp-spread", "1"], "two figures"),
         (["--adp", "espn", "--adp-spread=-1,0"], "at least zero"),
+        (["--seat-draft", "own"], "--seat-draft own is how an arm's seat drafts under a table"),
+        (["--seat-draft", "market"], "--adp none drafts every seat on the run's forecaster"),
     ]
     for extra, words in cases:
         assert ss.main([*base, *seats, *extra]) == 2
@@ -341,13 +419,14 @@ def test_a_replay_with_adp_none_named_is_the_replay_with_nothing_named(pair_data
     named = _run(pair_data, *seats, "--name", "same", "--adp", "none")
     plain = _run(pair_data, *seats, "--name", "same")
     assert _as_written(named) == _as_written(plain)
-    assert plain["replay_version"] == 13 and plain["adp"] == {"source": "none"}
+    assert plain["replay_version"] == 18 and plain["adp"] == {"source": "none"}
+    assert plain["unprojected"]["note"] == ss.UNPROJECTED_NOTE
     assert plain["draft"].startswith("snake on the run's forecaster's projection")
 
 
 def test_a_replay_on_a_table_records_it_in_counts(pair_data):
     seats = ["--seats", str(pair_data / "A.json"), str(pair_data / "C.json")]
-    p = _run(pair_data, *seats, "--adp", "espn", "--adp-spread", "2,0.1")
+    p = _run(pair_data, *seats, "--adp", "espn", "--adp-spread", "2,0.1", *OWN)
     block = p["adp"]
     assert block["source"] == "espn" and block["spread"] == {
         "base": 2.0,
@@ -364,10 +443,33 @@ def test_a_replay_on_a_table_records_it_in_counts(pair_data):
     # A room's every seat drafts on its arm's board: no rival drafts a player nobody projects.
     assert season["drafted_unprojected"] == {"drafts": 1, "total": 0, "mean": 0.0, "max": 0}
     assert "pair" not in block and p["pool"]["draft"] == block["pool"]
-    assert block["limit"] == ss.ADP_LIMIT and "open with the user" in block["limit"]
+    assert block["limit"] == ss.ADP_LIMIT["own"] and "open with the user" not in block["limit"]
+    assert "the user's ruling of 2026-11-18 replaced this rule" in block["limit"]
+    assert block["seat_draft"] == "own" and block["seat"] == ss.ADP_SEAT["own"]
+    assert p["draft"] == ss.ADP_DRAFT["own"]
     assert p["draft"].startswith("snake in which each seat takes the best player left")
+    assert p["unprojected"]["note"] == ss.UNPROJECTED_NOTE
     # No figure of the table is in the payload: only counts and the log's hash.
     assert not any(str(x) in json.dumps(block) for x in table.picks.values() if x != int(x))
+
+
+def test_a_table_run_that_names_no_rule_records_the_market_s(pair_data):
+    """A room under a table that names no rule (#172, the draft PR): the record names the rule
+    in force and its words, and naming ``market`` is naming nothing."""
+    seats = ["--seats", str(pair_data / "A.json"), str(pair_data / "C.json")]
+    table = ("--adp", "espn", "--adp-spread", "2,0.1", "--name", "rule")
+    p = _run(pair_data, *seats, *table)
+    block = p["adp"]
+    assert block["seat_draft"] == "market" and "pair" not in block
+    assert (block["seat"], block["limit"]) == (ss.ADP_SEAT["market"], ss.ADP_LIMIT["market"])
+    assert p["draft"] == ss.ADP_DRAFT["market"]
+    assert p["replay_version"] == ss.REPLAY_VERSION == 18
+    assert "14: the arm's seat's draft under a table" in p["replay_version_why"]
+    # The note is the one a run without a table carries: the arm's seat drafts nobody its own
+    # forecaster has no line for, under either rule.
+    assert p["unprojected"]["note"] == ss.UNPROJECTED_NOTE
+    named = _run(pair_data, *seats, *table, "--seat-draft", "market")
+    assert _as_written(named) == _as_written(p)
 
 
 def test_a_pair_on_two_beliefs_records_that_it_shares_no_draft(pair_data):
@@ -384,6 +486,7 @@ def test_a_pair_on_two_beliefs_records_that_it_shares_no_draft(pair_data):
         "espn",
         "--adp-spread",
         "2,0.1",
+        *OWN,
     )
     season = p["adp"]["seasons"]["2024"]
     assert p["adp"]["pair"].endswith("the pair shares no draft")
@@ -392,15 +495,71 @@ def test_a_pair_on_two_beliefs_records_that_it_shares_no_draft(pair_data):
     # Every metric has a difference over the paths.
     diff = p["results"]["2024"]["prior"]["difference"]
     assert all(diff[m]["n"] == p["paths"] for m in rn.METRICS)
+    # Under ``own`` the split seat ranks by its available side, so it drafts players only the
+    # second stand-in projects and holds them with no line (the rule's limit, as before).
+    assert _split_count(p)["max"] >= 1
+
+
+def _split_count(p: dict) -> dict:
+    """The record's count of the drafted players the ``yahoo`` arm's seat has no line for."""
+    held = p["unprojected"]["by_season"]["2024"]["prior"]["b"]
+    (label,) = [k for k in held if k.startswith("yahoo(")]
+    return held[label]["seats"]
+
+
+def test_under_the_market_rule_a_split_seat_holds_nobody_its_rostered_side_cannot_value(
+    pair_data,
+):
+    """The same pair under a table that names no rule (#172, the draft PR's review): the
+    ``yahoo`` arm passes by its rostered side's table, the first stand-in's, as the ``bbm`` arm
+    does, so no path's seat holds a drafted player without a line and every path is one draft
+    and one league."""
+    p = _run(
+        pair_data,
+        "--arms",
+        str(pair_data / "C.json"),
+        str(pair_data / "D.json"),
+        "--bbm-as",
+        "prior",
+        "--yahoo-as",
+        "oracle:0.2",
+        "--adp",
+        "espn",
+        "--adp-spread",
+        "2,0.1",
+    )
+    block = p["adp"]
+    season = block["seasons"]["2024"]
+    assert block["seat_draft"] == "market" and block["pair"] == ss.ADP_SHARED["market"]
+    assert "first stand-in" in block["seat"] and "first stand-in" in block["pair"]
+    assert season["drafts_per_path"] == [1]
+    assert season["drafted_unprojected"]["drafts"] == p["paths"]
+    assert _split_count(p) == {"mean": 0.0, "max": 0}
+    diff = p["results"]["2024"]["prior"]["difference"]
+    assert all(diff[m]["n"] == p["paths"] for m in rn.METRICS)
 
 
 def test_a_pair_on_one_belief_records_its_one_draft():
     keys = [{"season": 2024, "forecaster": "prior", "path": p} for p in range(2)]
     results = [{"drafts": 1, "drafted_unprojected": [n]} for n in (3, 1)]
     table = adp.Table("espn", {1: 2.0, 2: 5.0}, 9.0, 4, 0, 6)
-    block = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, results, paired=True)
+    block = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, results, True, "own")
     assert block["pair"] == "one draft and one league, shared by both arms"
-    assert block["limit"] == ss.ADP_LIMIT
+    assert block["limit"] == ss.ADP_LIMIT["own"] and block["seat_draft"] == "own"
+    # The rule a table run names none of is the market's, and the block says whose draft it is.
+    market = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, results, paired=True)
+    assert market["seat_draft"] == "market" and market["pair"] == ss.ADP_SHARED["market"]
+    assert market["seasons"]["2024"]["drafts_per_path"] == [1]
+    # A pair that drafted apart on a path says so in the rule's own words.
+    two = [{**r, "drafts": 2, "drafted_unprojected": [0, 0]} for r in results]
+    parted = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, two, True, "market")
+    assert parted["pair"] == ss.ADP_APART_MARKET and "every roster equal" in parted["pair"]
+    own = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, two, True, "own")
+    assert own["pair"] == ss.ADP_APART and own["pair"].endswith("the pair shares no draft")
+    assert (market["seat"], market["limit"]) == (ss.ADP_SEAT["market"], ss.ADP_LIMIT["market"])
+    assert {
+        k: v for k, v in market.items() if k not in ("seat_draft", "seat", "limit", "pair")
+    } == {k: v for k, v in block.items() if k not in ("seat_draft", "seat", "limit", "pair")}
     assert ss.adp_block("none", None, {}, keys, results, paired=True) == {"source": "none"}
     assert block["seasons"]["2024"] == {
         **table.payload(),
@@ -439,15 +598,25 @@ def _no_peek(data: Path, *extra: str) -> tuple[int, str]:
 
 def test_the_no_peek_check_under_a_table_holds_for_a_room_and_a_pair_on_one_belief(pair_data):
     room = ("--seats", str(pair_data / "A.json"), str(pair_data / "C.json"))
-    code, out = _no_peek(pair_data, *room)
+    code, out = _no_peek(pair_data, *room, *OWN)
     assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
     assert "refused" not in out
     pair = ("--arms", str(pair_data / "A.json"), str(pair_data / "C.json"))
-    code, out = _no_peek(pair_data, *pair, "--bbm-as", "prior", "--yahoo-as", "oracle:0.2")
+    code, out = _no_peek(pair_data, *pair, "--bbm-as", "prior", "--yahoo-as", "oracle:0.2", *OWN)
     assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
 
 
-def _two_beliefs(pair_data, monkeypatch):
+def test_the_no_peek_check_holds_under_the_market_rule(pair_data):
+    """Under a table that names no rule (#172, the draft PR) the check builds the league the
+    rule drafts and holds for a pair on one belief. A pair on two beliefs is in the two tests
+    after the helper below: the command's, which is one league, and one that drafts apart."""
+    pair = ("--arms", str(pair_data / "A.json"), str(pair_data / "C.json"))
+    code, out = _no_peek(pair_data, *pair, "--bbm-as", "prior", "--yahoo-as", "oracle:0.2")
+    assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
+    assert "refused" not in out
+
+
+def _two_beliefs(pair_data, monkeypatch, *rule: str):
     calls = []
     real = rn.paired_apart
 
@@ -464,14 +633,78 @@ def _two_beliefs(pair_data, monkeypatch):
 
     monkeypatch.setattr(rn, "paired_apart", spy)
     pair = ("--arms", str(pair_data / "A.json"), str(pair_data / "B.json"))
-    code, out = _no_peek(pair_data, *pair, "--bbm-as", "prior", "--yahoo-as", "oracle:0.2")
+    code, out = _no_peek(pair_data, *pair, "--bbm-as", "prior", "--yahoo-as", "oracle:0.2", *rule)
     return code, out, calls
+
+
+def test_the_no_peek_check_under_the_market_rule_meets_one_league_for_a_pair_on_two_beliefs(
+    pair_data, monkeypatch
+):
+    """The command's pair on two beliefs with no rule named: a ``bbm`` arm and a ``yahoo`` arm
+    pass by one table, so the check builds one league and never compares two."""
+    code, out, calls = _two_beliefs(pair_data, monkeypatch)
+    assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
+    assert calls == [] and "refused" not in out
+
+
+def test_the_no_peek_check_under_the_market_rule_compares_both_leagues_of_a_pair_that_parts(
+    pair_data, monkeypatch
+):
+    """A pair that drafts apart under ``market``, which today only the library can build: two
+    arms on two labels that are no split of one another, arm B's forecaster with no line for
+    the player arm A's seat drafts first. The check builds both leagues before either world
+    and compares both seasons on the recorded lines and on the changed ones; they agree
+    through the day."""
+    named = fc.parse("prior")
+    arm = rn.arm_of(json.loads((pair_data / "A.json").read_text()))
+    arms = {"a": arm, "b": replace(arm, forecaster="other")}
+    r = ss.read_season(pair_data, 2024, named, None, {"a": arm, "b": arm}, 5, "stat")
+    projection = ss.projection_of(named[0], r.fixed, r.lines, 5, 0, "stat")
+    table, _ = reader.adp_table(pair_data, 2024, 2025)
+    market = (table.picks, SPREAD, adp.MARKET_DRAFT)
+    season = (2024, r.lines, r.members, r.scheduled, projection)
+    one = ss.pair_setups(*season, market, {"a": arm, "b": arm}, ss.PAIR, "prior", {}, 5, 0)
+    me = ss.seat_of(one["a"], 0)
+    lone = one["a"].rosters[me][0][0]
+    other = {k: v for k, v in projection.items() if k != lone}
+    parted = ss.pair_setups(*season, market, arms, ss.PAIR, "prior", {"other": other}, 5, 0)
+    assert parted["a"] is not parted["b"] and parted["a"].rosters == one["a"].rosters
+    assert all(k != lone for k, _ in parted["b"].rosters[me])
+    calls = []
+    real = rn.paired_apart
+
+    def spy(sa, wa, sb, wb, *rest):
+        calls.append((sa is not sb, sa.rosters == sb.rosters))
+        return real(sa, wa, sb, wb, *rest)
+
+    monkeypatch.setattr(rn, "paired_apart", spy)
+    weights = r.weights["prior"]
+    day = date.fromisoformat(NO_PEEK_DAY)
+    found, compared, breaches = ss.no_peek(
+        *season,
+        1,
+        weights,
+        2.0,
+        arms,
+        (),
+        5,
+        day,
+        "prior",
+        {"other": other},
+        {},
+        {"prior": weights, "other": weights},
+        True,
+        market,
+    )
+    assert calls == [(True, False), (True, False)]
+    assert compared > 0 and breaches == []
+    assert found is None or found[0] > day
 
 
 def test_the_no_peek_check_under_a_table_compares_both_leagues_of_a_pair_on_two_beliefs(
     pair_data, monkeypatch
 ):
-    code, out, calls = _two_beliefs(pair_data, monkeypatch)
+    code, out, calls = _two_beliefs(pair_data, monkeypatch, *OWN)
     assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
     # Two leagues, on the recorded lines and on the changed ones, both arms' days compared.
     assert calls == [(True, {0, 1}), (True, {0, 1})]
@@ -485,6 +718,6 @@ def test_the_no_peek_check_under_a_table_catches_a_belief_that_reads_the_days_ow
         "games_before",
         lambda self, player, d: sum(1 for x in self._dates.get(player, []) if x <= d),
     )
-    code, out, calls = _two_beliefs(pair_data, monkeypatch)
+    code, out, calls = _two_beliefs(pair_data, monkeypatch, *OWN)
     assert code == 1 and f"FAILED: the records part on {NO_PEEK_DAY}" in out, out
     assert "beliefs" in out and len(calls) == 2

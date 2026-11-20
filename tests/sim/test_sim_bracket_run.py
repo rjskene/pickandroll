@@ -6,6 +6,7 @@ Every league is made up and every seed fixed. Each season's test names its time 
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import cache
@@ -15,10 +16,11 @@ import numpy as np
 import pytest
 
 from pickandroll.sim import audit, nopeek, policy
+from pickandroll.sim import bid_policy as bp
 from pickandroll.sim import league as lg
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
-from pickandroll.sim.engine import mv, wk
+from pickandroll.sim.engine import mv, pl, wk
 from pickandroll.sim.shapes import CONTINUOUS, DROPPED
 from pickandroll.sim.state import initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, replay_of
@@ -26,6 +28,7 @@ from tests.sim.test_no_peek import SEED, WEIGHTS, recorded
 from tests.sim.test_sim_knobs import weakened
 from tests.sim.test_sim_league import totals
 from tests.sim.test_sim_points import TABLE
+from tests.sim.test_sim_queue import check_parity
 from tests.sim.test_sim_split import armed, second_of, variant_of, world_of
 
 FORMATS = ("one_win", "each_category")
@@ -40,11 +43,45 @@ def final_league(format_: str = "one_win", **kw):
 
 # --------------------------------------------------------------------------- who reads the week
 def seats():
-    """A seat of every tier, executed set and plan choice."""
+    """A seat of every tier, executed set and plan choice. The queue's rule is the exact tier's
+    (PR E: any other tier refuses it where it decides); it draws its own plan whatever the
+    seat's plan switch says."""
     return [
         op.Seat("S", tier, dict(KNOBS), executes, with_plan)
         for tier, executes, with_plan in product(policy.TIERS, policy.EXECUTES, (False, True))
+        if executes != policy.QUEUE or tier == "exact"
     ]
+
+
+#: Blocks of the bid policy (PR F2): one that weighs the week, one that weighs the season, one
+#: that weighs neither and paces.
+ON_WEEK = bp.of({"week": 0.5})
+ON_SEASON = bp.of({"season": 0.5})
+PACED = bp.of({"pace": {"k": 1, "shape": 1, "reserve": 0.2}, "routine": 1})
+#: Knobs with a season term, for the seats that take a guard or a stake (the guard PR), and
+#: with a stash threshold (PR G).
+TERM = {**KNOBS, "season_weight": 0.0005}
+STASH = {**KNOBS, "stash_threshold": 0.0}
+
+
+def settings():
+    """Seats that name what the PRs before this one gave an arm, on the tiers that plan with
+    the engine and on a set that searches no week (the three weeks', no plan drawn): a ``bid``
+    block (PR F2), a season term with the guard off and with a stake (the guard PR), a stash
+    threshold (PR G). Whether each reads the week is asked by behaviour, as of every seat."""
+    out = []
+    for tier in ("exact", "surrogate"):
+        out += [
+            op.Seat("S", tier, dict(KNOBS), with_plan=False, bid=ON_WEEK),
+            op.Seat("S", tier, dict(KNOBS), with_plan=False, bid=ON_SEASON),
+            op.Seat("S", tier, dict(KNOBS), with_plan=False, bid=PACED),
+            op.Seat("S", tier, dict(TERM), with_plan=False),
+            op.Seat("S", tier, dict(TERM), with_plan=False, guard=policy.OFF),
+            op.Seat("S", tier, dict(TERM), with_plan=False, stake=1.0),
+            op.Seat("S", tier, dict(TERM), with_plan=False, bid=ON_SEASON),
+            op.Seat("S", tier, dict(STASH), with_plan=False),
+        ]
+    return out
 
 
 def rivals():
@@ -53,7 +90,15 @@ def rivals():
         op.of({"kind": "market", "rate": 1.0}, KNOBS, 0.1),
         op.of({"kind": "market", "rate": 1.0, "view": "season", "among": 2}, KNOBS, 0.1),
         op.Mirror(dict(KNOBS)),
+        op.Mirror(dict(KNOBS), bid=ON_SEASON),
+        op.Mirror(dict(KNOBS), bid=PACED),
+        op.Mirror(dict(TERM)),
     ]
+
+
+def week_bidders():
+    """The rival that reads the week: a mirror whose arm's ``bid`` weighs it (PR F2)."""
+    return [op.Mirror(dict(KNOBS), bid=ON_WEEK)]
 
 
 def rounds_league(format_: str = "one_win", **kw):
@@ -103,12 +148,19 @@ def test_only_a_strategy_that_says_it_reads_the_week_decides_on_the_weeks_view(c
     """Held by behaviour, not by a list: every strategy the simulator seats decides on three
     states that share a ``key()`` and differ in the week's opponent and totals (two pairs, and
     the blind week). One that does not say it reads the week gives the same decision on all
-    three, its bid's basis included, so the cache may share it. A kind added later that reads
-    the week and does not say so fails here: in the first round of two, in a FAAB league, or in
-    the season's last week. Of those that say it, the weighted set differs on the two pairs in
-    the first round, and in the final moves against either opponent and not at all in the blind
-    week (only decisions the test asserts on are made); the week's plan is searched on the week
-    too (``policy.exact``), and no plan is drawn on these states. About 1.5 s each."""
+    three, its bid's basis included, so the cache may share it. A kind or a setting added later
+    that reads the week and does not say so fails here: in the first round of two, in a FAAB
+    league, or in the season's last week. So the seats of the PRs before this one are asked too
+    (``settings``): a ``bid`` block, the guard off, a stake, a stash threshold.
+
+    Of those that say it, the weighted set differs on the two pairs in the first round, and in
+    the final moves against either opponent and not at all in the blind week (only decisions
+    the test asserts on are made); the week's plan is searched on the week too
+    (``policy.exact``), and no plan is drawn on these states; the queue's rule (PR E) searches
+    the week's set and the week's plans (``policy.draw_queue``): for some team its decision
+    is another on another view (its choice in a round is the tests' below). A seat or a mirror whose ``bid`` weighs the week (PR F2) searches no week
+    and says it reads it all the same: by FAAB its moves are the same on the three views and
+    the gains its claims are sized on are not. About 4 s each."""
     waivers, number = VIEWS[case]
     setup = rounds_league(format_)
     if waivers == "faab":
@@ -121,9 +173,9 @@ def test_only_a_strategy_that_says_it_reads_the_week_decides_on_the_weeks_view(c
         for c in vars(op).values()
         if isinstance(c, type) and c.__module__ == op.__name__ and "decide" in vars(c)
     } - {op.Strategy}
-    made = [*rivals(), *seats()]
+    made = [*rivals(), *week_bidders(), *seats(), *settings()]
     assert {type(s) for s in made} == kinds, "a strategy kind this test does not seat"
-    moved, based = set(), 0
+    moved, based, sized, parted = set(), 0, 0, 0
     for strat, team in product(made, setup.teams):
         if not rn._reads_week(strat):
             a, b, c = (decided(strat, setup, state, team) for state in (one, two, blind))
@@ -131,6 +183,21 @@ def test_only_a_strategy_that_says_it_reads_the_week_decides_on_the_weeks_view(c
             based += a.basis is not None
             if a.moves:
                 moved.add((strat.kind, getattr(strat, "tier", None)))
+        elif getattr(strat, "bid", None) is ON_WEEK:
+            # It reads the week for its claims' size alone: the same moves on every view, and
+            # where a claim is sized (FAAB) each move's gain on the week, which the view moves.
+            if team != ME:
+                continue
+            a, b, c = (decided(strat, setup, state, team) for state in (one, two, blind))
+            assert a.moves == b.moves == c.moves, strat
+            if a.basis is not None and a.moves:
+                assert len({a.basis.week, b.basis.week, c.basis.week}) > 1, strat
+                sized += 1
+        elif strat.executes == policy.QUEUE:
+            # The queue's rule searches the week's set and the week's plans: for some team its
+            # decision is another on another view (counted, and asserted below).
+            a, b, c = (decided(strat, setup, state, team) for state in (one, two, blind))
+            parted += not a == b == c
         elif strat.executes == policy.WEIGHTED and team == ME:
             a, b = decided(strat, setup, one, team), decided(strat, setup, two, team)
             assert a.moves and b.moves, strat
@@ -147,26 +214,46 @@ def test_only_a_strategy_that_says_it_reads_the_week_decides_on_the_weeks_view(c
     if number == 4:
         assert moved >= {("mirror", None), ("seat", "exact"), ("seat", "surrogate")}
     assert (based > 0) == (waivers == "faab")
-    # Who says it reads the week: the exact tier's weighted set, and the exact tier with a plan.
+    # A bid on the week parted on the views wherever a claim was sized on a day with a move.
+    assert (sized > 0) == (waivers == "faab" and number == 4), sized
+    # The queue's rule does read the week: its decision parted on the views for some team.
+    assert parted > 0
+    # Who says it reads the week: the exact tier's weighted set, the exact tier with a plan and
+    # the exact tier under the queue's rule; and whoever bids by a block that weighs the week.
     assert [(s.tier, s.executes, s.with_plan) for s in seats() if s.reads_week] == [
         ("exact", "three", True),
         ("exact", "weighted", False),
         ("exact", "weighted", True),
+        ("exact", "queue", False),
+        ("exact", "queue", True),
     ]
+    assert [s.tier for s in settings() if s.reads_week] == ["exact", "surrogate"]
+    assert all(s.bid is ON_WEEK for s in settings() if s.reads_week)
     assert not any(rn._reads_week(r) for r in rivals())
+    assert all(rn._reads_week(r) for r in week_bidders())
 
 
 def test_the_decision_key_holds_the_weeks_view_for_a_seat_that_reads_the_week_and_no_other():
     setup = rounds_league()
     one, two, _ = three_views(setup)
-    for strat in [*rivals(), *seats()]:
+    for strat in [*rivals(), *week_bidders(), *seats(), *settings()]:
         k1, k2 = (rn.decision_key(setup, s, ME, strat, 4) for s in (one, two))
         assert k1[:3] == k2[:3] == (ME, repr(strat), one.key())
+        # The fourth place is the guard PR's: the week's stake of a seat that reads one, which
+        # the runner sets on the state; these states hold none.
+        assert k1[3] is None and k2[3] is None and len(k1) == 5
         if rn._reads_week(strat):
-            assert k1[3] == policy.week_view(setup, one, ME, 4) != k2[3]
-            assert k2[3] == policy.week_view(setup, two, ME, 4)
+            assert k1[4] == policy.week_view(setup, one, ME, 4) != k2[4]
+            assert k2[4] == policy.week_view(setup, two, ME, 4)
         else:
-            assert k1 == k2 and k1[3] is None
+            assert k1 == k2 and k1[4] is None
+    # A seat with a stake is keyed on its own week's figure, whatever its view; no other is.
+    staked = op.Seat("S", "surrogate", dict(TERM), with_plan=False, stake=1.0)
+    plain = op.Seat("S", "surrogate", dict(TERM), with_plan=False)
+    low, high = (replace(one, stakes={ME: level, 1: 0.5}) for level in (0.0, 1.0))
+    assert low.key() == high.key() == one.key()
+    assert [rn.decision_key(setup, s, ME, staked, 4)[3] for s in (low, high)] == [0.0, 1.0]
+    assert rn.decision_key(setup, low, ME, plain, 4) == rn.decision_key(setup, high, ME, plain, 4)
     # Two arms of one name, apart only in their rivals or in ``execute_plan``, are one seat to
     # the cache; on one view they share (as the same arm twice does), on two they do not.
     a = rn.Arm("S", "exact", dict(KNOBS), {"kind": "static"}, policy.WEIGHTED)
@@ -224,8 +311,9 @@ def lockstep(setup, w, variants, plans, me, monkeypatch):
 
 def apart_on_one_state(keys) -> list:
     """The days the two variants' states agreed in what the cache keyed on before (the team, the
-    seat, ``SimState.key()``) while their views of the week differed."""
-    return [d for d, (a, b) in sorted(keys.items()) if a[:3] == b[:3] and a[3] != b[3]]
+    seat, ``SimState.key()``, and since the guard PR a stake's level) while their views of the
+    week, the key's last place, differed."""
+    return [d for d, (a, b) in sorted(keys.items()) if a[:-1] == b[:-1] and a[-1] != b[-1]]
 
 
 def own_decisions(setup, w, variants, plans, me, monkeypatch):
@@ -934,6 +1022,184 @@ def test_with_a_season_term_a_sets_claims_in_the_last_week_bid_nothing_blind_or_
         claims[blind] = [claim for claim, _ in placed]
     if seat != "weighted":
         assert claims[True] == claims[False]
+
+
+# --------------------------------------------------------------------------- the bid policy
+#: A ``bid`` block that sizes a claim on the week alone, and one on the season alone (PR F2).
+BID_WEEK = {"week": 1.0}
+BID_SEASON = {"season": 1.0}
+
+
+def sized_claims(setup, recs, me: int) -> list:
+    """The claims ``me`` placed in the final, each with its move's gain on the week and on the
+    season as its decision's basis carries them for the bid policy (``policy.with_bid``; None
+    on a horizon the arm's block does not weigh, and with no block named)."""
+    final = setup.calendar.weeks[-1]
+    out = []
+    for (day, _), rec in sorted(recs.items()):
+        if not final.contains(day):
+            continue
+        decision = rec.decisions[me]
+        basis = decision.basis
+        at = [(m.add, m.drop) for m in decision.moves]
+        for claim in rec.claims.get(me, ()):
+            i = at.index((claim.move.add, claim.move.drop))
+            week = basis.week[i] if basis.week else None
+            out.append((claim, week, basis.season[i] if basis.season else None))
+    return out
+
+
+def sized_as_said(placed, horizon: int, routine: int) -> None:
+    """Each claim of ``placed`` is worth more than nothing, on a gain above 0 on its horizon
+    (1 the week, 2 the season), and bids as the bid policy sizes that value with no pace, cap
+    or shade named and the league's sizing at 1: the value rounded half up from a typical and a
+    half on, the routine dollar under it."""
+    for row in placed:
+        claim = row[0]
+        assert row[horizon] > 0 and claim.value > 0, row
+        above = math.floor(claim.value + 0.5)
+        assert claim.bid == (above if claim.value >= 1.5 else routine), row
+
+
+@pytest.mark.parametrize("format_", FORMATS)
+def test_a_bid_on_the_week_sizes_a_weighted_sets_claims_in_the_last_week(format_):
+    """The way out of the limit pinned above (the refit on PR F2; the lead's answer to this
+    PR's second question): the same weighted seat with no season term, naming a ``bid`` that
+    weighs the week alone. Its claims in the final are then worth their own gain on the week
+    against the final's opponent, in typicals (``bid_policy.value``): each is worth more than
+    nothing, where with no block named each is worth exactly nothing and bids $0; one worth a
+    typical and a half or more bids above $0, a smaller one the block's routine dollar, which
+    is $0 unless the block names it. FAAB under continuous waivers, seat 2 on seed 6 (a found
+    path: a finalist that claims in the final with the block and without, some claim worth a
+    typical and a half). About 2 s each."""
+    me = 2
+    setup = kinds()[f"faab-{CONTINUOUS}"]
+    setup = setup if format_ == "one_win" else every_category(setup)
+    final = setup.calendar.weeks[-1]
+    w = replay_of(setup, 6, 0)
+    seen = {}
+    for name, block in (("none", None), ("week", BID_WEEK), ("dollar", {**BID_WEEK, "routine": 1})):
+        bid = None if block is None else bp.of(block)
+        seat = op.Seat("W", "exact", dict(KNOBS), policy.WEIGHTED, with_plan=False, bid=bid)
+        assert seat.reads_week
+        (res,), recs = played(setup, w, [{**weighing(setup, me), me: seat}])
+        assert not res.breaches, (name, res.breaches[:2])
+        state = recs[(final.start, 0)].state
+        assert policy.opponent_of(setup, state, me, final.number) is not None
+        assert state.dollars[me] > 20
+        seen[name] = sized_claims(setup, recs, me)
+        assert seen[name], f"no claim in the final ({name})"
+    for claim, week, season in seen["none"]:
+        assert week is None and season is None and (claim.value, claim.bid) == (0.0, 0)
+    sized_as_said(seen["week"], 1, 0)
+    sized_as_said(seen["dollar"], 1, 1)
+    assert any(claim.bid > 1 for claim, _, _ in seen["week"])
+    assert all(claim.bid >= 1 for claim, _, _ in seen["dollar"])
+
+
+@pytest.mark.parametrize("format_", FORMATS)
+@pytest.mark.parametrize("seat", sorted(TERMED))
+def test_a_bid_on_the_season_sizes_a_season_term_seats_claims_in_the_last_week(seat, format_):
+    """The twin, for the other kind of seat the limit names (the lead's answer to this PR's
+    third question): the seats of the season-term pin above, each naming a ``bid`` that weighs
+    the season alone. A claim in the final is then worth its move's season figure in typicals
+    (``policy.SeasonFigure``, the term's own unit, with no stake): more than nothing, where
+    with no block named it is worth nothing and bids $0. With the routine dollar named every
+    such claim bids $1 or more. On the exact tier, either set, one claim is worth a typical and
+    a half and bids above $0 on the season alone; the surrogate decides twice a week, has made
+    fewer than the ten moves a typical needs by the final, and its claim counts one typical:
+    the routine dollar. The pin's league, seat and seed. About 2 s each."""
+    me = 2
+    setup = kinds()[f"faab-{CONTINUOUS}"]
+    setup = setup if format_ == "one_win" else every_category(setup)
+    tier, executes = TERMED[seat]
+    w = replay_of(setup, 6, 0)
+    seen = {}
+    for name, block in (("season", BID_SEASON), ("dollar", {**BID_SEASON, "routine": 1})):
+        termed = op.Seat(
+            "T", tier, {**KNOBS, "season_weight": 0.1}, executes, with_plan=False, bid=bp.of(block)
+        )
+        # A bid on the season reads the schedule and no matchup: the seat reads the week only
+        # where its set does.
+        assert rn._reads_week(termed) == (seat == "weighted")
+        (res,), recs = played(setup, w, [{**weighing(setup, me), me: termed}])
+        assert not res.breaches, (name, res.breaches[:2])
+        seen[name] = sized_claims(setup, recs, me)
+        assert seen[name], f"no claim in the final ({name})"
+    sized_as_said(seen["season"], 2, 0)
+    sized_as_said(seen["dollar"], 2, 1)
+    assert all(claim.bid >= 1 for claim, _, _ in seen["dollar"])
+    if tier == "exact":
+        assert any(claim.bid > 1 for claim, _, _ in seen["season"])
+    else:
+        assert [(claim.value, claim.bid) for claim, _, _ in seen["season"]] == [(1.0, 0)]
+
+
+# --------------------------------------------------------------------------- the queue's rule
+def bye_league(format_: str = "one_win"):
+    """Four teams over three weeks, then three of them in a bracket of two rounds (weeks four
+    and five): the top seed sits the first round out, on a bye, and plays the final."""
+    setup = make_setup(teams=4, weeks=5, playoff_weeks=2, playoff_teams=3)
+    return setup if format_ == "one_win" else every_category(setup)
+
+
+@pytest.mark.parametrize("format_", FORMATS)
+@pytest.mark.parametrize("me", [1, 2])
+def test_under_the_queues_rule_a_round_is_the_engines_playoff_choice_and_a_bye_the_set(me, format_):
+    """PR E's rule in the bracket (the refit on PR E). An exact seat that executes ``queue``
+    among static rivals, through the two rounds of :func:`bye_league`, against the blind
+    season. On every day of a round the seat hands the engine the weight 0 and the playoff flag
+    and its choice is ``plans.for_queue``'s on the same inputs (PR E's own check,
+    ``test_sim_queue.check_parity``), on the problem the day's record was decided on:
+
+    - in a round the seat plays, the problem names the round's opponent, the gate reads the
+      matchup's odds and the queue takes a plan exactly on the days the library's choice is
+      one; on a found path (seed 5) it does on some day of each round the seat plays;
+    - on a bye the week has no opponent, the gate has no odds (None), no plan leads and the
+      decision is the three weeks' set;
+    - in the blind season no day of either round has a plan leading: before this PR every
+      day the queue took a plan was a day of the regular season.
+
+    Seat 1 plays both rounds; seat 2 takes the bye and plays the final (who is seeded where
+    moves with who holds the seat). Under every category the regular season's plan floor is
+    under zero, as in the plan's test above; a round's floor is the engine's own. About 3 s
+    each."""
+    setup = bye_league(format_)
+    floor = -1.0 if format_ == "each_category" else 0.0
+    knobs = {**KNOBS, "daily_cap": 3, "plan_floor_cats": floor}
+    seat = op.Seat("Q", "exact", knobs, policy.QUEUE)
+    assert seat.reads_week
+    variant = {**{t: op.Static() for t in setup.teams}, me: seat}
+    w = replay_of(setup, 5, 0)
+    (res,), recs = played(setup, w, [variant])
+    _, before = played(setup, w, [variant], blind=True)
+    assert not res.breaches
+    weeks = lg.round_weeks(setup.spec)
+    led = dict.fromkeys(weeks, 0)
+    byes = set()
+    for (day, _), rec in sorted(recs.items()):
+        number = setup.week_of(day).number
+        if number not in weeks:
+            continue
+        assert not before[(day, 0)].decisions[me].plan_leads, day
+        decision = rec.decisions[me]
+        assert decided_on(seat, setup, rec.state, me, rec) == decision, day
+        built = policy.problem_of(setup, rec.state, me, knobs, rec.beliefs, rec.status, rec.returns)
+        drawn = check_parity(built, 0.0, True)
+        opponents = built.problem.horizons["week"][0].opponents
+        if policy.opponent_of(setup, rec.state, me, number) is None:
+            byes.add(number)
+            assert opponents == () and pl.gate(mv.Evaluator(built.problem), (), 0.0, True) is None
+            assert drawn.chosen is None and not decision.plan_leads and not decision.plan
+            assert decision.moves == drawn.three.moves
+        else:
+            assert len(opponents) == 1
+            assert decision.plan_leads == (drawn.chosen is not None), day
+            led[number] += decision.plan_leads
+    if me == 2:
+        assert byes == {weeks[0]} and led[weeks[1]] >= 1, (byes, led)
+    else:
+        assert not byes and all(n >= 1 for n in led.values()), (byes, led)
 
 
 def points_league():
