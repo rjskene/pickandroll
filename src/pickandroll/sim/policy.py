@@ -138,6 +138,20 @@ at the running week's last day (:func:`later_share`, :class:`StakedFigure`;
 week's stake for the seat from the finished weeks' standings (``sim/stake.py``). Both are the
 arm's own seat's (:func:`guarded`): a rival, a mirror too, stays on the block and reads no
 stake. With neither named nothing moves.
+
+**The union pool** (PR pool, an arm's fifth field, ``guard_pool``). The exact tier cuts its pool
+before the season guard sees anything: the best ``pool`` by single-swap gain. Live has searched
+a union since #424 (``season.pool``): that head, then the adds whose best single move the guard
+admits. At a ``guard_pool`` above 0 the exact tier's searches take it: the three weeks' set by
+``pool.pool_for``, the weighted search by its head and each horizon's admitted list joined
+(:func:`exact`, :func:`_weighted_union`), and under the queue's rule the week's set by
+``pool.pool_for`` on the week's single swaps (:func:`draw_queue`). The rule is the engine's,
+called through the door (``sp``), with the one guard the day's searches share. At 0, the
+default, the lines of before run and the rule is not called; so too under the arm's guard
+``off``, where there is no guard to make a list, and the field is not read
+(:func:`field_reads`). The week plan's set, :func:`scale_of`, the surrogate, the ranking tier
+and the rivals do not read the field. A decision says what its union was
+(:class:`PoolUnion`), for the counts: under the queue's rule the day's two sets' together.
 """
 
 from __future__ import annotations
@@ -166,6 +180,7 @@ from .engine import (
     pl,
     refused,
     sg,
+    sp,
     st,
     typical_gain,
     wk,
@@ -304,8 +319,13 @@ def check_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- the arm's fields
-#: The arm's four fields beside its knobs, in the order the payload names them.
-FIELDS = ("pool", "min_gain", "weeks_ahead", "surrogate_days")
+#: The arm's five fields beside its knobs, in the order the payload names them. The fifth,
+#: ``guard_pool`` (#172, PR pool), is written in a payload only above 0.
+FIELDS = ("pool", "min_gain", "weeks_ahead", "surrogate_days", "guard_pool")
+#: ``guard_pool`` off: the default, and the exact tier's pools as they were before the field.
+NO_GUARD_POOL = 0
+#: The tiers whose searches take a union pool at a ``guard_pool`` above 0: the exact tier's.
+UNION_TIERS = ("exact",)
 
 
 @dataclass(frozen=True)
@@ -315,21 +335,29 @@ class Fields:
     move must add on the key the arm executes (with the season term, on the combined figure);
     ``weeks_ahead``, the weeks a problem looks ahead, this one included (the ``three`` horizon is
     the ``weeks_ahead - 1`` after it, fewer near the season's end); ``surrogate_days``, the
-    weekdays the surrogate solves on (Monday 0). Part of a seat's ``repr``, so two seats that
-    differ in one never share a decision."""
+    weekdays the surrogate solves on (Monday 0); ``guard_pool`` (PR pool), the size of the
+    guard's list the exact tier's pools take beside their best ``pool`` (``season.pool``'s
+    ``guard_size``), 0 for none: the pools as they were, and the default. Part of a seat's
+    ``repr``, so two seats that differ in one never share a decision."""
 
     pool: int = POOL
     min_gain: float = MIN_GAIN
     weeks_ahead: int = WEEKS_AHEAD
     surrogate_days: tuple[int, ...] = SURROGATE_DAYS
+    guard_pool: int = NO_GUARD_POOL
 
     def payload(self) -> dict[str, Any]:
-        return {
+        """The fields as a record names them: the four an arm always had, and ``guard_pool``
+        only above 0, so an arm that leaves it off is recorded as before the field."""
+        out: dict[str, Any] = {
             "pool": self.pool,
             "min_gain": self.min_gain,
             "weeks_ahead": self.weeks_ahead,
             "surrogate_days": list(self.surrogate_days),
         }
+        if self.guard_pool > 0:
+            out["guard_pool"] = self.guard_pool
+        return out
 
 
 DEFAULT_FIELDS = Fields()
@@ -343,7 +371,8 @@ def fields_of(spec: Mapping[str, Any]) -> Fields:
     """An arm's fields from its spec, each at its default when the spec names none; a bad value is
     refused by name (ValueError): ``pool`` a whole number, 1 or more; ``min_gain`` a number, 0 or
     more; ``weeks_ahead`` a whole number, 2 or more (the three weeks' set needs a later week);
-    ``surrogate_days`` a non-empty set of weekdays 0 to 6."""
+    ``surrogate_days`` a non-empty set of weekdays 0 to 6; ``guard_pool`` a whole number, 0 or
+    more (0 is off)."""
     pool = spec.get("pool", POOL)
     if not _whole(pool) or pool < 1:
         raise ValueError(f"pool {pool!r}: a whole number, 1 or more")
@@ -369,7 +398,10 @@ def fields_of(spec: Mapping[str, Any]) -> Fields:
         or not all(_whole(d) and 0 <= d <= 6 for d in days)
     ):
         raise ValueError(f"surrogate_days {days!r}: a non-empty set of weekdays, 0 (Monday) to 6")
-    return Fields(pool, float(gain), weeks, tuple(sorted(set(days))))
+    listed = spec.get("guard_pool", NO_GUARD_POOL)
+    if not _whole(listed) or listed < 0:
+        raise ValueError(f"guard_pool {listed!r}: a whole number, 0 or more (0 is off)")
+    return Fields(pool, float(gain), weeks, tuple(sorted(set(days))), listed)
 
 
 @dataclass(frozen=True)
@@ -437,6 +469,27 @@ class Basis:
 
 
 @dataclass(frozen=True)
+class PoolUnion:
+    """What the exact tier's union pool was on one day (#172, PR pool), kept for the counts and
+    read by no decision. ``admitted``: the adds the guard's list brought that the head did not
+    hold (``season.pool.Pool.admitted``). ``took``: the ones of those the decided set adds, in
+    the set's order (``taken``: how many); the day's cap and the week's adds may still cut
+    them, so the count of the days one was taken is read on the set's moves the seat then
+    queued or claimed (``counts.Tally.searched``). ``refused``: how many of the head's adds
+    have a best single move that gains more than ``min_gain`` on a horizon the pool was ranked
+    on and that the season guard refuses. Under the queue's rule (PR E) a day has two sets,
+    each searched among a union of its own, and the record is the day's (:func:`_day_union`)."""
+
+    admitted: int
+    took: tuple[int, ...]
+    refused: int
+
+    @property
+    def taken(self) -> int:
+        return len(self.took)
+
+
+@dataclass(frozen=True)
 class Decision:
     """What a tier decided for one team on one day."""
 
@@ -474,6 +527,9 @@ class Decision:
     #: plan leads and ``sends`` is its own). The executor keeps the one that matches what it
     #: queues (:func:`queue`).
     plan_sends: tuple[tuple[int, int], ...] | None = None
+    #: The day's union pool (PR pool): only on the exact tier at a ``guard_pool`` above 0, None
+    #: everywhere else. A count, read by no decision.
+    union: PoolUnion | None = None
 
 
 NONE = Decision()
@@ -1366,12 +1422,71 @@ def _weight(knobs: Mapping[str, Any], weeks_left: int) -> float:
     raise KeyError(f"horizon weight {key!r} is not one of {sg.WEIGHT_KEYS}")
 
 
+Swaps = Mapping[int, Sequence[mv.SwapGain]]
+
+
+def _horizon_swaps(ev: mv.Evaluator) -> dict[str, dict[int, list[mv.SwapGain]]]:
+    """Every candidate's single swaps on each of the week and the three weeks."""
+    return {key: mv.single_swaps(ev, key) for key in HORIZONS}
+
+
+def _weighted_head(swaps: Mapping[str, Swaps], fields: Fields) -> list[int]:
+    """The best ``pool`` by single-swap gain on each horizon of ``swaps``, taken in turn
+    (``strategy.pool_of``)."""
+    gains = {key: {c: g[0].gain for c, g in swaps[key].items() if g} for key in HORIZONS}
+    return sg.pool_of(gains, fields.pool)
+
+
 def _weighted_pool(ev: mv.Evaluator, fields: Fields) -> list[int]:
     """The weighted search's candidates: the best ``pool`` by single-swap gain on each of the
     week and the three weeks, taken in turn (``strategy.pool_of``)."""
-    swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
-    gains = {key: {c: g[0].gain for c, g in swaps[key].items() if g} for key in HORIZONS}
-    return sg.pool_of(gains, fields.pool)
+    return _weighted_head(_horizon_swaps(ev), fields)
+
+
+def _weighted_union(swaps: Mapping[str, Swaps], allowed: mv.Allowed, fields: Fields) -> sp.Pool:
+    """The weighted search's candidates at a ``guard_pool`` above 0 (#172, PR pool), in the live
+    strategy run's form (``api.season_strategy``, read as the reference and put together again
+    here from the engine's own functions): the head as at 0 (:func:`_weighted_head`), then each
+    horizon's guard's list (``pool.admitted_swaps`` on that horizon's single swaps) taken in
+    turn by ``strategy.pool_of``, ``guard_pool`` in all, joined without repeating an add
+    (``pool.joined``)."""
+    listed = {
+        key: {
+            c: g.gain
+            for c, g in sp.admitted_swaps(swaps[key], allowed, fields.guard_pool, fields.min_gain)
+        }
+        for key in HORIZONS
+    }
+    return sp.joined(_weighted_head(swaps, fields), sg.pool_of(listed, fields.guard_pool))
+
+
+def _union_of(
+    pool: sp.Pool,
+    tables: Sequence[Swaps],
+    allowed: mv.Allowed,
+    min_gain: float,
+    moves: Iterable[mv.Move],
+) -> PoolUnion:
+    """What the day's union ``pool`` was, for the counts (:class:`PoolUnion`): the adds the
+    guard's list brought, the ones of them the decided ``moves`` add, and how many of the head's
+    adds have, on one of ``tables`` (a horizon's single swaps each: the ones the pool was ranked
+    on), a best single move that gains more than ``min_gain`` and that ``allowed`` refuses. The
+    guard is asked about single moves only, as the list itself asks it."""
+    head, listed = pool.players[: pool.size], set(pool.players[pool.size :])
+
+    def refused(c: int) -> bool:
+        best = (t[c][0] for t in tables if t.get(c))
+        return any(g.gain > min_gain and not allowed((mv.Move(c, g.drop),)) for g in best)
+
+    took = tuple(m.add for m in moves if m.add in listed)
+    return PoolUnion(pool.admitted, took, sum(1 for c in head if refused(c)))
+
+
+def listed_of(fields: Fields, allowed: mv.Allowed | None) -> bool:
+    """Whether a search of the exact tier takes the union pool (#172, PR pool): the arm's
+    ``guard_pool`` is above 0 and there is a guard to make the list. Handed none (the arm's
+    guard ``off``, :func:`allowed_of`) the rule gives the head alone, so the lines of 0 run."""
+    return fields.guard_pool > 0 and allowed is not None
 
 
 def _three_pool(swaps: Mapping[int, Sequence[mv.SwapGain]], fields: Fields) -> list[int]:
@@ -1396,15 +1511,37 @@ def exact(
     swaps, the pool's ranking and the recommended set (or the weighted search) all take the
     season term (:func:`seasoned`); the week's plan does not. An arm that executes ``queue``
     takes the queue's rule (:func:`queue_rule`, PR E), which draws its own plans: ``with_plan``
-    is not read there."""
+    is not read there.
+
+    The pool the set is searched among (#172, PR pool). At ``guard_pool`` 0, the default, it is
+    cut before the guard sees anything: the best ``pool`` by single-swap gain
+    (:func:`_three_pool`, :func:`_weighted_pool`), so when the guard refuses most of those the
+    search has little left. Above 0 it is the engine's union, as live searches since #424: the
+    same head, then the adds whose best single move the guard admits, ``guard_pool`` of them
+    (``pool.pool_for`` through the door on the single swaps the arm ranks today, the season
+    term on them; for the weighted search :func:`_weighted_union`). The guard is the one object
+    every search of the day is handed, so what it has worked out for the list is not worked out
+    again. The decision then says what the union was (:class:`PoolUnion`). A list needs a
+    guard: handed none (the arm's guard ``off``, the guard PR), the rule gives the head alone,
+    so the searches run as at 0 and no union is kept (:func:`listed_of`). The week plan's set
+    below is not part of it: it searches the first ``pool`` candidates in candidate order,
+    whatever the field."""
     if executes == QUEUE:
         return queue_rule(built, fields)
     p = built.problem
     ev = mv.Evaluator(p)
     allowed = allowed_of(built)
+    listed = listed_of(fields, allowed)
     solves = 0
+    union: sp.Pool | None = None
+    tables: tuple[Swaps, ...] = ()
     if executes == WEIGHTED:
-        pool = _weighted_pool(ev, fields)
+        if listed:
+            both = _horizon_swaps(ev)
+            union = _weighted_union(both, allowed, fields)
+            pool, tables = list(union.players), tuple(both.values())
+        else:
+            pool = _weighted_pool(ev, fields)
         w = seasoned(
             built,
             sg.Weighted(ev, _weight(built.knobs, built.weeks_left), built.weeks_left),
@@ -1418,13 +1555,12 @@ def exact(
     else:
         scored = seasoned(built, ev, QUEUE_SET)
         swaps = mv.single_swaps(scored, QUEUE_SET)
-        rec = mv.recommend(
-            scored,
-            QUEUE_SET,
-            _three_pool(swaps, fields),
-            min_gain=fields.min_gain,
-            allowed=allowed,
-        )
+        if listed:
+            union, _ = sp.pool_for(swaps, allowed, fields.pool, fields.guard_pool, fields.min_gain)
+            pool, tables = list(union.players), (swaps,)
+        else:
+            pool = _three_pool(swaps, fields)
+        rec = mv.recommend(scored, QUEUE_SET, pool, min_gain=fields.min_gain, allowed=allowed)
         moves = tuple(pm.move for pm in rec.moves)
         held = tuple(rec.held)
         solves += 1
@@ -1444,7 +1580,8 @@ def exact(
             plan, taken = planned.steps, planned
         solves += 1
     basis = basis_of(built, ev, moves, taken)
-    return named(p, Decision(tuple(moves), held, plan, solves, "exact", basis))
+    made = None if union is None else _union_of(union, tables, allowed, fields.min_gain, moves)
+    return named(p, Decision(tuple(moves), held, plan, solves, "exact", basis, union=made))
 
 
 # --------------------------------------------------------------------------- the queue's rule
@@ -1491,6 +1628,9 @@ class Drawn:
     #: of the set (``plans.for_queue``); None when the set stands.
     plans: tuple[pl.WeekPlan, ...]
     chosen: pl.WeekPlan | None
+    #: What the week's set's union pool was (PR pool); None when none was built (the arm's
+    #: ``guard_pool`` at 0, or its guard ``off``).
+    week_union: PoolUnion | None = None
 
 
 def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
@@ -1500,9 +1640,12 @@ def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
     again here; nothing of the plans, the gate, the floor or the trim is the simulator's):
 
     1. the three weeks' set as ``executes: three`` finds it (:func:`exact`: the season term on
-       it, the guard on its search);
+       it, the guard on its search, and at a ``guard_pool`` above 0 its union pool, PR pool);
     2. the week's recommended set, among the arm's ``pool`` best candidates by single-swap gain
-       on the week above ``min_gain``, as the three weeks' set is found on its own key; the
+       on the week above ``min_gain``, as the three weeks' set is found on its own key, and at
+       a ``guard_pool`` above 0 among the week's own union, that head and then the adds whose
+       best single move on the week the guard admits (``pool.pool_for`` through the door, on
+       the week's single swaps, as the live route builds it since #424; PR pool); the
        week's single swaps on every candidate; the week's streaming plan against that set
        without the three-week guard (the plans weigh the week first themselves), on the
        league's scorer's per-game values;
@@ -1515,25 +1658,33 @@ def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
     the engine's own season figure and does not read the season term. The plans and the gate
     are valued on the engine's plain evaluator: the season term reaches the choice through the
     three weeks' set only (``plans.matchup`` reads the evaluator's odds and ``plans.held_out``
-    builds evaluators of its own, so the library does not take :class:`Seasoned`). Two things
-    the live route has that this does not: the pool's adds from the guard's list (#424) and the
-    searches' tie-break on the season, neither of which the simulator's ``three`` has either."""
+    builds evaluators of its own, so the library does not take :class:`Seasoned`). One thing
+    the live route has that this does not: the searches' tie-break on the season, which the
+    simulator's ``three`` has not either. The pool's adds from the guard's list (#424) are an
+    arm's choice (``guard_pool``, PR pool), off by default: at 0 both sets are searched among
+    the head alone, as before. What the week's union was is kept beside the three weeks' set's
+    (``Drawn.week_union``, ``three.union``; :func:`queue_rule` makes the day's of the two)."""
     p = built.problem
     three = exact(built, QUEUE_SET, False, fields)
     ev = mv.Evaluator(p)
     allowed = allowed_of(built)
     swaps = mv.single_swaps(ev, "week")
-    week = mv.recommend(
-        ev, "week", _three_pool(swaps, fields), min_gain=fields.min_gain, allowed=allowed
-    )
+    union: sp.Pool | None = None
+    if listed_of(fields, allowed):
+        union, _ = sp.pool_for(swaps, allowed, fields.pool, fields.guard_pool, fields.min_gain)
+        pool = list(union.players)
+    else:
+        pool = _three_pool(swaps, fields)
+    week = mv.recommend(ev, "week", pool, min_gain=fields.min_gain, allowed=allowed)
     week_set = tuple(pm.move for pm in week.moves)
+    made = None if union is None else _union_of(union, (swaps,), allowed, fields.min_gain, week_set)
     per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
     stream = st.plan(ev, built.rule, week_set, per_game, guard=False, allowed=allowed)
     weight, playoff = queue_weight(built), in_bracket(built)
     held = pl.held_out(ev)
     every = pl.every_plan(ev, week_set, swaps, stream, allowed, held, three.moves, weight)
     chosen = pl.for_queue(ev, every, three.moves, weight, playoff, allowed, held)
-    return Drawn(three, week_set, swaps, stream, weight, playoff, tuple(every), chosen)
+    return Drawn(three, week_set, swaps, stream, weight, playoff, tuple(every), chosen, made)
 
 
 def queue_rule(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
@@ -1544,20 +1695,41 @@ def queue_rule(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
     today (:func:`queue`), and the rest are drawn again on their day, as the live queue is
     rebuilt on every run. ``moves`` is the three weeks' set either way. In a FAAB league a
     step bids on its score (:func:`step_bids`). Three solves: the three weeks' set, the week's
-    set with its streaming plan, and the plans' search."""
+    set with its streaming plan, and the plans' search. The decision's union (PR pool) is the
+    day's (:func:`_day_union`): the two sets' unions together, and the adds taken from a list
+    the three weeks' set's while the set stands, none on a day a plan leads."""
     drawn = draw_queue(built, fields)
     three = drawn.three
     solves = three.solves + 2
     chosen = drawn.chosen
+    union = _day_union(three.union, drawn.week_union, chosen is not None)
     if chosen is None:
-        return replace(three, solves=solves)
+        return replace(three, solves=solves, union=union)
     steps = tuple(mv.Move(s.move.add, s.move.drop, s.day) for s in chosen.steps)
     held = tuple(mv.held_used(built.problem, chosen.moves))
     basis = three.basis
     if basis is not None:
         basis = replace(basis, plan=step_bids(chosen, drawn.weight))
-    led = Decision(three.moves, held, steps, solves, "exact", basis, plan_leads=True)
+    led = Decision(three.moves, held, steps, solves, "exact", basis, plan_leads=True, union=union)
     return named(built.problem, led)
+
+
+def _day_union(
+    three: PoolUnion | None, week: PoolUnion | None, plan_leads: bool
+) -> PoolUnion | None:
+    """A day's union under the queue's rule (#172, PR pool on PR E): the three weeks' set's and
+    the week's set's together. The adds the lists brought and the head's adds the guard refused
+    are summed over the two sets (an add both lists brought is counted in each). The adds taken
+    from a list are those of the set the seat means to queue: the three weeks' set's while the
+    set stands. On a day a plan leads there is none: the plans are drawn by the engine from
+    every candidate's single swaps on the week beside the two sets' moves, so no step can be
+    said to have come from a list (the arm at 0 may draw the same step), and what the lists
+    changed that day is in the plan itself. None when no union was built: the two sets take
+    one together or not at all (:func:`listed_of`)."""
+    if three is None or week is None:
+        return None
+    took = () if plan_leads else three.took
+    return PoolUnion(three.admitted + week.admitted, took, three.refused + week.refused)
 
 
 def _games(built: Built, member: mv.Member, from_day: date) -> int:
@@ -1908,8 +2080,21 @@ WHEN_READ: Mapping[str, str] = {
         "a season_weight above 0 on the exact or the surrogate tier, in a league whose bracket "
         "is read"
     ),
+    "guard_pool": "the exact tier, while the arm's guard blocks",
 }
 STATIC = "a static seat makes no move"
+#: Why ``guard_pool`` is not read off the exact tier (#172, PR pool): the union is of pools
+#: ranked by single swaps, which only the exact tier draws; and on the exact tier under the
+#: arm's guard ``off`` (the guard PR): the list is the guard's.
+NO_SWAPS = (
+    "the surrogate tier ranks its pool by value times games: it has no single swap to ask the "
+    "season guard about"
+)
+NO_LIST = "the ranking tier searches no set, so it draws no guard's list"
+GUARD_OFF = (
+    "the arm's guard is off: with no season guard there is no guard's list, and the pool is "
+    "its best `pool` adds alone, as at 0"
+)
 #: Why the ranking tier does not read the stash threshold (PR G).
 RANKING_STASH = (
     "the ranking tier does not search with the engine: its one swap is not held to the threshold"
@@ -2081,7 +2266,7 @@ def bid_reads(arm: Configured, shape: Shape, mirrored: bool = False) -> str:
     return STATIC
 
 
-#: The arm's two season fields beside its knobs and its four fields (#172, the guard PR), in the
+#: The arm's two season fields beside its knobs and its fields (#172, the guard PR), in the
 #: order the payload names them: ``guard``, one of :data:`GUARDS`; ``stake``, 0 to 1. Both have
 #: a default (the block, no stake), and an arm's payload carries one only when its spec names
 #: it. They are the arm's own seat's: a rival, a mirror too, stays on the block with no stake.
@@ -2150,8 +2335,12 @@ def season_reads(arm: Configured, shape: Shape) -> dict[str, str]:
 
 
 def field_reads(arm: Configured, mirrored: bool = False) -> dict[str, str]:
-    """For each of the arm's four fields, :data:`READ` or the reason it is not, as
-    :func:`reads` (no field depends on the league's shape)."""
+    """For each of the arm's five fields, :data:`READ` or the reason it is not, as
+    :func:`reads` (no field depends on the league's shape). ``guard_pool`` (PR pool) is the
+    exact tier's alone, whatever it executes, and only while the arm's guard blocks: under
+    ``guard: off`` (the guard PR) there is no guard to make a list, so the arm is the seat at
+    0. A mirror rival is the surrogate, whose pool is ranked by value times games with no
+    single swaps, so nothing reads it through a mirror."""
     odds = _odds(arm, mirrored)
     if odds:
         out = dict.fromkeys(("pool", "min_gain", "weeks_ahead"), READ)
@@ -2172,6 +2361,14 @@ def field_reads(arm: Configured, mirrored: bool = False) -> dict[str, str]:
         out["surrogate_days"] = f"the {arm.tier} tier decides every day"
     else:
         out["surrogate_days"] = STATIC
+    if arm.tier in UNION_TIERS:
+        out["guard_pool"] = READ if arm.guard == BLOCK else GUARD_OFF
+    elif arm.tier == "surrogate":
+        out["guard_pool"] = NO_SWAPS
+    elif arm.tier == "ranking":
+        out["guard_pool"] = NO_LIST
+    else:
+        out["guard_pool"] = STATIC
     return {k: out[k] for k in FIELDS}
 
 

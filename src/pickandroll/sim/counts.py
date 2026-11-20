@@ -26,11 +26,15 @@ and the day's lines once they are scored. In a run where an arm names its guard 
 guard PR) also, on the seats of the run's arms on the exact or the surrogate tier, the sets
 decided that the season guard would have refused, and the season's mean week's stake with the
 weeks it was above a half: such a run's only, so a run that names neither counts as before. Pure.
+In a run where an arm sets ``guard_pool`` above 0 (PR pool) also, on the run's arms' seats on
+the exact tier, the days a union pool was built, the adds the guard's list brought beyond the
+head and the days it brought any, the days the seat queued or claimed one of them, and the
+days the guard refused the best single move of an add of the head: such a run's only.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import date
 from typing import Any
 
@@ -104,9 +108,31 @@ STASH = ("returning_dropped",)
 #: ``L`` over the weeks the seat played and the weeks ``L`` was above :data:`HALF`. On the
 #: run's arms' seats whose tier reads the fields, never a rival's; a run that names neither has
 #: none, so its counts are as before.
+#:
+#: The union pool's counts (PR pool), by the arm field whose setting brings them: in a run
+#: where an arm sets ``guard_pool`` above 0, over the decision days of each of the run's arms'
+#: seats on the exact tier, the days a union pool was built (``union_days``: every such day of
+#: an arm with the field on whose guard blocks), the adds the guard's list brought that the
+#: head did not hold, summed (``union_admitted``: over ``union_days`` it is their mean) and the
+#: days it brought any (``union_admitted_days``), the days the seat queued or claimed a move
+#: of its set whose add the set took from the list and not from the head
+#: (``union_taken_days``: a listed add went out, the day's cap and the week's adds applied;
+#: never a day a plan leads under the queue's rule, ``policy.queue_rule``), and the days the
+#: season guard refused the best single move of an add of the head
+#: (``union_head_refused_days``: how often the cut before the guard costs the search an add).
+#: 0 for an arm at 0, by construction; never a rival's. A run that leaves the field off has
+#: none, so its counts are as before. Under the queue's rule a day's figures are its two sets'
+#: together (``policy.queue_rule``).
 SEASON: dict[str, tuple[str, ...]] = {
     "guard": ("sets_past_guard",),
     "stake": ("stake_mean", "stake_weeks_above_half"),
+    "guard_pool": (
+        "union_days",
+        "union_admitted",
+        "union_admitted_days",
+        "union_taken_days",
+        "union_head_refused_days",
+    ),
 }
 
 #: The queue's counts (PR E), only in a run where an arm executes ``queue``, after the guard's
@@ -131,6 +157,14 @@ APART_BY_CONSTRUCTION: tuple[str, ...] = (
     # weights, so a weight of the bid block moves it by itself, whatever the arm then bids. Two
     # arms apart in it alone placed the same claims at the same bids and played one season.
     "value_won",
+    # PR pool: four of the union's, which describe an arm's own search: an arm with
+    # ``guard_pool`` on counts them and an arm at 0 never does, whatever either plays (it
+    # builds a union every decision day). ``union_taken_days`` is not one of them: an add
+    # from the list that the seat queued or claimed is a real difference.
+    "union_days",
+    "union_admitted",
+    "union_admitted_days",
+    "union_head_refused_days",
 )
 
 
@@ -183,6 +217,12 @@ class Tally:
         #: The sets a counted seat decided past the guard, and its stake by week.
         self.past = dict.fromkeys(self.counted, 0)
         self.stakes: dict[int, dict[int, float]] = {t: {} for t in self.counted}
+        #: A counted seat's union pools, summed over its decision days.
+        self.unions: dict[int, dict[str, int]] = {
+            t: dict.fromkeys(SEASON["guard_pool"], 0)
+            for t, names in self.counted.items()
+            if "guard_pool" in names
+        }
 
     def charge(self, week: int, before: Mapping[int, int], after: Mapping[int, int]) -> None:
         """The adds that landed this morning (``executed_by`` before and after the landing),
@@ -220,6 +260,22 @@ class Tally:
         is counted on a counted seat."""
         if team in self.past and decision.past_guard:
             self.past[team] += 1
+
+    def searched(self, team: int, union: Any, queued: Collection[int]) -> None:
+        """The union pool ``team``'s search took today (PR pool: a ``policy.PoolUnion``, the
+        decision's; None when none was built) and the adds of its set's moves the seat then
+        ``queued`` or claimed, the day's cap and the week's adds applied: counted on a seat
+        that counts the union. A day is one of ``union_taken_days`` when one of those adds is
+        one the set took from the list (``union.took``); a set the cap or the week's adds cut
+        back to what the seat at 0 queues is not one."""
+        row = self.unions.get(team)
+        if row is None or union is None:
+            return
+        row["union_days"] += 1
+        row["union_admitted"] += union.admitted
+        row["union_admitted_days"] += union.admitted > 0
+        row["union_taken_days"] += any(c in queued for c in union.took)
+        row["union_head_refused_days"] += union.refused > 0
 
     def took(self, team: int, steps: int) -> None:
         """``team``'s queue took a week plan today (PR E), and ``steps`` of it were queued."""
@@ -306,6 +362,8 @@ class Tally:
                 out[t]["stake_weeks_above_half"] = (
                     float(sum(1 for x in levels if x > HALF)) if levels else None
                 )
+            if t in self.unions:
+                out[t] |= {m: float(n) for m, n in self.unions[t].items()}
             if self.plans:
                 out[t] |= {
                     "plan_days": float(self.plan_days.get(t, 0)),
@@ -317,8 +375,8 @@ class Tally:
 def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
     when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the stash
-    count (a run's that names a stash threshold, PR G), then the guard's and the stake's (a run
-    that names them), then the queue's (a run with an arm that executes ``queue``, PR E)."""
+    count (a run's that names a stash threshold, PR G), then the guard's, the stake's and the
+    union pool's (a run that names them, :data:`SEASON`), then the queue's (a run with an arm that executes ``queue``, PR E)."""
     season = (m for group in SEASON.values() for m in group)
     extra = (*CLAIMS, *BIDS, *STASH, *season, *PLANS)
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))

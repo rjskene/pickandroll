@@ -161,9 +161,9 @@ PLAN_KEYS = ("with_plan", "execute_plan")
 
 def arm_of(spec: Mapping[str, Any]) -> Arm:
     """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
-    four fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
-    ``surrogate_days``; ``policy.fields_of``), its guard and its stake when it names them
-    (the guard PR, ``policy.season_of``) and its ``bid`` block (PR F2,
+    five fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
+    ``surrogate_days``, ``guard_pool``; ``policy.fields_of``), its guard and its stake when
+    it names them (the guard PR, ``policy.season_of``) and its ``bid`` block (PR F2,
     ``bid_policy.of``); a key the simulator does not read
     (:data:`SPEC_KEYS`, and ``opponents.SPEC_KEYS`` under ``opponents``), a knob missing,
     unknown or out of the engine's bounds, a field out of its own, a tier unknown, a guard named
@@ -313,10 +313,15 @@ def stake_refused(arm: Arm, shapes: Sequence[policy.Shape]) -> str | None:
 
 
 def counted_of(arms: Sequence[Arm]) -> tuple[str, ...]:
-    """The season fields any of ``arms`` names (``policy.SEASON_FIELDS``'s order): what a run
-    of them counts on its arms' seats (``counts.SEASON``). None named, nothing counted, and
-    the run's counts are as before the fields."""
-    return tuple(f for f in policy.SEASON_FIELDS if any(f in arm.named for arm in arms))
+    """What a run of ``arms`` counts on its arms' seats (``counts.SEASON``'s keys): the season
+    fields any of them names (``policy.SEASON_FIELDS``'s order), then ``guard_pool`` when any
+    of them on a tier that builds a union pool (``policy.UNION_TIERS``) sets it above 0 (#172,
+    PR pool): an arm of another tier that sets it reads nothing of it, and a run of such arms
+    alone counts none. None named or set, nothing counted, and the run's counts are as before
+    the fields."""
+    names = tuple(f for f in policy.SEASON_FIELDS if any(f in arm.named for arm in arms))
+    sets = any(arm.tier in policy.UNION_TIERS and arm.fields.guard_pool > 0 for arm in arms)
+    return (*names, *(("guard_pool",) if sets else ()))
 
 
 def check_fit(spec: Mapping[str, Any], sha: str) -> None:
@@ -642,6 +647,18 @@ class VariantResult:
     breaches: tuple[audit.Breach, ...] = ()
 
 
+def set_sent(decision: policy.Decision, state: SimState, team: int, day: date) -> set[int]:
+    """The adds of ``decision``'s set that ``team`` sent today (PR pool), the day's cap and the
+    week's adds applied: a free agent's add queued, or a claim placed today, by one of the set's
+    own moves. A plan's step is not one, even a step of a set's add by another drop: on a day
+    the plan leads the set is not queued and its step is (``policy.gathered``). No made-up
+    season of the tests has met such a day; this function is held on hand-built ones."""
+    mine = {(m.add, m.drop) for m in decision.moves}
+    sent = [*state.pending.get(team, ())]
+    sent += [c.move for c in state.claims.get(team, ()) if c.placed == day]
+    return {m.add for m in sent if (m.add, m.drop) in mine}
+
+
 def _record(
     setup: Setup,
     variant: int,
@@ -834,8 +851,11 @@ def simulate(
     takes ``L`` (``stake.level``, from the weeks finished before it) for each of its seats that
     reads one (``opponents.Seat.stake`` above 0) or counts one, and holds it all week
     (``SimState.stakes``); such a seat's shared decisions are keyed on its own figure too.
-    ``counted``, by variant, names for a seat the season fields its run counts
-    (:func:`counted_of`; ``counts.SEASON``); none by default, and the counts are as before. A
+    ``counted``, by variant, names for a seat the season fields its run counts, and
+    ``guard_pool`` when the run counts the union pool (PR pool: each day's union of that seat
+    is handed to the variant's tally with what it queued) (:func:`counted_of`;
+    ``counts.SEASON``); none by
+    default, and the counts are as before. A
     seat with a stake in a league whose bracket is not read is refused by name before any day
     (ValueError), by the field: on any tier, read there or not (:func:`stake_refused`)."""
     n = len(variants)
@@ -984,6 +1004,11 @@ def simulate(
                     # agent's add for the morning or as a claim placed.
                     placed = sum(1 for c in state.claims.get(team, ()) if c.placed == day)
                     tallies[vi].took(team, len(state.pending.get(team, ())) + placed)
+                if decision.union is not None:
+                    # The union pool's counts (PR pool) read which of the set's own moves the
+                    # seat sent today (:func:`set_sent`).
+                    adds = set_sent(decision, state, team, day)
+                    tallies[vi].searched(team, decision.union, adds)
             states[vi] = state
             lineup = {
                 t: policy.starters_of(setup, state, t, day, status, values[vi].get(t, value))
@@ -1062,13 +1087,23 @@ def _metrics(summary: Mapping[str, Any] | None) -> dict[str, float | None]:
 
 
 def _counted(arms: Sequence[Arm], seated: Mapping[int, Arm]) -> dict[int, tuple[str, ...]]:
-    """What a run of ``arms`` counts on the seats ``seated`` (an arm by team): the season fields
-    any of the run's arms names (:func:`counted_of`), on each seat whose arm's tier reads them
-    (``policy.GUARDED_TIERS``); empty when none is named. A rival's seat counts none."""
+    """What a run of ``arms`` counts on the seats ``seated`` (an arm by team), name by name
+    (:func:`counted_of`): the season fields any of the run's arms names, on each seat whose
+    arm's tier reads them (``policy.GUARDED_TIERS``); and ``guard_pool`` when any arm sets it
+    (PR pool), on each seat whose arm is on a tier that builds a union pool
+    (``policy.UNION_TIERS``), so the arm at 0 shows its zeros beside the other's. Empty when
+    none is named or set. A rival's seat counts none."""
     names = counted_of(arms)
-    if not names:
-        return {}
-    return {t: names for t, arm in seated.items() if arm.tier in policy.GUARDED_TIERS}
+    out: dict[int, tuple[str, ...]] = {}
+    for t, arm in seated.items():
+        mine = tuple(
+            name
+            for name in names
+            if arm.tier in (policy.UNION_TIERS if name == "guard_pool" else policy.GUARDED_TIERS)
+        )
+        if mine:
+            out[t] = mine
+    return out
 
 
 def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:

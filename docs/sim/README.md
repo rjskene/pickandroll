@@ -245,6 +245,53 @@ and plays from Monday, and Monday's count starts over only once it is in. Each d
 the most valuable set the slots hold among the players whose team plays and whom the policy has not
 heard are out; their lines are the week's totals.
 
+**The pool the exact tier searches** (PR pool). The live route does not search every free agent
+with every drop: it searches a pool. Until #424 that pool was the best adds by single-move gain,
+cut before the season guard saw anything, so on a day when the guard refuses most of them the
+search had little left. Since #424 live searches a union (`season.pool`): the best adds by
+single-move gain, in that order, then the adds whose best single move the guard admits (the
+guard's list), each not already in. Live passes thirty for each of the two sizes.
+
+An arm takes the union by setting its field `guard_pool`, the size of the guard's list, above 0
+(the head's size stays its `pool`). At 0, the default, the pool is cut before the guard, as
+before the field: the same lines run, and the rule is not called. So too under the arm's guard
+`off` (the guard PR): with no season guard there is no guard's list, the pool is the head alone
+as at 0, the field is not read and the reads table says so. Above 0, while the arm's guard
+blocks:
+
+- **the three weeks' set** (`executes: three`) is searched among `pool.pool_for` on the single
+  swaps the arm ranks that day (the season term on them when it has one), with the guard and
+  the arm's two sizes;
+- **the weighted search** (`executes: weighted`) among its head as at 0 (each horizon's best in
+  turn), then each horizon's guard's list (`pool.admitted_swaps`) taken in turn up to
+  `guard_pool` and joined (`pool.joined`): the live strategy run's form, put together from the
+  engine's own functions;
+- **the queue's rule** (`executes: queue`, PR E) has two sets, and each is searched among a
+  union of its own: the three weeks' set as above, and the week's set among `pool.pool_for` on
+  the week's single swaps, as the live route builds each horizon's pool. The plans are then
+  drawn by the engine from both sets' moves, as before;
+- the rule is the engine's, called through `sim/engine.py` (`sp`), and no line of it is written
+  again here. The guard is the one object every search of the day is handed, so what it works
+  out for the list is not worked out again.
+
+The decision keeps what its union was (`Decision.union`: the adds the list brought that the
+head did not hold, the ones of them the decided set takes, and how many of the head's adds the
+guard refuses on their best single move), for the counts ("The audit and the counts"); no
+decision reads it. Under the queue's rule it is the day's, the two sets' together. What the
+field does not reach, each plainly:
+
+1. **The week plan's set** (`with_plan`) searches the first `pool` candidates in candidate
+   order, not by gain, whatever the field: it is not a gain ranking, so it has no head for a
+   list to join. The live form of that set is the queue's rule's week set, which does take the
+   union (above).
+2. **Gate 5** runs at the default fields and does not change. A check of the surrogate against
+   an arm with the field on (`checks.surrogate_records` takes the arm's fields) compares the
+   surrogate, whose pool the field does not touch, with the wider exact search.
+3. **The season scale** does not read the field: an arm's scale is over its best `pool` by
+   single swap at any `guard_pool`, the one figure it is for every arm.
+4. **The surrogate, the ranking tier and the rivals** search as they did; a mirror rival is the
+   surrogate, so nothing reads the field through a mirror.
+
 **The seat's measure** (the format PR). In a categories league that counts one win per matchup
 (the default) the problem says so (`MoveProblem.one_win`, as `api.season_moves.build` passes
 `SeasonSettings.one_win`), and every tier that weighs (the exact and the surrogate tiers, a mirror
@@ -380,7 +427,7 @@ None stays a value only where the engine's default is None (`blend`, `stash_thre
 `faab_sizing`); anywhere else it is refused. Gate 5 runs at the twelve defaults
 (`policy.KNOB_DEFAULTS`); no knob file is read.
 
-**Four fields.** An arm may also name four fields of its own, on the arm and on its seat
+**Five fields.** An arm may also name five fields of its own, on the arm and on its seat
 (`policy.Fields`, in the seat's repr, so two seats that differ in one never share a solve):
 
 - `pool` (30, a whole number, 1 or more): the candidates the exact tier's recommended set and
@@ -395,7 +442,13 @@ None stays a value only where the engine's default is None (`blend`, `stash_thre
   the "three weeks" horizon is the `weeks_ahead − 1` after it (fewer near the season's end), so a
   gain on it, and what `min_gain` asks of one, grows with `weeks_ahead`;
 - `surrogate_days` (Monday and Thursday, a non-empty set of weekdays 0 to 6): the days the
-  surrogate solves.
+  surrogate solves;
+- `guard_pool` (0, a whole number, 0 or more; PR pool): the size of the guard's list the exact
+  tier's pools take beside their best `pool` ("The pool the exact tier searches", above). 0 is
+  off; live's is thirty. A value that is not a whole number, 0 or more, is refused by name
+  when the arm is read. A value on a tier that does not read the field is not refused: the
+  reads table says why it is not read, and a pair that differs only in it there is refused as
+  the same seat (below).
 
 **The `bid` block (PR F2).** An arm may also name `bid`, a mapping that makes its seat's FAAB bid
 one of a family of rules whose default member is the live rule (`sim/bid_policy.py`; "The bid
@@ -403,15 +456,16 @@ policy", under the league shapes, says each key, the order and the walls). Like 
 on the arm and on its seat, in the seat's repr, and it is no axis of the grid. An arm that names
 none bids by the live rule.
 
-A mirror rival takes the arm's knobs, its four fields and its `bid`, but for the stash threshold, which a
-rival keeps at None (PR G, below). Every payload records the four fields of
-every arm and, under `surrogate`, the surrogate's pool and days as the arm sets them; gate 5's
-check (`checks.surrogate_records`) takes the arm's. Nothing in the engine that the moves route
-reaches assumes exactly three later weeks.
+A mirror rival takes the arm's knobs, its fields and its `bid`, but for the stash threshold, which a
+rival keeps at None (PR G, below). Every payload records the fields of every arm (the first
+four always, and `guard_pool` only when it is above 0, so an arm that leaves it off is recorded
+as before the field) and, under `surrogate`, the surrogate's pool and days as the arm sets
+them; gate 5's check (`checks.surrogate_records`) takes the arm's. Nothing in the engine that
+the moves route reaches assumes exactly three later weeks.
 
 **Two season fields** (the guard PR, `policy.SEASON_FIELDS`). An arm may also name `guard`
 (`block`, the default, or `off`) and `stake` (a number from 0 to 1, 0 by default): "The season
-guard and the week's stake", below. They are the arm's own seat's, in its repr like the four; a
+guard and the week's stake", below. They are the arm's own seat's, in its repr like the fields; a
 mirror rival does not take them. A payload carries one, among the arm's `fields` and in its reads
 table, only when the arm's spec names it, and then as the value in force (a stake typed `1` is
 recorded 1.0).
@@ -479,7 +533,7 @@ finite is refused like any knob's (the engine's own check passes a NaN).
   threshold keeps is refused, on the plain drop of an active player who is out and on a churn's
   held drop alike. The ranking tier does not search with the engine: its one swap is checked as
   before the reader (the threshold is taken off its problem), so it does not read the knob.
-- **Rivals keep None.** A mirror rival takes the arm's knobs and its four fields but for this
+- **Rivals keep None.** A mirror rival takes the arm's knobs and its fields but for this
   knob (`policy.rival_knobs`, dropped when the rival is made): two arms that differ only in it
   face one rival.
 - **The morning a held player comes back.** A seat that plans with the engine (the exact and the
@@ -740,12 +794,14 @@ built:
 | `surrogate_days` | surrogate, or a mirror rival | the exact tier decides every day |
 | `guard` (the arm's own seat) | exact, surrogate | the ranking tier searches no set and a static seat makes no move: naming it there is refused |
 | `stake` (the arm's own seat) | `season_weight` above 0 on exact or surrogate, bracket read | no season weight to scale (refused when above 0), no bracket read (refused when above 0), or the ranking tier |
+| `guard_pool` | exact, while the arm's guard blocks (PR pool) | under the arm's guard `off` there is no guard to make a list, so the pool is the head alone, as at 0; the surrogate ranks its pool by value times games and has no single swap to ask the guard about; the ranking tier searches no set; never through a mirror, which is the surrogate |
 
 `rival_claim_rate` (the autopilot settings file's assumed chance that a team ahead claims a player)
 gets no knob and no reader: live it only labels a claim's odds in the moves answer
 (`moves.priority_claim`), and no decision reads it.
 
-Every replay payload carries the table, one per arm (`reads`): no league shape moves what a seat
+Every replay payload carries the table, one per arm (`reads`; the row of `guard_pool` only for
+an arm that sets it above 0, as with its `fields`): no league shape moves what a seat
 reads, and the league rules (the scoring, the held slots and the waivers, "The league shapes") are
 the run's, one set for every path. In a points run (`--scoring points`) `plan_floor_points` is read where
 `plan_floor_cats` was, and `plan_floor_cats` is not, with the reason. In a one-win league (the
@@ -1051,7 +1107,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
   `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
-  the run's league rules ("The league shapes"). The payload (`replay_version` 19) keys by season
+  the run's league rules ("The league shapes"). The payload (`replay_version` 20) keys by season
   what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
@@ -1131,7 +1187,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
 An arm's spec file names its tier, every one of the twelve knobs, its opponents and what it
 executes (`executes`: `three`, the default, `weighted` or `queue`, **The queue's rule**; with
 `three` or `weighted` it may name `with_plan` and `execute_plan`, the streaming plan beside the
-set, and with `queue` neither), may name its four fields (their defaults otherwise), its `guard`
+set, and with `queue` neither), may name its five fields (their defaults otherwise), its `guard`
 and its `stake` (the block and 0 otherwise), may name its `bid` block (PR F2; the live rule
 otherwise) and may name the fit it was written
 for (`fit_sha`; another fit on disk refuses the run). Every run writes
@@ -1224,9 +1280,10 @@ queue's rule (PR E), its figures version 16's with no arm naming `queue` and non
 streaming plan in a league with held slots; 18 since the bid policy (PR F2), its figures
 version 17's with no `bid` named (a FAAB run's counts gain three keys), but for two arms of one
 name whose seat reads the week, which the decision's key now keeps apart on two views of a week
-(**The decision's key**); and 19 since the bracket's rounds (PR bracket), its figures version
+(**The decision's key**); 19 since the bracket's rounds (PR bracket), its figures version
 18's for a seat that executes the three weeks' set alone and names no `bid` on the week (**A
-bracket week**).
+bracket week**); and 20 since the union pool as an arm's choice (PR pool), its figures version
+19's with the field left off.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -2301,7 +2358,31 @@ shows in the other counts. In a run where an arm names its
 the seat played, and `stake_weeks_above_half`, the weeks `L` was above a half. They are counted
 for every arm of the run on those two tiers, whichever names the field (an arm on the ranking
 tier, and a static one, has no such key): `L` is a fact of a seat's season, read by the season
-term only where the arm has a stake. In a run where an arm executes
+term only where the arm has a stake. In a run where an arm on the exact tier sets `guard_pool`
+above 0 only (PR pool; a run that leaves it off has none, so its counts are as before), after
+the guard's and the stake's, on each of the run's arms' seats on the exact tier and never a
+rival's, over the seat's decision days:
+`union_days`, the days its search took a union pool (every decision day of an arm with the
+field on whose guard blocks); `union_admitted`, the adds the guard's list brought that the head
+did not hold, summed (over `union_days`, their mean a day), and `union_admitted_days`, the days
+it brought any; `union_taken_days`, the days the seat queued or claimed a move of its set whose
+add the set took from the list and not from the head, the day's cap and the week's adds
+applied: a listed add went out (a set the cap cut back to what the arm at 0 sends is not
+counted; and the list can change a day's set without one of its own adds going out, which
+shows in the other counts and not here); and `union_head_refused_days`, the days the guard
+refused the best single move of at least one add of the head. That last one is of the best move
+only: such an add can still come with another drop or inside a set the guard admits. An arm at
+0 in such a run shows 0 in all five, by construction, and so does an arm whose guard is `off`.
+Under the queue's rule a day has two sets, each searched among a union of its own, and the
+day's figures are the two together: the adds the two lists brought and the head's adds refused
+are summed over the sets, and a taken add is one of the three weeks' set's while the set
+stands. A day a plan leads is never a taken day: the engine draws the plans from every
+candidate's single swaps on the week beside the two sets' moves, so no step can be said to have
+come from a list, and what the lists changed that day is in the plan itself (`plan_days`,
+`plan_steps` and the other counts).
+Four of them (all but `union_taken_days`) describe the arm's own
+search, not what it played, and are declared so (`counts.APART_BY_CONSTRUCTION`), which the
+screen reads ("The screen"). In a run where an arm executes
 `queue` only (PR E; a run that names none has no such keys, so its counts are as before), after
 every other count and in every seat's row, 0 for a seat that does not take the rule:
 `plan_days`, the days the queue took a week plan instead of the three weeks' set, and
@@ -2454,8 +2535,9 @@ added by the PR that builds it, and no flag invents a nudge.
 | `bid.routine` | flipped | surrogate | |
 | `bid.rival_cap` | to on | surrogate | |
 | `bid.shade` | to on, at `q` 0.9 once 10 wins are seen | surrogate | |
+| `guard_pool` | to 30, the size of the list the live search takes (PR pool) | exact | |
 
-The last seven are the bid policy's (PR F2): keys of the arm's `bid` block, named by their dotted
+The seven `bid.` rows are the bid policy's (PR F2): keys of the arm's `bid` block, named by their dotted
 path (`--levers bid.pace.k`) and read only in a FAAB run. A baseline that names no `bid` holds
 the default member. Where it names no pace, both arms of the pace's two rows hold the list's path
 (`shape` 1, `reserve` 0.2): at `k` 0 for `bid.pace.k`, where a pace reads no path, so arm A bids
@@ -2463,6 +2545,9 @@ as the baseline does; at `k` 1 for `bid.pace.reserve`, since a reserve moves not
 baseline that names a pace at `k` 0 keeps its own `shape` and `reserve` in the reserve's row, at
 the list's `k` 1 in both arms. The
 shade goes on at the list's block (`q` 0.9, `least` 10). The path's `shape` has no row.
+The last row is the union pool's (PR pool): the guard's list at the size the live search
+takes, with the season guard blocking in both arms. On a baseline whose guard is `off` it is
+not read, and the row says so.
 
 The tier each lever is played on, in both arms, whatever tier the baseline names (the cheapest
 that reads the lever):
@@ -2470,8 +2555,8 @@ that reads the lever):
 - **the surrogate tier**, twenty-one levers: `protection_floor`, `daily_cap`, `stash_threshold`,
   `faab_sizing`, `season_weight`, `playoff_weight`, `pool`, `min_gain`, `weeks_ahead`,
   `surrogate_days`, `system`, `blend`, `guard`, `stake`, and the bid policy's seven;
-- **the exact tier**, six levers: `plan_floor_cats` and `plan_floor_points` (each on the list
-  twice), `horizon_weight`, `three_weight`, `executes`, `execute_plan`.
+- **the exact tier**, seven levers: `plan_floor_cats` and `plan_floor_points` (each on the list
+  twice), `horizon_weight`, `three_weight`, `executes`, `execute_plan`, `guard_pool`.
 
 No lever is played on the static or the ranking tier.
 
@@ -2561,7 +2646,10 @@ mechanism counts.
   that played one season is no difference of the season. One of them is `value_won`, what a
   seat's won claims were sized on (PR F2): a weight of the `bid` block moves it by itself,
   whatever the arm then bids, so two arms apart in it alone placed the same claims at the same
-  bids and played one season. Both rows are recorded whole. Both
+  bids and played one season. Four more are the union pool's (PR pool: all but
+  `union_taken_days`), which an arm with `guard_pool` on counts and an arm at 0 never does,
+  whatever either plays, so the `guard_pool` row can read "did nothing" as any other. Both
+  rows are recorded whole. Both
   arms play one world, so equal counts with an outcome that differs is a lever that changed
   which moves were made, not how many; it did something, and the row keeps both facts
   (`counts_equal`, `outcomes_equal`).
@@ -2577,7 +2665,9 @@ over the paths, not over the season's own chance.
 - Each pair is its own unit. When it ends its record is written to
   `data/sim/screens/<name>/<lever>-<nudge>.json`: the pair's record as `replay` writes it, with
   one `screen` block (the screen's name and version, the row, and its result).
-- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 5 (4 before
+- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 6 (5 before
+  the union pool's row joined the list and four of its counts joined the ones "did nothing"
+  sets aside; 4 before
   the bid policy's seven rows joined the list and `value_won` joined the counts "did nothing"
   sets aside; 3 before
   PR E's list: `executes` to each other choice, `three_weight` under `queue`, a plan floor

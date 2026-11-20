@@ -67,7 +67,12 @@ from tests.sim.test_sim_stash import SEASON as STASH_SEASON
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
 FORMATS = (ONE_WIN, EACH_CATEGORY)
 #: The count keys the two fields bring, in the payload's order.
-SEASON_KEYS = tuple(m for group in ct.SEASON.values() for m in group)
+#: The guard PR's own counts: the guard's and the stake's (``counts.SEASON`` holds the union
+#: pool's too since PR pool, which no arm of this file sets).
+SEASON_KEYS = tuple(m for f in policy.SEASON_FIELDS for m in ct.SEASON[f])
+#: The fields a record names for an arm that leaves ``guard_pool`` off (PR pool: the fifth
+#: field is written, and has its row in a record's reads table, only above 0).
+SHOWN = tuple(policy.DEFAULT_FIELDS.payload())
 #: The made-up players of :func:`disagreeing`.
 SOON, LATE, DEAD = 101, 102, 103
 
@@ -179,7 +184,7 @@ def test_an_arm_names_its_guard_and_its_stake_or_holds_the_defaults():
     assert same.seat() == plain.seat() and repr(same.seat()) == repr(plain.seat())
     assert armed(stake=0).season_payload() == {"stake": 0.0}
     assert armed(guard=None, stake=None).named == ()
-    # The two are keys of an arm's spec, and neither is one of the four fields or a knob.
+    # The two are keys of an arm's spec, and neither is one of the fields or a knob.
     assert set(policy.SEASON_FIELDS) <= set(rn.SPEC_KEYS)
     assert not set(policy.SEASON_FIELDS) & {*policy.FIELDS, *policy.KNOBS}
     assert policy.GUARDS == ("block", "off") and policy.GUARDED_TIERS == ("exact", "surrogate")
@@ -298,11 +303,11 @@ def test_the_reads_table_s_rows_for_the_two_fields():
     # The record's table carries a field's row only for an arm that names it.
     named = armed("B", knobs=weighted, guard="off", stake=1)
     table = ss.reads_of({"a": armed(knobs=weighted), "b": named}, [one], rivals=True)
-    assert list(table["a"][one.label()]["fields"]) == list(policy.FIELDS)
-    assert list(table["b"][one.label()]["fields"]) == [*policy.FIELDS, *policy.SEASON_FIELDS]
+    assert list(table["a"][one.label()]["fields"]) == list(SHOWN)
+    assert list(table["b"][one.label()]["fields"]) == [*SHOWN, *policy.SEASON_FIELDS]
     assert table["b"][one.label()]["fields"]["stake"] == policy.READ
     only = ss.reads_of({"a": armed(guard="off")}, [one], rivals=True)
-    assert list(only["a"][one.label()]["fields"]) == [*policy.FIELDS, "guard"]
+    assert list(only["a"][one.label()]["fields"]) == [*SHOWN, "guard"]
 
 
 # --------------------------------------------------------------------------- the block and off
@@ -623,7 +628,7 @@ def test_the_counts_carry_the_new_keys_only_on_the_seats_a_run_counts():
     setup = make_setup()
     state = initial(setup)
     assert not set(SEASON_KEYS) & set(ct.Tally(setup).rows(state)[1])
-    assert ct.SEASON == {
+    assert {f: ct.SEASON[f] for f in policy.SEASON_FIELDS} == {
         "guard": ("sets_past_guard",),
         "stake": ("stake_mean", "stake_weeks_above_half"),
     }
@@ -1492,11 +1497,11 @@ def test_a_replay_s_record_names_the_fields_the_reads_and_the_counts(data: Path,
     p = json.loads(Path(line.removeprefix("written: ")).read_text())
     assert p["audit"]["paths_voided"] == 0 and p["audit"]["breaches"] == []
     assert p["specs"]["b"]["guard"] == "off" and "guard" not in p["specs"]["a"]
-    assert set(p["fields"]["a"]) == set(policy.FIELDS)
-    assert set(p["fields"]["b"]) == {*policy.FIELDS, "guard", "stake"}
+    assert set(p["fields"]["a"]) == set(SHOWN)
+    assert set(p["fields"]["b"]) == {*SHOWN, "guard", "stake"}
     assert (p["fields"]["b"]["guard"], p["fields"]["b"]["stake"]) == ("off", 1.0)
     (shape,) = p["reads"]["a"]
-    assert set(p["reads"]["a"][shape]["fields"]) == set(policy.FIELDS)
+    assert set(p["reads"]["a"][shape]["fields"]) == set(SHOWN)
     assert p["reads"]["b"][shape]["fields"]["guard"] == policy.READ
     assert p["reads"]["b"][shape]["fields"]["stake"] == policy.READ
     assert set(SEASON_KEYS) <= set(p["counts"]["note"])

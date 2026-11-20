@@ -575,6 +575,23 @@ SEASON_NOTE = {
         "what L is, only whether its season term reads it)",
         "stake_weeks_above_half": "the weeks whose stake L was above a half",
     },
+    # The union pool's (PR pool): a run's in which an arm on the exact tier sets guard_pool
+    # above 0, on its arms' seats on the exact tier.
+    "guard_pool": {
+        "union_days": "decision days on which the seat's search took a union pool (its best "
+        "`pool` adds by single move, then the guard's list of `guard_pool`): every decision day "
+        "of an arm with guard_pool above 0, and 0 for an arm at 0, by construction, as are the "
+        "four below",
+        "union_admitted": "adds the guard's list brought that the head did not hold, summed over "
+        "those days (over union_days it is their mean a day)",
+        "union_admitted_days": "days the guard's list brought at least one such add",
+        "union_taken_days": "days the seat queued or claimed a move of its set whose add the set "
+        "took from the guard's list and not from the head, the day's cap and the week's adds "
+        "applied: a listed add went out (never a day a plan leads under the queue's rule)",
+        "union_head_refused_days": "days the season guard refused the best single move of at "
+        "least one add of the head (a move that gains more than min_gain): how often the cut "
+        "before the guard costs the search an add",
+    },
 }
 
 
@@ -592,8 +609,9 @@ def counts_note(
     """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, the claims' too in a
     waiver run, and in a FAAB run the bids' with the claims' said for bids; ``stash``: the run
     names a stash threshold (``run.stash_named``, PR G), and the note says its count; then the
-    notes of the season fields the run's arms name (``counted``, ``run.counted_of``;
-    :data:`SEASON_NOTE`), none for a run that names neither; ``queue``: the run has an arm that
+    notes of the season fields the run's arms name and of the union pool's counts when an
+    arm sets ``guard_pool`` (``counted``, ``run.counted_of``; :data:`SEASON_NOTE`), none for
+    a run that names none; ``queue``: the run has an arm that
     executes ``queue`` (:func:`queue_run`, PR E), and the queue's counts' follow."""
     if waivers == "none":
         note = COUNTS_NOTE
@@ -784,15 +802,20 @@ def reads_of(
     its fields when its spec names them (``policy.season_reads``, the guard PR); for an arm
     that names a ``bid`` block (PR F2) the block's row (``policy.bid_reads``); and for an arm
     that executes ``queue`` only (PR E), ``notes``: what the table says beside a row
-    (``policy.read_notes``: where the season term stands in the queue's rule)."""
+    (``policy.read_notes``: where the season term stands in the queue's rule). An arm's fields
+    are the ones its record names (``policy.Fields.payload``): ``guard_pool`` has a row only
+    for an arm that sets it above 0 (PR pool), so an arm that leaves it off has the four rows
+    it had."""
     out: dict[str, Any] = {}
     for key, arm in arms.items():
         mirror = rivals and rn.mirrored(arm)
         notes = policy.read_notes(arm)
+        named = arm.fields.payload()
+        fields = {k: v for k, v in policy.field_reads(arm, mirror).items() if k in named}
         out[key] = {
             shape.label(): {
                 "knobs": policy.reads(arm, shape, mirror),
-                "fields": policy.field_reads(arm, mirror)
+                "fields": fields
                 | {k: v for k, v in policy.season_reads(arm, shape).items() if k in arm.named},
                 **({} if arm.bid is None else {"bid": policy.bid_reads(arm, shape, mirror)}),
                 **({"notes": notes} if notes else {}),
@@ -1492,7 +1515,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 19 since the bracket's rounds (#172, PR bracket), 18
+#: The replay's version in its payload: 20 since the union pool as an arm's choice (#172, PR
+#: pool), 19 since the bracket's rounds (#172, PR bracket), 18
 #: since the bid policy (#172, PR F2), 17 since the
 #: queue's rule (#172, PR E), 16 since the season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
@@ -1512,8 +1536,17 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 19
+REPLAY_VERSION = 20
 REPLAY_VERSION_WHY = (
+    "20: the union pool as an arm's choice: an arm may set a fifth field, guard_pool, the size "
+    "of the guard's list (0, the default, is off); above 0, while the arm's guard blocks, the "
+    "exact tier's three weeks' set, its weighted search and under the queue's rule its week's "
+    "set are searched among the engine's union pool (season.pool: the best pool adds by single "
+    "move, then the adds whose best single move the season guard admits), as live searches "
+    "since #424; an arm's fields and its reads table carry guard_pool only above 0, and a run "
+    "in which an arm on the exact tier sets it adds five counts on its arms' seats on the "
+    "exact tier (union_days, union_admitted, union_admitted_days, union_taken_days, "
+    "union_head_refused_days); with the field left off the figures are version 19's. "
     "19: the bracket's rounds: in a week of the bracket a seat's problem reads its round's "
     "opponent, seeded that morning from the variant's own totals as the season's end seeds it "
     "(before, the week had no opponent and was worth nothing): the weighted set weighs the "
@@ -3394,7 +3427,8 @@ def paired_blocks(
 ) -> dict[str, Any]:
     """The pair's figures, keyed by season and then by forecaster: each arm's outcomes, the
     difference (B less A) over the paths that stand with how many are distinct, the counts by arm
-    and for the rivals (their note the run's ``waivers``', :func:`counts_note`), each arm's season
+    and for the rivals (their note the run's ``waivers``' and the fields its arms set,
+    :func:`counts_note`, ``run.counted_of``), each arm's season
     scale by season (its note the run's ``scoring``'s and format's, :func:`scale_note`), the
     unprojected count by cell and arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of
     more than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b)."""

@@ -29,6 +29,12 @@ From the week plans (``season.plans``, ``pl``) the simulator takes the queue's r
 takes instead of the three weeks' set, with ``step_score`` for a step's bid, ``gate`` and
 ``gate_floor`` for what the choice was made on. The search, the gate, the floor and the trim are
 the engine's own: the simulator hands them the day's inputs and takes the answer.
+
+From the moves search's pool (``season.pool``, ``sp``) the simulator takes the union pool (#172, PR
+pool): ``pool_for``, a horizon's best adds by single move and then the adds whose best single
+move the season guard admits; ``admitted_swaps``, that guard's list alone; and ``joined``, a head
+and a list made one pool. The rule is the engine's own: the simulator hands it the day's single
+swaps, the guard and the arm's sizes, and writes no line of it again.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ from __future__ import annotations
 from pickandroll.season import decisions as dl
 from pickandroll.season import moves as mv
 from pickandroll.season import plans as pl
+from pickandroll.season import pool as sp
 from pickandroll.season import strategy as sg
 from pickandroll.season import stream as st
 from pickandroll.season import weekly as wk
@@ -77,6 +84,7 @@ __all__ = [
     "pl",
     "refused",
     "sg",
+    "sp",
     "st",
     "starting_slots",
     "total",

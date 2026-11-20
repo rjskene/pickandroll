@@ -521,8 +521,9 @@ def test_the_reads_table_as_built():
         assert (policy.reads(c, s)["three_weight"] == policy.READ) == queue, (c, s)
     assert policy.reads(exact, cats)["three_weight"] == policy.NOT_QUEUE
     assert ranking["three_weight"] == static["three_weight"] == policy.ONLY_QUEUE
+    # The surrogate reads every field but the exact tier's own (``guard_pool``, PR pool).
     f = policy.field_reads(rn.Arm("R", "surrogate", KNOBS, {}))
-    assert set(f.values()) == {policy.READ}
+    assert {k for k, v in f.items() if v != policy.READ} == {"guard_pool"}
     assert policy.field_reads(exact)["surrogate_days"] == "the exact tier decides every day"
 
 
@@ -834,6 +835,7 @@ FULL_SPEC = {
     "bid": {"routine": 1},
     "guard": "off",
     "stake": 0,
+    "guard_pool": 5,
     "fit_sha": "abc",
 }
 
@@ -845,7 +847,7 @@ def test_the_spec_keys_are_the_ones_the_simulator_reads():
     a = rn.arm_of(spec)
     rn.check_fit(spec, "abc")
     assert spec.read == set(rn.SPEC_KEYS) == set(FULL_SPEC)
-    assert a.fields == policy.Fields(20, 0.02, 3, (0, 3))
+    assert a.fields == policy.Fields(20, 0.02, 3, (0, 3), 5)
     assert (a.guard, a.stake, a.named) == ("off", 0.0, policy.SEASON_FIELDS)
     opponents = _Reading(a.opponents)
     op.of(opponents, a.knobs, 0.1, a.fields)

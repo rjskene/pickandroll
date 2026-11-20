@@ -79,7 +79,7 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
 
 # --------------------------------------------------------------------------- the list
 def test_the_list_is_written_in_the_code_and_is_the_brief_s():
-    assert sc.SCREEN_VERSION == 5
+    assert sc.SCREEN_VERSION == 6
     assert sc.NAMES == (
         "protection_floor",
         "daily_cap",
@@ -102,6 +102,7 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "guard",
         "stake",
         *BID_NAMES,
+        "guard_pool",
     )
     exact = {lever.name for lever in sc.LEVERS if lever.tier == "exact"}
     assert exact == {
@@ -111,6 +112,7 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "three_weight",
         "executes",
         "execute_plan",
+        "guard_pool",
     }
     assert all(lever.tier in ("exact", "surrogate") and lever.nudge for lever in sc.LEVERS)
     # Every name is a knob, a field or a key of an arm's spec, or a key of its ``bid`` block by
