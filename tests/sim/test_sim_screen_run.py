@@ -157,7 +157,8 @@ def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: 
     assert spec["replay_version"] == ss.REPLAY_VERSION
     assert set(spec) == {"screen_version", "replay_version", "arm", "levers", "world", "fit_sha"}
     assert spec["levers"] == ["protection_floor", "weeks_ahead", "surrogate_days", "system"]
-    assert set(spec["world"]) == set(ss.SCREEN_WORLD)
+    # A world flag added after the record was fixed is recorded only when named (PR today).
+    assert set(spec["world"]) == set(ss.SCREEN_WORLD) - set(ss.WORLD_IF_NAMED)
     assert (
         spec["world"] | {"seasons": [2024], "paths": 2, "seed": 5, "waivers": "none"}
         == (spec["world"])
@@ -431,7 +432,7 @@ def test_a_screen_under_a_table_is_held_to_the_seat_s_draft_rule_in_force(data: 
     assert code == 0, out
     rec = record(data, "table")
     assert rec["spec"]["world"]["seat_draft"] == "market"
-    assert set(rec["spec"]["world"]) == set(ss.SCREEN_WORLD)
+    assert set(rec["spec"]["world"]) == set(ss.SCREEN_WORLD) - set(ss.WORLD_IF_NAMED)
     code, out = screen(data, *table, "--seat-draft", "market", **kw)
     assert code == 0 and "0 pair(s) to play" in out and "refused" not in out, out
     assert record(data, "table") == rec
