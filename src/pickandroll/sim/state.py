@@ -331,7 +331,10 @@ class SimState:
         league also who is on waivers until when, the claims placed and the churns' held drops
         due (#172, PR Fa); the priority is read by no decision, and neither is a claim's value
         (PR F2: what its bid was sized on, the counts' alone), so the key holds each claim
-        without it and two seasons apart on that only share what they shared before it."""
+        without it and two seasons apart on that only share what they shared before it. The
+        week's totals are left out: a strategy that reads the week is keyed on its team's view
+        of it besides (``run.decision_key``, ``policy.week_view``), and every other decision
+        reads none."""
         base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),

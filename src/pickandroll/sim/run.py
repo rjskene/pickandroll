@@ -11,7 +11,8 @@ roster change in one arm reshuffles nothing for any player: common random number
 :func:`simulate` advances several variants of one league through the same world day by day: the
 moves decided yesterday land, each seat decides on the day's beliefs, the lineup is set, the day
 is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
-states agree share one solve (the lockstep of the design note); from the first divergence each
+states agree share one solve (the lockstep of the design note; a strategy that reads the week,
+on one view of the week too: :func:`decision_key`, PR F2); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
 of the season's outcomes, B less A; :func:`room` runs a league's seats under named arms rotated
 across paths.
@@ -774,6 +775,33 @@ def queue_named(variants: Sequence[Mapping[int, op.Strategy]]) -> bool:
     )
 
 
+def decision_key(
+    setup: Setup, state: SimState, team: int, strat: op.Strategy, week: int
+) -> tuple[Any, ...]:
+    """What two variants must hold alike on a day to share ``team``'s decision: the team, the
+    strategy in its seat (its ``repr``) and ``SimState.key()``; and for a strategy that reads
+    the week (``policy.reads_week``: the exact tier on the weighted set, the queue's rule or a
+    week's plan; a seat or a mirror whose ``bid`` weighs the week), the team's view of the week
+    too (``policy.week_view``: its opponent and both sides' totals so far), which the state's
+    key does not hold (PR F2). Before it, two variants that held one such ``repr`` in a seat,
+    two arms of one name or one mirror rival of two arms, could be handed each other's decision
+    once their states agreed again on other totals. Every other strategy's decision is the same
+    whatever the view.
+
+    A seat that reads a stake (the guard PR) decides on its own week's figure too
+    (``SimState.stakes``, which the state's key leaves out), so the key holds it, None for a
+    seat with no stake."""
+    level = state.stakes.get(team) if getattr(strat, "stake", 0.0) > 0 else None
+    view = policy.week_view(setup, state, team, week) if _reads_week(strat) else None
+    return (team, repr(strat), state.key(), level, view)
+
+
+def _reads_week(strat: op.Strategy) -> bool:
+    """A strategy that does not say (a static or a market rival, a test's double) does not
+    read the week."""
+    return bool(getattr(strat, "reads_week", False))
+
+
 def simulate(
     setup: Setup,
     w: World,
@@ -920,9 +948,7 @@ def simulate(
                 strat = variants[vi].get(team)
                 if strat is None or strat.kind == "static":
                     continue
-                # A seat that reads a stake decides on its own week's figure too.
-                level = state.stakes.get(team) if getattr(strat, "stake", 0.0) > 0 else None
-                key = (team, repr(strat), state.key(), level)
+                key = decision_key(setup, state, team, strat, week.number)
                 if key in cache:
                     decision = cache[key]
                     shared[vi] += decision.solves

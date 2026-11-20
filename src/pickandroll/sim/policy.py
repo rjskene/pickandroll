@@ -4,7 +4,10 @@ tiers that solve it, and the executor that lands what they decide.
 :func:`problem_of` mirrors ``api.season_moves.build`` step for step from in-memory inputs: the
 spans from the setup's calendar, the opponents projected with ``weekly.project_week`` from the
 shared beliefs, the candidates from the pool, the add limits from the league's rule and the adds
-used, the keep rule's inputs from the same beliefs, then the knobs. **Every knob comes in as a
+used, the keep rule's inputs from the same beliefs, then the knobs. This week's opponent and
+both sides' totals so far come from one place, :func:`week_view`; the runner keys a strategy
+that reads the week (:func:`reads_week`) on the same view (PR F2).
+**Every knob comes in as a
 mapping of the twelve names of** :data:`KNOBS` **(the ten the live knob file takes,
 ``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two); a
 missing name raises; nothing here reads the knob file.** The season guard is
@@ -143,7 +146,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from statistics import median
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from . import bid_policy as bp
 from . import bids
@@ -552,19 +555,25 @@ def distinct(listed: Iterable[mv.Move]) -> list[mv.Move]:
     one is skipped, :func:`queue`), and of two moves of one drop the second to land finds its
     drop gone (:func:`land`). So a move left out for its add takes nothing, and one left out
     for its drop still holds its add: it is queued, and a later move of that add is skipped all
-    the same. A test holds the two readings together, list by list
+    the same. Its add never arrives, though, so a later move that drops him finds nobody at the
+    landing and is left out too, and so on down a chain (the lead's review of PR E; built in PR
+    F2). A test holds the two readings together, list by list
     (``tests/sim/test_sim_queue.py``). Nothing is taken out of the queue here: the executor
     queues from the whole list, as it did before the names were made with it. In a waiver
     league a claim rule can cut a move of the list first (README, limits, item 7)."""
     adds: set[int] = set()
     drops: set[int] = set()
+    gone: set[int] = set()
     out: list[mv.Move] = []
     for m in listed:
         if m.add in adds:
             continue  # the executor queues one move an add
         adds.add(m.add)
-        if m.drop is not None and m.drop in drops:
-            continue  # queued, and gone at the landing: an earlier move took its drop
+        if m.drop is not None and (m.drop in drops or m.drop in gone):
+            # Queued, and gone at the landing: an earlier move took its drop, or its drop is
+            # the add of a move that is itself gone. Either way its own add never arrives.
+            gone.add(m.add)
+            continue
         if m.drop is not None:
             drops.add(m.drop)
         out.append(m)
@@ -867,6 +876,63 @@ def bracket_days(setup: Setup) -> frozenset[date]:
     return frozenset(d for w in setup.calendar.weeks if w.number in weeks for d in w.days())
 
 
+class WeekView(NamedTuple):
+    """What a team's problem reads of this week beyond ``SimState.key()`` (:func:`week_view`):
+    its opponent, and each side's totals so far this week as the week's span takes them (a
+    points league's as its score). ``so_far_theirs`` is None with no opponent. It is hashable:
+    the runner's decision cache keys a strategy that reads the week on it."""
+
+    opponent: int | None
+    so_far: tuple[tuple[str, float], ...]
+    so_far_theirs: tuple[tuple[str, float], ...] | None
+
+
+def week_view(setup: Setup, state: SimState, me: int, week: int) -> WeekView:
+    """``me``'s view of ``week`` on ``state``: whom it plays (the other team of its pair in the
+    setup's pairings, None in a week they do not hold) and both sides' totals so far. The one
+    source of the week's opponent and totals: :func:`problem_of` builds the week's span from
+    it, and the runner's decision cache keys on it for a strategy that reads the week
+    (:func:`reads_week`), so a decision is never shared across two views the problem tells
+    apart."""
+    points = dict(setup.points) if setup.scoring == "points" and setup.points else None
+
+    def so_far_of(team: int) -> tuple[tuple[str, float], ...]:
+        totals = dict(state.totals.get(week, {}).get(team, {}))
+        return tuple(({wk.FPTS: fpts(totals, points)} if points else totals).items())
+
+    other = next(
+        (b if a == me else a for a, b in setup.pairings.get(week, ()) if me in (a, b)), None
+    )
+    return WeekView(other, so_far_of(me), so_far_of(other) if other is not None else None)
+
+
+def reads_week(
+    tier: str,
+    executes: str = QUEUE_SET,
+    with_plan: bool = True,
+    bid: bp.BidPolicy | None = None,
+) -> bool:
+    """Whether a seat's decision reads the value of this week, so its opponent and the week's
+    totals so far (:func:`week_view`):
+
+    - the exact tier when it executes the weighted set or the queue's rule (PR E:
+      :func:`draw_queue` searches the week's set and the week's plans), or draws the week's plan
+      (:func:`exact`);
+    - a tier that bids (the exact and the surrogate; a mirror rival is the surrogate) on an arm
+      whose ``bid`` weighs the week (PR F2): its decision carries each move's gain on the week
+      for its claims to be sized on (:func:`with_bid`), whatever set it searched.
+
+    The surrogate, the ranking and the exact tier's recommended set on the three weeks search
+    no week, and a ``bid`` that weighs the season reads the schedule and no matchup
+    (:class:`SeasonFigure`): their decisions are the same whatever the view (held by behaviour,
+    ``tests/sim/test_sim_bid_key.py``). A seat that says it reads the week where no claim is
+    ever sized (a league without FAAB) shares a little less and decides the same."""
+    searches = tier == "exact" and (executes in (WEIGHTED, QUEUE) or with_plan)
+    # The ranking tier holds no live basis, so its claims are sized on nothing (``with_bid``).
+    bids = tier in ("exact", "surrogate") and bid is not None and bid.week > 0
+    return searches or bids
+
+
 def problem_of(
     setup: Setup,
     state: SimState,
@@ -878,7 +944,9 @@ def problem_of(
     weeks_ahead: int = WEEKS_AHEAD,
 ) -> Built | None:
     """The move problem for ``me`` on ``state.day``; None with no week left. Mirrors
-    ``api.season_moves.build`` from in-memory inputs."""
+    ``api.season_moves.build`` from in-memory inputs. This week is read through
+    :func:`week_view`: against the pairing's opponent, projected on the same beliefs from its
+    active roster with both sides' totals so far, and against nobody for a team in no pair."""
     knobs = check_knobs(knobs)
     day = state.day
     weeks = setup.calendar.ahead(day, weeks_ahead)
@@ -905,19 +973,14 @@ def problem_of(
             members, beliefs, days, setup.schedule, slots, value, this_week, points=points
         )
 
-    def so_far_of(team: int) -> dict[str, float]:
-        totals = dict(state.totals.get(this.number, {}).get(team, {}))
-        return {wk.FPTS: fpts(totals, points)} if points else totals
-
-    other = next(
-        (b if a == me else a for a, b in setup.pairings.get(this.number, ()) if me in (a, b)), None
-    )
+    view = week_view(setup, state, me, this.number)
+    other = view.opponent
     week_span = mv.WeekSpan(
         tuple(days0),
         True,
         (project(other, days0, True),) if other is not None else (),
-        so_far_of(me),
-        (so_far_of(other),) if other is not None else (),
+        dict(view.so_far),
+        (dict(view.so_far_theirs),) if view.so_far_theirs is not None else (),
         None,
     )
     field_teams = [t for t in setup.teams if t != me]
