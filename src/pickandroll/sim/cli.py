@@ -1492,7 +1492,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 18 since the bid policy (#172, PR F2), 17 since the
+#: The replay's version in its payload: 19 since the bracket's rounds (#172, PR bracket), 18
+#: since the bid policy (#172, PR F2), 17 since the
 #: queue's rule (#172, PR E), 16 since the season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
 #: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
@@ -1511,8 +1512,16 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 18
+REPLAY_VERSION = 19
 REPLAY_VERSION_WHY = (
+    "19: the bracket's rounds: in a week of the bracket a seat's problem reads its round's "
+    "opponent, seeded that morning from the variant's own totals as the season's end seeds it "
+    "(before, the week had no opponent and was worth nothing): the weighted set weighs the "
+    "matchup, a week's plan can be drawn there, the queue's rule takes a plan on the matchup's "
+    "odds in a round the seat plays, and a bid that weighs the week sizes a claim against the "
+    "round's opponent; the view of the week a decision is keyed on (version 18) holds the "
+    "round's pair; the audit holds the round's pairs (bracket_pairs); a seat that executes the "
+    "three weeks' set alone and names no bid on the week plays version 18's season. "
     "18: the bid policy: an arm's spec may name a bid block; its seat on the exact or the "
     "surrogate tier, and its mirror rivals, then bid in a FAAB league by a family of rules whose "
     "default member is the live rule (the gain weighed over the week, the three weeks and the "

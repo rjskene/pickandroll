@@ -1051,7 +1051,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
   `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
-  the run's league rules ("The league shapes"). The payload (`replay_version` 18) keys by season
+  the run's league rules ("The league shapes"). The payload (`replay_version` 19) keys by season
   what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
@@ -1221,10 +1221,12 @@ leaves); 16 since the season guard as an arm's choice and the week's stake (the 
 its figures version 15's with neither named (the season scale's rows now say how many paths
 their ratio rests on, `paths_with_ratio`, in every run that has a scale); 17 since the
 queue's rule (PR E), its figures version 16's with no arm naming `queue` and none executing a
-streaming plan in a league with held slots; and 18 since the bid policy (PR F2), its figures
+streaming plan in a league with held slots; 18 since the bid policy (PR F2), its figures
 version 17's with no `bid` named (a FAAB run's counts gain three keys), but for two arms of one
 name whose seat reads the week, which the decision's key now keeps apart on two views of a week
-(**The decision's key**).
+(**The decision's key**); and 19 since the bracket's rounds (PR bracket), its figures version
+18's for a seat that executes the three weeks' set alone and names no `bid` on the week (**A
+bracket week**).
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,

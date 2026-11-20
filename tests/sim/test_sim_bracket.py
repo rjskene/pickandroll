@@ -421,3 +421,23 @@ def test_a_replays_record_names_the_rule_under_every_kind_of_waivers():
     # A grid whose one shape plays no round names none.
     bare = shapes.one("bare", replace(shapes.FIXED, playoff_teams=1, playoff_weeks=0))
     assert ss.audit_rules(shapes.PLAIN, bare) == audit.RULES
+
+
+def test_the_replay_s_reason_says_the_bracket():
+    """The version's reason names what a reader of an older record must know: a round's
+    opponent is read, by whom it changes a season, that the view a decision is keyed on holds
+    the round's pair, the audit's rule, and whose season is the version before's."""
+    why = ss.REPLAY_VERSION_WHY
+    assert ss.REPLAY_VERSION >= 19 and "19: the bracket's rounds: " in why
+    mine = why.split("19: the bracket's rounds: ")[1].split("18: the bid policy: ")[0]
+    for said in (
+        "round's opponent",
+        "the weighted set",
+        "week's plan",
+        "the queue's rule",
+        "a bid that weighs the week",
+        "holds the round's pair",
+        "bracket_pairs",
+    ):
+        assert said in mine, said
+    assert "names no bid on the week plays version 18's season" in mine

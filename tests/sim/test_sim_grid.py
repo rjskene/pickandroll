@@ -118,7 +118,7 @@ def test_on_the_fixed_shape_a_short_draft_is_noted_and_played_as_before(bare: Pa
     assert league["grid"] == "fixed" and league["shapes"] == [shapes.FIXED.payload()]
     assert league["by_path"] == [{"shape": 0, "turn": 0}, {"shape": 0, "turn": 1}]
     assert [x["holds"] for x in league["short_draft"]] == [85]
-    assert one["replay_version"] == 18 and "by_axis" not in one
+    assert one["replay_version"] == 19 and "by_axis" not in one
 
 
 def test_a_pair_on_a_grid_plays_each_path_s_shape_and_seat(wire: Path, monkeypatch):
