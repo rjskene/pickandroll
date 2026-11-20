@@ -251,13 +251,22 @@ def waiver_wait(setup: Setup, today: Day, before: Day | None) -> Found:
                 yield team, f"player {k} joined before his clear date {wait.clears}"
 
 
+def _morning(today: Day) -> SimState:
+    """The day's state after the morning: in a same-day league (PR today) the state before the
+    day's landing (:attr:`Day.decided`), since a move decided today may drop, the same day, a
+    player a claim brought that morning (a market rival's drop is its weakest, which a player it
+    took among the best few can be; under the default rule that drop lands the next morning);
+    else the day's state."""
+    return today.decided if today.decided is not None else today.state
+
+
 def claim_priority(setup: Setup, today: Day, before: Day | None) -> Found:
     """Every contested claim went to the best priority that morning, and the winner is last
     after it (PR Fa): the morning's decisions (``state.resolved``), replayed on the day before's
     order, each won by the first team in that order with a claim open on its player (a team
     whose claim failed passed over), each winner then moved to the back; every lost claim's
     player went to another team; the order after them is the state's; every winner holds its
-    player."""
+    player after the morning (:func:`_morning`)."""
     if before is None or not today.state.resolved:
         return
     order = list(before.state.priority)
@@ -284,7 +293,7 @@ def claim_priority(setup: Setup, today: Day, before: Day | None) -> Found:
             if r.team in order:
                 order.remove(r.team)
             order.append(r.team)
-            if r.add not in {k for k, _ in today.state.rosters.get(r.team, ())}:
+            if r.add not in {k for k, _ in _morning(today).rosters.get(r.team, ())}:
                 yield r.team, f"won claim on player {r.add} not on its roster"
     if tuple(order) != tuple(today.state.priority):
         yield None, f"priority after the morning {today.state.priority}, expected {tuple(order)}"
@@ -331,7 +340,8 @@ def bid_order(setup: Setup, today: Day, before: Day | None) -> Found:
     of the winner (a higher bid, or the same bid and a better place in the order then) failed;
     every lost claim's player went to another team on a bid at least its own; the order rolls
     only on a win that broke a tie (another claim on him open with the same bid); the order
-    after the morning is the state's; every winner holds its player."""
+    after the morning is the state's; every winner holds its player after the morning
+    (:func:`_morning`)."""
     if before is None or not today.state.resolved:
         return
     order = list(before.state.priority)
@@ -368,7 +378,7 @@ def bid_order(setup: Setup, today: Day, before: Day | None) -> Found:
             if r.team in order:
                 order.remove(r.team)
             order.append(r.team)
-        if r.add not in {k for k, _ in today.state.rosters.get(r.team, ())}:
+        if r.add not in {k for k, _ in _morning(today).rosters.get(r.team, ())}:
             yield r.team, f"won claim on player {r.add} not on its roster"
     if tuple(order) != tuple(today.state.priority):
         yield None, f"priority after the morning {today.state.priority}, expected {tuple(order)}"

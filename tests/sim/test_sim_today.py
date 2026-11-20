@@ -28,6 +28,7 @@ from pickandroll.sim.state import Waiting, initial
 from tests.sim.sim_league import KNOBS, every_category, make_setup, replay_of
 from tests.sim.test_no_peek import SEED, WEIGHTS
 from tests.sim.test_sim_bracket_run import points_league, two_rounds
+from tests.sim.test_sim_faab import morning as faab_morning
 from tests.sim.test_sim_rules_run import (  # noqa: F401
     WHEN,
     pinned_clock,
@@ -37,6 +38,7 @@ from tests.sim.test_sim_rules_run import (  # noqa: F401
     written,
 )
 from tests.sim.test_sim_split import armed, second_of, variant_of, world_of
+from tests.sim.test_sim_waivers import contested
 
 DAY = timedelta(1)
 FORMATS = ("one_win", "each_category")
@@ -320,6 +322,42 @@ def test_a_seat_at_five_adds_in_a_week_sends_no_sixth_and_the_audits_weekly_rule
     sixth = replace(after, adds_used={**after.adds_used, 2: after.adds_used.get(2, 0) + 1})
     found = list(audit.weekly_adds(setup, replace(clean, state=sixth), None))
     assert found == [(2, "6 adds this week on a cap of 5")]
+
+
+def dropped_the_same_day(setup, after, winner, x):
+    """The clear morning ``after`` in a same-day league: ``winner``, which took ``x`` by a claim
+    that morning, drops him the same day for a free agent. The state the seats decided on and
+    the state after the day's landing."""
+    setup = same_day(setup)
+    spots, counts = spots_of(setup)
+    f = min(k for k in after.pool if k not in after.waivers)
+    decided = policy.queue(after, winner, policy.Decision((mv.Move(f, x),)), 1, 4, False, spots, setup)  # fmt: skip
+    assert decided.pending[winner] == (mv.Move(f, x),)
+    landed = policy.land(decided, setup.teams, spots, counts, arrived=True)
+    assert x not in landed.active(winner) and f in landed.active(winner)
+    return setup, decided, landed
+
+
+@pytest.mark.parametrize("kind", ["priority", "faab"])
+def test_a_claim_won_in_the_morning_and_dropped_the_same_day_is_held_to_the_morning(kind):
+    """A team wins a claim in the morning and, the same day, drops him for a free agent (a
+    market rival's drop is its weakest, which a player it took among the best few can be): the
+    claim rules hold the winner to its roster after the morning (``Day.decided``), as the default
+    rule's audit holds it on the day of the claim, before a move it queues lands the next
+    morning. Read on the state after the day's landing, the old reading, the rule finds the
+    breach the look's dry run met on real data."""
+    if kind == "priority":
+        setup, before, after, x, _ = contested()
+        winner, rule = 3, audit.claim_priority
+    else:
+        setup, before, after, x, _, _ = faab_morning()
+        winner, rule = 2, audit.bid_order
+    setup, decided, landed = dropped_the_same_day(setup, after, winner, x)
+    prior = audit.Day(before.day, 0, before, {}, {})
+    today = audit.Day(after.day, 0, landed, {}, {}, decided=decided)
+    assert list(rule(setup, today, prior)) == []
+    old = list(rule(setup, replace(today, decided=None), prior))
+    assert old == [(winner, f"won claim on player {x} not on its roster")]
 
 
 # --------------------------------------------------------------------------- the league's adds
