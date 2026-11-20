@@ -14,7 +14,10 @@ tie and won with no other claim on the player, and the dollars won claims paid a
 bid that could have been taken and lost claims fell short of the winning bid by: a FAAB run's
 only, the world's knowledge of every bid, which no decision reads. In a run where an arm names a
 stash threshold (PR G) also the returning players the seat dropped: such a run's only, so a run
-that names none counts as before. The landing and claim
+that names none counts as before. In a run where an arm takes the queue's rule (PR E) also the
+days the queue took a week plan instead of the three weeks' set and the steps of those plans the
+executor queued: that run's only, in every seat's row (0 for a seat that does not take the rule),
+so a run that names no ``queue`` counts as before. The landing and claim
 counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
 ``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
 and the day's lines once they are scored. In a run where an arm names its guard or its stake (the
@@ -94,6 +97,13 @@ SEASON: dict[str, tuple[str, ...]] = {
     "stake": ("stake_mean", "stake_weeks_above_half"),
 }
 
+#: The queue's counts (PR E), only in a run where an arm executes ``queue``, after the guard's
+#: and the stake's (:data:`SEASON`): the days the queue took a week plan instead of the three
+#: weeks' set, and the steps of those plans queued (a free agent's add for the next morning, or
+#: a claim placed). Whether a queued step then landed is in ``landed``, ``gone`` and the claim
+#: counts, with every other move.
+PLANS = ("plan_days", "plan_steps")
+
 #: The counts that part by construction between two arms and are no difference of the season:
 #: what a pair's two rows may differ in while the two arms played one season. The screen's
 #: "did nothing" sets them aside when it says whether the two arms' counts are equal
@@ -112,19 +122,24 @@ class Tally:
     """One variant's counts as its season is played. ``stash``: the run names a stash threshold,
     and the returning players each seat drops are counted (:data:`STASH`). ``counted``, by team,
     names the season fields (:data:`SEASON`'s keys) the run counts on that seat; none by
-    default."""
+    default. ``plans``: the run has an arm that takes the queue's rule, so every seat's row
+    carries :data:`PLANS`."""
 
     def __init__(
         self,
         setup: Setup,
         stash: bool = False,
         counted: Mapping[int, Sequence[str]] | None = None,
+        plans: bool = False,
     ) -> None:
         self.stash = stash
         #: Each seat's players its last decision read as returning (with the drops of its open
         #: claims as read the day each was placed), and those of them it dropped.
         self._returning: dict[int, frozenset[int]] = {}
         self.returning_dropped: dict[int, int] = {}
+        self.plans = plans
+        self.plan_days: dict[int, int] = {}
+        self.plan_steps: dict[int, int] = {}
         self.teams = tuple(setup.teams)
         self.limit = setup.max_weekly_adds
         self.waiting = setup.waiting
@@ -184,6 +199,11 @@ class Tally:
         is counted on a counted seat."""
         if team in self.past and decision.past_guard:
             self.past[team] += 1
+
+    def took(self, team: int, steps: int) -> None:
+        """``team``'s queue took a week plan today (PR E), and ``steps`` of it were queued."""
+        self.plan_days[team] = self.plan_days.get(team, 0) + 1
+        self.plan_steps[team] = self.plan_steps.get(team, 0) + steps
 
     def day(self, week: int, state: SimState) -> None:
         """A simulated day of ``week``: each held player's stint goes on or begins; on the
@@ -253,6 +273,11 @@ class Tally:
                 out[t]["stake_weeks_above_half"] = (
                     float(sum(1 for x in levels if x > HALF)) if levels else None
                 )
+            if self.plans:
+                out[t] |= {
+                    "plan_days": float(self.plan_days.get(t, 0)),
+                    "plan_steps": float(self.plan_steps.get(t, 0)),
+                }
         return out
 
 
@@ -260,8 +285,9 @@ def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
     when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the stash
     count (a run's that names a stash threshold, PR G), then the guard's and the stake's (a run
-    that names them)."""
-    extra = (*CLAIMS, *BIDS, *STASH, *(m for group in SEASON.values() for m in group))
+    that names them), then the queue's (a run with an arm that executes ``queue``, PR E)."""
+    season = (m for group in SEASON.values() for m in group)
+    extra = (*CLAIMS, *BIDS, *STASH, *season, *PLANS)
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))
 
 
@@ -286,6 +312,7 @@ __all__ = [
     "CLAIMS",
     "HALF",
     "METRICS",
+    "PLANS",
     "SEASON",
     "STASH",
     "Tally",

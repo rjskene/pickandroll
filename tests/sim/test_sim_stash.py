@@ -387,33 +387,81 @@ def test_in_the_last_week_the_plan_charges_nobody_for_an_o_and_the_rule_before_a
     assert mv.comebacks(earlier.problem, "week", ()) == [] and named.sends == ((back, nxt),)
 
 
-def test_a_name_made_on_the_set_alone_can_take_the_drop_of_a_plan_step_queued_beside_it():
-    """A limit the README names (limits, 7), pinned. The names are made with the decided set
-    made, not with the week plan's steps an arm that executes its plan queues beside the set.
-    On the Tuesday the seat's plan charges ``nxt`` for ``back``'s return, and a plan step due
-    tomorrow drops ``nxt`` for a free agent. The morning brings ``back`` first: ``nxt`` leaves
-    as the forced drop and the step finds its drop gone (counted in ``gone``), where the rule
-    before PR G sent ``low``, whom the seat's keep rule keeps, and landed the step. With the
-    step made the engine's plan charges the step's own add, who would come and go: the roster
-    the morning leaves is the one that plan charges, by a move that is not made."""
+def test_a_name_is_made_with_the_plan_step_the_seat_queues_beside_its_set():
+    """The names are made with what the seat queues tonight made (PR E's refit of the names,
+    ``policy.named``): for an arm that executes its plan, the set's moves and the plan's steps
+    due. On the Monday the keep rule keeps neither of the two weakest, and the plan with the
+    set alone made charges ``low`` for ``back``'s return. A plan step due tomorrow drops ``low``
+    for ``free``, a free agent worth more than ``nxt``. With the step made the engine's plan
+    charges ``nxt``: the morning sends him, and the step lands on the roster it was planned on.
+    An arm that does not execute its plan queues no step and keeps the set's own name. As PR G
+    was built the name was made on the set alone, so the named player was the step's own drop:
+    he left as the forced drop and the step found its drop gone (its README's limit 7, which
+    this test pinned); the morning with no name does the same here, ``low`` being the least
+    valuable too."""
+    setup, state, status, returns, back, low, nxt = return_day(0)
+    free = max(state.pool)
+    setup = replace(setup, projection={**setup.projection, free: rates(0.5)})
+    day = (setup, state, status, returns, back, low, nxt)
+    built, _ = named_on(day, "exact", None)
+    p = built.problem
+    step = mv.Move(free, low, state.day + DAY)
+    assert mv.feasible(p, (step,)) and not {low, nxt} & p.kept
+    assert (
+        p.value[low]
+        < p.value[nxt]
+        < p.value[free]
+        < min(v for k, v in p.value.items() if k in dict(p.roster) and k not in (low, nxt))
+    )
+    decision = policy.named(p, policy.Decision(plan=(step,), source="exact"))
+    assert decision.sends == ((back, low),) and decision.plan_sends == ((back, nxt),)
+    # The arm executes its plan: the step is queued, and the names are those made with it.
+    placed, out, cleared = next_morning(day, decision, execute_plan=True)
+    assert placed.pending[TEAM] == (mv.Move(free, low),) and placed.sends == {TEAM: ((back, nxt),)}
+    assert nxt in out.pool and low in out.pool
+    assert set(out.active(TEAM)) == set(placed.active(TEAM)) - {low, nxt} | {back, free}
+    assert out.forced_by == {TEAM: 1} == out.executed_by and not out.gone_by
+    assert found(setup, placed, out, cleared) == []
+    # The arm does not: no step is queued, and the set's own name stands.
+    placed, out, cleared = next_morning(day, decision)
+    assert placed.pending[TEAM] == () and placed.sends == {TEAM: ((back, low),)}
+    assert low in out.pool and nxt in out.active(TEAM) and not out.executed_by
+    assert found(setup, placed, out, cleared) == []
+    # With no name the least valuable leaves: the step's own drop, and the step is gone.
+    _, before, _ = next_morning(day, decision, names=False, execute_plan=True)
+    assert low in before.pool and free in before.pool and nxt in before.active(TEAM)
+    assert before.forced_by == {TEAM: 1} == before.gone_by and not before.executed_by
+
+
+def test_a_plan_that_charges_a_queued_step_s_own_add_leaves_the_morning_to_the_rule_before():
+    """The limit that stays (the README's limits, 7), pinned. On the Tuesday the plan step due
+    tomorrow drops ``nxt`` for ``free``, the best of a wire weaker than the whole roster. With
+    the step made the engine's plan charges the step's own add, who would come and go. He has
+    not arrived when ``back`` returns (the adds land after the returns), so the name is of
+    nobody on the roster and the morning falls to the rule before: ``low`` leaves, whom the
+    seat's keep rule keeps, and the step then lands. The roster the morning leaves is not the
+    one the plan charged (the plan keeps ``low`` and has ``free`` come and go); no rule of the
+    seat's own is written for it."""
     day = return_day(1)
     setup, state, _, _, back, low, nxt = day
     built, decision = named_on(day, "exact", None)
     assert decision.moves == () and decision.sends == ((back, nxt),)
+    assert decision.plan_sends is None and low in built.problem.kept
     free = max(state.pool)
     step = mv.Move(free, nxt, state.day + DAY)
     assert mv.feasible(built.problem, (step,))
-    assert policy.sends_of(built.problem, (step,)) == ((back, free),)
-    planned = replace(decision, plan=(step,))
+    planned = policy.named(built.problem, replace(decision, plan=(step,)))
+    assert planned.sends == ((back, nxt),) and planned.plan_sends == ((back, free),)
     placed, out, status = next_morning(day, planned, execute_plan=True)
-    assert placed.pending[TEAM] == (mv.Move(free, nxt),) and placed.sends == {TEAM: decision.sends}
-    assert nxt in out.pool and free in out.pool and out.gone_by == {TEAM: 1}
-    assert set(out.active(TEAM)) == set(placed.active(TEAM)) - {nxt} | {back}
-    assert out.forced_by == {TEAM: 1} and not out.executed_by
+    assert placed.pending[TEAM] == (mv.Move(free, nxt),)
+    assert placed.sends == {TEAM: ((back, free),)}
+    assert low in out.pool and nxt in out.pool
+    assert set(out.active(TEAM)) == set(placed.active(TEAM)) - {low, nxt} | {back, free}
+    assert out.forced_by == {TEAM: 1} == out.executed_by and not out.gone_by
     assert found(setup, placed, out, status) == []
+    # The morning with no name at all is the same one.
     _, before, _ = next_morning(day, planned, names=False, execute_plan=True)
-    assert low in before.pool and nxt in before.pool and free in before.active(TEAM)
-    assert before.forced_by == {TEAM: 1} == before.executed_by and not before.gone_by
+    assert before.rosters == out.rosters and before.pool == out.pool
 
 
 def test_a_named_drop_that_has_left_the_roster_falls_back_and_an_open_spot_sends_nobody():

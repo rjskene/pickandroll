@@ -95,9 +95,31 @@ brings back, the drop the plan charges (:func:`sends_of`, ``moves.comebacks`` on
 problem, so the keep rule and the threshold are the seat's), the state keeps the names one night
 (``SimState.sends``), and :func:`arrive` takes a named player who is still active when the roster
 is over its spots; with no name, or one who is not on the roster, the least valuable active player
-leaves, as before. The world reads neither the knob nor the keep rule. The day's choice of an
-activation's drop (``moves.choose_activation``, #360) is not made here: no problem a seat decides
-on holds a cleared player.
+leaves, as before. The world reads neither the knob nor the keep rule. The names are made with
+what the seat queues that night made (PR E, :func:`named`): the set's moves, with the plan's
+steps due for an arm that executes its plan, or a leading plan's steps due under the queue's
+rule. What is queued is gathered in one place (:func:`gathered`), which the executor and the
+names both read; the names are made with the part of it that can land together
+(:func:`distinct`: a plan step that takes the add or the drop of a move of the set is left
+out). So a named player is never the drop of a move queued for the same morning. The
+day's choice of an activation's drop (``moves.choose_activation``, #360) is not made here: no
+problem a seat decides on holds a cleared player.
+
+**The queue's rule** (PR E, an exact arm that executes ``queue``). The live queue does not simply
+take the three weeks' set: it also draws the week plans and takes a plan when it beats the set
+by the plan floor on the queue's score, the week's gain plus ``three_weight`` times the three
+weeks' (in a bracket week on the matchup's odds, the weight 0 and the floor the engine's own).
+:func:`draw_queue` hands the engine the day's inputs in the live route's order
+(``api.season_moves.week_plans_payload``, read and written again here): the three weeks' set as
+``three`` finds it, the week's set, the week's single swaps and the streaming plan, the weight
+(:func:`queue_weight`), the guard and the held returns; the plans, the gate, the floor and the
+trim are the engine's (``season.plans`` through the door). :func:`queue_rule` makes the decision:
+the plan's steps, dated, when a plan leads (:attr:`Decision.plan_leads`), else the set, and
+:func:`queue` then places only the steps due today; the seat decides again tomorrow. The season
+term is on the three weeks' set only; the plans and the gate are the engine's own score (the
+library's functions do not take the term's wrapper: a bracket week's gate reads the matchup's
+odds, which it has not), and the season guard, which does not read the term, admits or refuses
+every plan all the same; under the arm's guard ``off`` (below) none of them is handed it.
 
 **The guard and the stake** (the guard PR, an arm's two season fields, :data:`SEASON_FIELDS`).
 ``guard`` is ``block`` (the default: the engine's season guard on every search of the tier, as
@@ -134,6 +156,7 @@ from .engine import (
     bid_of,
     dl,
     mv,
+    pl,
     refused,
     sg,
     st,
@@ -194,7 +217,10 @@ HORIZONS = ("week", "three")
 #: The set the autopilot queues (``season.autopilot.QUEUE_SET``).
 QUEUE_SET = "three"
 WEIGHTED = "weighted"
-EXECUTES = (QUEUE_SET, WEIGHTED)
+#: The live queue's rule (#172, PR E): the three weeks' set, or the week plan that beats it by the
+#: plan floor on the queue's score (:func:`queue_rule`). The exact tier's.
+QUEUE = "queue"
+EXECUTES = (QUEUE_SET, WEIGHTED, QUEUE)
 TIERS = ("exact", "surrogate", "ranking")
 #: The surrogate's solve days (Monday 0, Thursday 3).
 SURROGATE_DAYS = (0, 3)
@@ -380,7 +406,8 @@ class Basis:
     decision's moves: for the live rule the move's own gain on the judging horizon, the set's
     value less the set without it (the live queue's ``gain``, the logged ``marginal`` on
     ``three``); for the market the move's gain on its view. ``plan`` is each of the plan's steps'
-    gain, in the order of its steps: its week increment, where live bids on its score
+    gain, in the order of its steps: under the queue's rule its score, as live bids
+    (:func:`step_bids`, PR E); for a streaming plan beside the set its week increment
     (:func:`basis_of`).
     ``sizing`` is the seat's ``faab_sizing`` and ``floor`` its plan floor, the typical gain until
     ten moves (live); ``noise`` the market's draw by move, for each of its moves that is a claim
@@ -409,8 +436,10 @@ class Decision:
     #: holds no gain in the engine's units (ranking), whose claims bid $0.
     basis: Basis | None = None
     #: Whom each of the seat's held players sends when he comes back (PR G, :func:`sends_of`):
-    #: (the held player, the drop the engine's plan charges him), by player. Only a seat that
-    #: plans with the engine names any (the exact and the surrogate tiers, a mirror rival).
+    #: (the held player, the drop the engine's plan charges him), by player, with what the seat
+    #: queues tonight made (:func:`named`, PR E): the set's moves, or the steps due of a plan
+    #: that leads. Only a seat that plans with the engine names any (the exact and the surrogate
+    #: tiers, a mirror rival).
     sends: tuple[tuple[int, int], ...] = ()
     #: The seat's players the engine read as returning on the day (PR G, :func:`returning_of`),
     #: for the count of those it then drops; a tier's decision made by :func:`decide` has it.
@@ -418,6 +447,18 @@ class Decision:
     #: Whether its set is one the season guard would have refused (the guard PR): only a seat
     #: whose guard is ``off`` decides one (:func:`mark_past_guard`). A count, read by no decision.
     past_guard: bool = False
+    #: Under the queue's rule (PR E): ``plan`` is the week plan the queue took instead of the
+    #: set, its steps dated, and ``held`` the plan's. The executor then queues the plan's steps
+    #: due today and none of ``moves``, whatever the arm's ``execute_plan``; ``moves`` stays the
+    #: three weeks' set, the day's recommended moves (the record's, and the fortnight's typical
+    #: gain's, as live's). False everywhere else.
+    plan_leads: bool = False
+    #: ``sends`` for an arm that executes its plan beside the set (PR E, :func:`named`): the
+    #: names with the set's moves and the plan's steps due tonight that can land beside them
+    #: (:func:`distinct`) made. None where no plan stands beside the set (none drawn, or the
+    #: plan leads and ``sends`` is its own). The executor keeps the one that matches what it
+    #: queues (:func:`queue`).
+    plan_sends: tuple[tuple[int, int], ...] | None = None
 
 
 NONE = Decision()
@@ -448,9 +489,12 @@ def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tu
     is a later week. The week's pass adds to it in the season's last week alone, where there is
     none, and only a held player the engine reads as back inside the week (a ``GTD`` in an
     ``IL+`` slot): an ``O`` is out for the rest of the week to the engine, so in the last week
-    its plan charges nobody for him and he is not named (the README's limits). ``moves`` is the
-    decided set, whole: not what the queue then keeps of it within the day's cap and the week's
-    adds, and not the week plan's steps an arm that executes its plan queues beside it."""
+    its plan charges nobody for him and he is not named (the README's limits). ``moves`` is
+    what the seat means to queue tonight that can land together (:func:`named`: the set's moves
+    and the plan's steps due that go with them or instead of them, each add and each drop taken
+    once, :func:`distinct`), not what the queue then keeps of it within the day's cap, the
+    week's adds and the claim rules. A player those moves drop is never charged; one of their
+    adds can be (the README's limits)."""
     held = {k for k, _ in problem.held}
     if not held:
         return ()
@@ -460,6 +504,105 @@ def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tu
             if c.player in held:
                 out.setdefault(c.player, c.drop)
     return tuple(sorted(out.items()))
+
+
+def gathered(
+    decision: Decision, execute_plan: bool, due: Callable[[int], date]
+) -> tuple[list[mv.Move], list[tuple[mv.Move, int]]]:
+    """What a seat means to queue tonight of ``decision`` (#172, PR E), before the day's cap,
+    the week's adds and the claim rules cut it: the set's moves in order, none when a plan leads
+    (the queue's rule queues the plan instead of the set); and the plan's steps due, each with
+    its place in the plan, when the arm executes its plan (``execute_plan``) or the plan leads:
+    a step dated at or before ``due`` of its add, the latest day a step of that add may be dated
+    to be queued today (:func:`due_by`). The one place the queue's moves are gathered: the
+    executor queues from it (:func:`queue`), and the names of who leaves when a held player
+    comes back are made with it (:func:`named`), so both read one list.
+
+    The list is not always one that can land whole. A streaming plan beside the set is drawn
+    against the week's set, so a step due can take the add or the drop of a move of the three
+    weeks' set. The executor queues one move an add and skips the step, and a second move of
+    one drop finds its drop gone at the landing; the names are made with the part that can
+    land together (:func:`distinct`)."""
+    moves = [] if decision.plan_leads else list(decision.moves)
+    steps: list[tuple[mv.Move, int]] = []
+    if execute_plan or decision.plan_leads:
+        steps = [
+            (m, j) for j, m in enumerate(decision.plan) if m.day is None or m.day <= due(m.add)
+        ]
+    return moves, steps
+
+
+def distinct(listed: Iterable[mv.Move]) -> list[mv.Move]:
+    """The moves of ``listed`` that can land together (#172, PR E): each add and each drop
+    taken once, by the first move of the list that takes it; a later move that takes either
+    again is left out. What :func:`named` makes of the list gathered (:func:`gathered`) before
+    the engine charges anyone on it: the engine's plan counts every add of the list as arriving
+    and every drop as leaving once (``moves.comebacks``), and ``moves.feasible`` passes no set
+    with one add or one drop twice. It is the executor's own reading of the same list, in the
+    executor's order, where every add is a free agent's: it queues one move an add (the later
+    one is skipped, :func:`queue`), and of two moves of one drop the second to land finds its
+    drop gone (:func:`land`). So a move left out for its add takes nothing, and one left out
+    for its drop still holds its add: it is queued, and a later move of that add is skipped all
+    the same. A test holds the two readings together, list by list
+    (``tests/sim/test_sim_queue.py``). Nothing is taken out of the queue here: the executor
+    queues from the whole list, as it did before the names were made with it. In a waiver
+    league a claim rule can cut a move of the list first (README, limits, item 7)."""
+    adds: set[int] = set()
+    drops: set[int] = set()
+    out: list[mv.Move] = []
+    for m in listed:
+        if m.add in adds:
+            continue  # the executor queues one move an add
+        adds.add(m.add)
+        if m.drop is not None and m.drop in drops:
+            continue  # queued, and gone at the landing: an earlier move took its drop
+        if m.drop is not None:
+            drops.add(m.drop)
+        out.append(m)
+    return out
+
+
+def due_on(problem: mv.MoveProblem) -> Callable[[int], date]:
+    """:func:`due_by` as the seat's problem holds it: each candidate's effective day
+    (``MoveProblem.effective``, which :func:`problem_of` sets by the same reading of the state
+    the executor then queues on: tomorrow, or his clear date when he is on waivers and it is
+    later). What :func:`named` hands :func:`gathered`, where the executor hands it the state's."""
+    tomorrow = problem.first_day + LANDS_AFTER
+    return lambda add: problem.effective.get(add, tomorrow)
+
+
+def named(problem: mv.MoveProblem, decision: Decision) -> Decision:
+    """``decision`` with the names of who leaves when one of the seat's held players comes back
+    (PR G, :func:`sends_of`), made with what the seat queues tonight made (PR E, the refit of
+    PR G's names): the one rule for every seat that plans with the engine, written here and
+    read off :func:`gathered`, the list the executor queues from.
+
+    - ``sends``: with the set's moves made, what an arm that does not execute a plan beside its
+      set queues; or, under the queue's rule when a plan leads, with that plan's steps due made
+      and none of the set's, since the plan is queued instead of the set.
+    - ``plan_sends``: for an arm that executes its plan beside the set, with the set's moves
+      and the plan's steps due made. None where no plan stands beside the set.
+
+    Of the list gathered, the part that can land together is made (:func:`distinct`): a step
+    that takes the add or the drop of an earlier move of the list is left out, since the
+    executor does not queue a second move of one add and a second move of one drop finds its
+    drop gone. A step dated later is queued on a later day and named with then. So a named
+    player is never the drop of a move the seat queues for the same morning (the engine's
+    charge leaves a dropped player out, and a step left out for its drop drops a player an
+    earlier move already does). He can be one of those moves' own adds, who has not arrived
+    when the held player comes back: the morning then falls to the rule before
+    (:func:`_activate`), and no rule of the seat's own is written for it (the README's
+    limits)."""
+    if not problem.held:
+        return decision
+    due = due_on(problem)
+
+    def of(execute_plan: bool) -> tuple[tuple[int, int], ...]:
+        moves, steps = gathered(decision, execute_plan, due)
+        return sends_of(problem, distinct([*moves, *(m for m, _ in steps)]))
+
+    beside = bool(decision.plan) and not decision.plan_leads
+    return replace(decision, sends=of(False), plan_sends=of(True) if beside else None)
 
 
 def gains_of(ev: mv.Valued, key: str, moves: Sequence[mv.Move]) -> tuple[float, ...]:
@@ -479,8 +622,10 @@ def basis_of(
     ``stream.Plan``, when the decision carries one) in a FAAB league; None elsewhere. A move of
     the set bids on its own gain on the judging horizon (:func:`gains_of`, the live queue's
     ``marginal``); a plan step on its week increment (``stream.step_gains``), where live bids on
-    its score, the week increment plus the queue's weight (``plans.THREE_WEIGHT``) times its
-    three weeks' increment (``plans.step_score``): the simulator has no queue weight until PR E. The gains
+    its score, the week increment plus the queue's weight times its three weeks' increment
+    (``plans.step_score``): a streaming plan beside the set is the simulator's own arm, not the
+    queue's, and keeps the week increment; the queue's rule bids on the score
+    (:func:`step_bids`, PR E). The gains
     are the engine's own, on its plain evaluator: the season term is the simulator's and live
     bids without it. The typical gain until ten moves is the problem's plan floor as the engine
     reads it (``stream.floor_of``): the knob, or in a one-win league the engine's own floor in
@@ -1038,7 +1183,11 @@ def exact(
     season guard on every search (:func:`allowed_of`: none under the arm's guard ``off``), the
     streaming plan beside. With a ``season_weight`` the single
     swaps, the pool's ranking and the recommended set (or the weighted search) all take the
-    season term (:func:`seasoned`); the week's plan does not."""
+    season term (:func:`seasoned`); the week's plan does not. An arm that executes ``queue``
+    takes the queue's rule (:func:`queue_rule`, PR E), which draws its own plans: ``with_plan``
+    is not read there."""
+    if executes == QUEUE:
+        return queue_rule(built, fields)
     p = built.problem
     ev = mv.Evaluator(p)
     allowed = allowed_of(built)
@@ -1084,7 +1233,120 @@ def exact(
             plan, taken = planned.steps, planned
         solves += 1
     basis = basis_of(built, ev, moves, taken)
-    return Decision(tuple(moves), held, plan, solves, "exact", basis, sends_of(p, moves))
+    return named(p, Decision(tuple(moves), held, plan, solves, "exact", basis))
+
+
+# --------------------------------------------------------------------------- the queue's rule
+def in_bracket(built: Built) -> bool:
+    """Whether today's week is one of the bracket's (``Built.bracket``; never without a bracket
+    read): the live build's ``playoff``, on which a week plan leads on the matchup's odds."""
+    return built.problem.first_day in built.bracket
+
+
+def queue_weight(built: Built) -> float:
+    """The weight of the three weeks in the queue's score (#172, PR E): the arm's
+    ``three_weight``, and 0 in a bracket week, where the matchup decides who advances (as the
+    live route sets it, ``api.season_moves.week_plans_payload``). The one place the queue's rule
+    and its steps' bids take the weight from."""
+    return 0.0 if in_bracket(built) else float(knob(built.knobs, "three_weight"))
+
+
+def step_bids(plan: pl.WeekPlan, weight: float) -> tuple[float, ...]:
+    """What each step of the plan the queue took bids on in a FAAB league (#172, PR E), in the
+    order of its steps: its score (``plans.step_score``), its week increment plus ``weight``
+    (:func:`queue_weight`) times its three weeks' increment, as the live queue bids a step; so
+    in a bracket week its week increment alone. The increments are the engine's own, on its
+    plain evaluator."""
+    return tuple(pl.step_score(s, weight) for s in plan.steps)
+
+
+@dataclass(frozen=True)
+class Drawn:
+    """What the queue's rule drew on one day (#172, PR E): what :func:`draw_queue` handed the
+    engine's week plans, and the engine's answer."""
+
+    #: The three weeks' set as ``executes: three`` finds it (the season term on it, the guard on
+    #: its search), with its held-slot moves and its basis.
+    three: Decision
+    #: The week's recommended set, the week's single swaps and the week's streaming plan without
+    #: the three-week guard: what the plans' pool is made of.
+    week_set: tuple[mv.Move, ...]
+    swaps: Mapping[int, Sequence[mv.SwapGain]]
+    stream: st.Plan | None
+    #: The weight of the three weeks in the score, and whether today's week is the bracket's.
+    weight: float
+    playoff: bool
+    #: Every plan the engine valued (``plans.every_plan``), and the one the queue takes instead
+    #: of the set (``plans.for_queue``); None when the set stands.
+    plans: tuple[pl.WeekPlan, ...]
+    chosen: pl.WeekPlan | None
+
+
+def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
+    """The day's week plans and the queue's choice among them and the three weeks' set (#172, PR
+    E), by the engine's own functions in the live route's order
+    (``api.season_moves._payload`` and ``week_plans_payload``, read as the reference and written
+    again here; nothing of the plans, the gate, the floor or the trim is the simulator's):
+
+    1. the three weeks' set as ``executes: three`` finds it (:func:`exact`: the season term on
+       it, the guard on its search);
+    2. the week's recommended set, among the arm's ``pool`` best candidates by single-swap gain
+       on the week above ``min_gain``, as the three weeks' set is found on its own key; the
+       week's single swaps on every candidate; the week's streaming plan against that set
+       without the three-week guard (the plans weigh the week first themselves), on the
+       league's scorer's per-game values;
+    3. the weight (:func:`queue_weight`) and whether the week is the bracket's
+       (:func:`in_bracket`);
+    4. ``plans.held_out``, ``plans.every_plan`` and ``plans.for_queue``, each given the guard.
+
+    The allowed set is the arm's (:func:`allowed_of`: the season guard under ``block``, none
+    under the arm's guard ``off``, the guard PR), taken once here for every call; the guard is
+    the engine's own season figure and does not read the season term. The plans and the gate
+    are valued on the engine's plain evaluator: the season term reaches the choice through the
+    three weeks' set only (``plans.matchup`` reads the evaluator's odds and ``plans.held_out``
+    builds evaluators of its own, so the library does not take :class:`Seasoned`). Two things
+    the live route has that this does not: the pool's adds from the guard's list (#424) and the
+    searches' tie-break on the season, neither of which the simulator's ``three`` has either."""
+    p = built.problem
+    three = exact(built, QUEUE_SET, False, fields)
+    ev = mv.Evaluator(p)
+    allowed = allowed_of(built)
+    swaps = mv.single_swaps(ev, "week")
+    week = mv.recommend(
+        ev, "week", _three_pool(swaps, fields), min_gain=fields.min_gain, allowed=allowed
+    )
+    week_set = tuple(pm.move for pm in week.moves)
+    per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
+    stream = st.plan(ev, built.rule, week_set, per_game, guard=False, allowed=allowed)
+    weight, playoff = queue_weight(built), in_bracket(built)
+    held = pl.held_out(ev)
+    every = pl.every_plan(ev, week_set, swaps, stream, allowed, held, three.moves, weight)
+    chosen = pl.for_queue(ev, every, three.moves, weight, playoff, allowed, held)
+    return Drawn(three, week_set, swaps, stream, weight, playoff, tuple(every), chosen)
+
+
+def queue_rule(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
+    """The live queue's rule (#172, PR E), an exact arm that executes ``queue``: the week plan
+    the engine takes instead of the three weeks' set (:func:`draw_queue`) when there is one,
+    else the set. A plan that leads is the decision's ``plan``, each step a move dated its own
+    day, with the plan's held-slot moves and ``plan_leads``; the executor queues the steps due
+    today (:func:`queue`), and the rest are drawn again on their day, as the live queue is
+    rebuilt on every run. ``moves`` is the three weeks' set either way. In a FAAB league a
+    step bids on its score (:func:`step_bids`). Three solves: the three weeks' set, the week's
+    set with its streaming plan, and the plans' search."""
+    drawn = draw_queue(built, fields)
+    three = drawn.three
+    solves = three.solves + 2
+    chosen = drawn.chosen
+    if chosen is None:
+        return replace(three, solves=solves)
+    steps = tuple(mv.Move(s.move.add, s.move.drop, s.day) for s in chosen.steps)
+    held = tuple(mv.held_used(built.problem, chosen.moves))
+    basis = three.basis
+    if basis is not None:
+        basis = replace(basis, plan=step_bids(chosen, drawn.weight))
+    led = Decision(three.moves, held, steps, solves, "exact", basis, plan_leads=True)
+    return named(built.problem, led)
 
 
 def _games(built: Built, member: mv.Member, from_day: date) -> int:
@@ -1122,7 +1384,7 @@ def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
     )
     basis = basis_of(built, plain, moves)
     held = tuple(mv.held_used(p, moves))
-    return Decision(tuple(moves), held, (), 1, "surrogate", basis, sends_of(p, moves))
+    return named(p, Decision(tuple(moves), held, (), 1, "surrogate", basis))
 
 
 def ranking(built: Built) -> Decision:
@@ -1148,6 +1410,17 @@ def ranking(built: Built) -> Decision:
     if not mv.feasible(p, (move,)):
         return Decision(source="ranking")
     return Decision((move,), (), (), 0, "ranking")
+
+
+def queue_refused(tier: str, executes: str) -> str | None:
+    """Why ``tier`` may not execute ``executes``; None when it may. The queue's rule (#172, PR
+    E) is the exact tier's: no other tier draws the week plans it chooses among."""
+    if executes == QUEUE and tier != "exact":
+        return (
+            f"executes {QUEUE!r} is the exact tier's: the {tier} tier draws no week plan for "
+            "the queue's rule to weigh"
+        )
+    return None
 
 
 def mark_past_guard(built: Built, decision: Decision) -> Decision:
@@ -1189,13 +1462,17 @@ def _decide(
     """The tier's decision on the day: the surrogate solves on its days only. On its other days
     it still names whom each of its held players sends when he comes back (:func:`sends_of`, PR
     G: no solve, the plan's charge with no move made), so a return on any morning finds the
-    seat's own choice. Under the arm's guard ``off`` (the guard PR) a set the season guard would
-    have refused is marked so (:func:`mark_past_guard`)."""
+    seat's own choice. ``queue`` is the exact tier's (:func:`queue_refused`, PR E). Under the
+    arm's guard ``off`` (the guard PR) a set the season guard would have refused is marked so
+    (:func:`mark_past_guard`)."""
+    why = queue_refused(tier, executes)
+    if why is not None:
+        raise ValueError(why)
     if tier == "exact":
         return mark_past_guard(built, exact(built, executes, with_plan, fields))
     if tier == "surrogate":
         if built.problem.first_day.weekday() not in fields.surrogate_days:
-            return Decision(source="surrogate", sends=sends_of(built.problem))
+            return named(built.problem, Decision(source="surrogate"))
         return mark_past_guard(built, surrogate(built, fields))
     if tier == "ranking":
         return ranking(built)
@@ -1333,6 +1610,7 @@ class Configured(Protocol):
     with_plan: bool
     execute_plan: bool
     knobs: Mapping[str, Any]
+    guard: str
 
 
 #: What else reads a knob in a FAAB run (#172, PR Fb), said in the refusal's message after
@@ -1368,15 +1646,20 @@ WHEN_READ: Mapping[str, str] = {
     "blend": "a run that names the two sources' stand-ins, on an arm whose system is blend",
     "horizon_weight": "the exact tier executing weighted",
     "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
-    "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
-    "plan_floor_points": "the exact tier drawing and executing the week plan in a points league",
+    "plan_floor_cats": (
+        "the exact tier drawing and executing the week plan, or executing queue, in a categories "
+        "league"
+    ),
+    "plan_floor_points": (
+        "the exact tier drawing and executing the week plan, or executing queue, in a points league"
+    ),
     "stash_threshold": (
         "the arm's own seat on the exact or the surrogate tier, whose searches refuse a "
         "returning player's drop the threshold keeps"
     ),
     "faab_sizing": "a seat that bids in a FAAB league: the exact or the surrogate tier (PR Fb)",
     "daily_cap": "the exact or the surrogate tier, which may queue more than one move a day",
-    "three_weight": "the queue's rule (PR E)",
+    "three_weight": "the exact tier executing queue",
     "season_weight": "the exact or the surrogate tier",
     "playoff_weight": (
         "a season_weight above 0 on the exact or the surrogate tier, in a league whose bracket "
@@ -1397,8 +1680,42 @@ STATIC = "a static seat makes no move"
 RANKING_STASH = (
     "the ranking tier does not search with the engine: its one swap is not held to the threshold"
 )
+#: Why ``three_weight`` is not read: on the exact tier executing another choice, and on any
+#: other tier (#172, PR E).
+NOT_QUEUE = "the arm does not execute queue"
+ONLY_QUEUE = "only the exact tier executing queue reads it"
+#: What the reads table says beside its rows for an arm that executes ``queue`` (PR E), by knob:
+#: where the season term stands in the queue's rule (:func:`read_notes`).
+QUEUE_SEASON = (
+    "under queue the season term is on the three weeks' set only; the week plans and the gate "
+    "that weighs them against the set are the engine's own score, without the term; the season "
+    "guard does not read the term and admits or refuses every plan all the same"
+)
+#: The same for a queue arm whose guard is ``off`` (the guard PR): the rule hands the engine no
+#: allowed set (:func:`draw_queue`), so the note must not say the guard still judges a plan.
+QUEUE_SEASON_OFF = (
+    "under queue the season term is on the three weeks' set only; the week plans and the gate "
+    "that weighs them against the set are the engine's own score, without the term; the arm's "
+    "guard is off, so the season guard refuses no set and no plan"
+)
 #: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
 NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"
+
+
+def _queue(arm: Configured) -> bool:
+    """Whether the arm's seat takes the queue's rule: the exact tier executing ``queue``."""
+    return arm.tier == "exact" and arm.executes == QUEUE
+
+
+def read_notes(arm: Configured) -> dict[str, str]:
+    """What the reads table says beside its rows for ``arm``, by knob (#172, PR E): for an arm
+    that takes the queue's rule, where its season term stands (:data:`QUEUE_SEASON`, or
+    :data:`QUEUE_SEASON_OFF` when the arm's guard is ``off``: the note never says the season
+    guard judges a plan the rule did not hand it); nothing for any other arm, whose record is
+    as it was."""
+    if not _queue(arm):
+        return {}
+    return {"season_weight": QUEUE_SEASON_OFF if arm.guard == OFF else QUEUE_SEASON}
 
 
 def _odds(arm: Configured, mirrored: bool) -> bool:
@@ -1432,16 +1749,19 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     # A seat bids by the live rule in a FAAB league on the exact or the surrogate tier, and so
     # does a mirror rival on the arm's knobs (PR Fb): its bid scales by the typical gain, which is
     # the plan floor until ten moves. The ranking tier holds no gain in the engine's units, so its
-    # claims bid $0 and it reads neither.
+    # claims bid $0 and it reads neither. Under the queue's rule (PR E) the floor is the gate a
+    # week plan must clear to take the queue (``plans.gate_floor``): the rule draws and executes
+    # its own plan, so the arm's two plan switches are not asked.
     bids = shape.waivers == "faab" and odds
+    queue = _queue(arm)
     for name, scoring in (("plan_floor_cats", "categories"), ("plan_floor_points", "points")):
         if bids and shape.scoring == scoring:
             why = READ
         elif arm.tier != "exact":
             why = "only the exact tier draws a week plan"
-        elif not arm.with_plan:
+        elif not queue and not arm.with_plan:
             why = "the arm draws no week plan"
-        elif not arm.execute_plan:
+        elif not queue and not arm.execute_plan:
             why = "the plan is drawn and not executed"
         elif shape.scoring != scoring:
             why = f"a {shape.scoring} league"
@@ -1452,7 +1772,11 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
         if why == READ and name == "plan_floor_cats" and shape.one_win:
             why = ONE_WIN_FLOOR
         out[name] = why
-    out["three_weight"] = "it weighs the three weeks in the queue's score: the queue's rule, PR E"
+    # The weight of the three weeks in the queue's score (PR E): the queue's rule alone reads it.
+    if queue:
+        out["three_weight"] = READ
+    else:
+        out["three_weight"] = NOT_QUEUE if arm.tier == "exact" else ONLY_QUEUE
     # The arm's own seat believes by its system once the run names the stand-ins; a mirror
     # rival holds the run's forecaster, so nothing more is read through it.
     if shape.standins:
@@ -1618,7 +1942,14 @@ def queue(
     setup: Setup | None = None,
 ) -> SimState:
     """The moves of ``decision`` that may land tomorrow, within the day's cap and the week's
-    adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans.
+    adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans
+    (:func:`gathered`, the one place they are gathered; the names of who leaves when a held
+    player comes back were made with the part of the same list that can land together,
+    :func:`named`, and the ones that match ``execute_plan`` are kept for the morning).
+    Under the queue's rule (PR E) a plan that leads (``decision.plan_leads``) is queued instead
+    of the set: its steps due tomorrow (:func:`due_by`), in the plan's order, and none of the
+    set's moves, whatever ``execute_plan``; a later step is not queued early, and the seat draws
+    its plan again tomorrow.
     With them the held-slot moves those moves need: the decision's, in order, one for each kept
     add that needs an active spot (no drop, or a churn's held drop) beyond the spots open today
     (``spots`` less the active roster; none when ``spots`` is None), as the engine pairs them.
@@ -1639,7 +1970,8 @@ def queue(
     on the team's dollars left today (open bids are not taken out, as live clamps to the budget
     Yahoo reports): by the live rule for a decision whose :class:`Basis` says so (:func:`live_bid`
     on the typical gain of the moves the seat recommended over the fortnight, today's
-    counted, as the live queue), by the market's rule for a market rival (:func:`rival_bid` on
+    counted, as the live queue: the three weeks' set's, also on a day a plan leads), by the
+    market's rule for a market rival (:func:`rival_bid` on
     the market rivals' typical gain over the fortnight before today, or with ``rival_bids``
     ``book``, PR Fd, ``bids.book_bid`` on the book at its move's rank among the market rivals'
     moves of that fortnight), and $0 for a decision without a basis. A free agent's add carries
@@ -1649,17 +1981,17 @@ def queue(
     nobody dropped lately it clears tomorrow, on a dropped player on his clear date, by the same
     rules; nothing is queued to land as a free agent."""
     tomorrow = state.day + timedelta(1)
-    moves = list(decision.moves)
+    # What the seat means to queue (:func:`gathered`): under the queue's rule a leading plan's
+    # steps and none of the set's moves. The set's gains stay the day's recommended moves' for
+    # the fortnight's typical gain (below).
+    moves, due = gathered(decision, execute_plan, lambda add: due_by(state, add, tomorrow))
     basis = decision.basis if setup is not None and setup.bidding else None
-    scaled = list(basis.gains) if basis is not None else [0.0] * len(moves)
-    if execute_plan:
-        due = [
-            (m, j)
-            for j, m in enumerate(decision.plan)
-            if m.day is None or m.day <= due_by(state, m.add, tomorrow)
-        ]
-        moves += [m for m, _ in due]
-        scaled += [basis.plan[j] if basis is not None and basis.plan else 0.0 for _, j in due]
+    if basis is None or decision.plan_leads:
+        scaled = [0.0] * len(moves)
+    else:
+        scaled = list(basis.gains)
+    moves += [m for m, _ in due]
+    scaled += [basis.plan[j] if basis is not None and basis.plan else 0.0 for _, j in due]
     waiting = setup is not None and setup.waiting
     continuous = setup is not None and setup.continuous
     used = int(state.adds_used.get(team, 0))
@@ -1759,10 +2091,15 @@ def queue(
         placed.append(Claim(mv.Move(m.add, m.drop), state.day, clears, number, (), churn, bid(i)))
     pending = dict(state.pending)
     pending[team] = tuple(kept)
-    # Whom the seat's returning held players send (PR G), for tomorrow morning alone.
+    # Whom the seat's returning held players send (PR G), for tomorrow morning alone: the
+    # names made with what was gathered above made (:func:`named`, PR E), the plan's steps
+    # beside the set when the arm executes its plan.
+    names = decision.sends
+    if execute_plan and decision.plan_sends is not None:
+        names = decision.plan_sends
     sends = {t: x for t, x in state.sends.items() if t != team}
-    if decision.sends:
-        sends[team] = decision.sends
+    if names:
+        sends[team] = names
     need = sum(1 for m in kept if m.drop is None or m.drop in held_keys)
     free = 0
     if spots is not None:
@@ -1826,8 +2163,10 @@ def _activate(
     none (a static, a market or a ranking seat), the rule before PR G: the least valuable active
     player by ``value`` leaves, the returning player included, a tie broken as the engine breaks
     it. The world reads no knob and no keep rule here: both reach the morning only through the
-    seat's own choice. It does not read the team's queue either: a named player a move queued
-    for this morning also drops leaves here, and that move then finds its drop gone
+    seat's own choice. It does not read the team's queue either, and need not for a named
+    player: the names are made with the queue made (:func:`named`, PR E), so none is the drop
+    of a move queued for this morning. The rule before is blind to the queue as it always was:
+    the player it sends can be a queued move's drop, and that move then finds its drop gone
     (:func:`land`). The players who left."""
     back: list[int] = []
     for i, (k, slot) in enumerate(roster):

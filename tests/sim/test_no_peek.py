@@ -16,12 +16,12 @@ import numpy as np
 import pytest
 
 from pickandroll.sim import belief as bf
-from pickandroll.sim import nopeek
+from pickandroll.sim import nopeek, policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import wk
 from pickandroll.sim.state import Member
 from tests.sim.draws import between
-from tests.sim.sim_league import arm
+from tests.sim.sim_league import arm, every_category
 
 FIRST = date(2024, 10, 22)  # a Tuesday; the calendar starts on the Monday before
 SLOTS = ("PG", "C", "Util", "BN")
@@ -195,6 +195,51 @@ def test_a_seats_days_through_the_day_do_not_depend_on_what_comes_after(league, 
     setup, lines, base, _ = league
     other = nopeek.perturb(lines, rn.game_days_of(setup), day, SEED)
     got, _ = records(setup, other)
+    assert set(got) == set(base)
+    first = nopeek.first_difference(base, got)
+    assert first is not None, "the change after the day reached no record: it tested nothing"
+    assert first[0] > day, f"a record on {first[0]} saw past {day}: {first[2]}"
+    same = [key for key in base if key[0] <= day]
+    assert same and all(base[key] == got[key] for key in same)
+
+
+def queue_records(setup, lines):
+    """The day records of a seat that executes the queue's rule (#172, PR E) in seat 1 among the
+    market, each day's digest, and the days its queue took a week plan. The arm's
+    ``three_weight`` is 0: the arm found whose queue takes a plan on this league
+    (``~/sim-notes/vm/scratch/e/probe7.py``). Its plan floor is away from 0, where a plan that
+    only ties its set is taken or not on a float's last bit (``sim_league.KNOBS``' note): the
+    league counts every category, so the queue's gate reads the knob."""
+    q = replace(
+        arm("Q", "exact", "market", three_weight=0.0, plan_floor_cats=0.01),
+        executes=policy.QUEUE,
+    )
+    got: dict[tuple[date, int], dict[str, str]] = {}
+    led: list[date] = []
+
+    def keep(r: rn.DayRecord) -> None:
+        got[(r.day, r.variant)] = nopeek.digest(r)
+        if r.decisions[1].plan_leads:
+            led.append(r.day)
+
+    w = rn.replay_world(setup, lines, 1, SEED, 0, WEIGHTS)
+    rn.simulate(setup, w, [{**rn.opponents_of(setup, q, 1), 1: q.seat()}], on_day=keep)
+    return got, led
+
+
+def test_a_seat_that_executes_queue_does_not_see_past_the_day(league):
+    """The check with an arm that executes ``queue``: the week plans, the gate and the plan's
+    steps read nothing dated after the day. Played on one of the days (a Thursday, mid-week, so
+    a plan drawn that week has days of it ahead); the queue takes a plan on days before it and
+    after it, so a peek could reach one. The league counts every category here: in its one-win
+    form the queue takes no plan on any day of this season, and the check would be of the set
+    alone, which the arms above are."""
+    setup, lines, _, _ = league
+    setup = every_category(setup)
+    day = DAYS[1]
+    base, led = queue_records(setup, lines)
+    assert any(d <= day for d in led) and any(d > day for d in led), led
+    got, _ = queue_records(setup, nopeek.perturb(lines, rn.game_days_of(setup), day, SEED))
     assert set(got) == set(base)
     first = nopeek.first_difference(base, got)
     assert first is not None, "the change after the day reached no record: it tested nothing"
