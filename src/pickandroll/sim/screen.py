@@ -40,7 +40,10 @@ from . import policy
 from . import run as rn
 from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 
-#: The screen's version in its record: 4 since PR E (``executes`` goes to each other choice,
+#: The screen's version in its record: 5 since PR F2 (seven rows more, the bid policy's levers,
+#: each a key of an arm's ``bid`` block, played on the surrogate tier and read only under FAAB;
+#: and one more count among those "did nothing" sets aside, the declaration's own), 4 since
+#: PR E (``executes`` goes to each other choice,
 #: ``three_weight`` is nudged under ``queue``, a plan floor is on the list twice, beside the set
 #: and under ``queue``, the plan is one lever, ``execute_plan`` with the plan drawn in both
 #: arms, and ``with_plan`` is off the list), 3 since the guard PR (two rows more, ``guard`` and
@@ -48,7 +51,7 @@ from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 #: construction between two arms, ``counts.APART_BY_CONSTRUCTION``), 2 since the stash
 #: threshold's lever (PR G: two rows more), 1 the list of PR H1. A change to the list, to a
 #: nudge or to a rule below is a new version, and a folder started under another is refused.
-SCREEN_VERSION = 4
+SCREEN_VERSION = 5
 #: What the Monday step multiplies a plan floor by (``season.hillclimb``'s plan rule, where the
 #: figure is written in the rule itself): the step up of the knob's own grid; the step down
 #: divides by it.

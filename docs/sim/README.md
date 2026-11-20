@@ -940,7 +940,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
   `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
-  the run's league rules ("The league shapes"). The payload (`replay_version` 17) keys by season
+  the run's league rules ("The league shapes"). The payload (`replay_version` 18) keys by season
   what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
@@ -1108,9 +1108,10 @@ table's row for the knob), while a league with held slots may move at any thresh
 included, on the mornings a returning held player forces a drop (the seat's plan names who
 leaves); 16 since the season guard as an arm's choice and the week's stake (the guard PR),
 its figures version 15's with neither named (the season scale's rows now say how many paths
-their ratio rests on, `paths_with_ratio`, in every run that has a scale); and 17 since the
+their ratio rests on, `paths_with_ratio`, in every run that has a scale); 17 since the
 queue's rule (PR E), its figures version 16's with no arm naming `queue` and none executing a
-streaming plan in a league with held slots.
+streaming plan in a league with held slots; and 18 since the bid policy (PR F2), its figures
+version 17's with no `bid` named (a FAAB run's counts gain three keys).
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -2447,7 +2448,9 @@ over the paths, not over the season's own chance.
 - Each pair is its own unit. When it ends its record is written to
   `data/sim/screens/<name>/<lever>-<nudge>.json`: the pair's record as `replay` writes it, with
   one `screen` block (the screen's name and version, the row, and its result).
-- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 4 (3 before
+- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 5 (4 before
+  the bid policy's seven rows joined the list and `value_won` joined the counts "did nothing"
+  sets aside; 3 before
   PR E's list: `executes` to each other choice, `three_weight` under `queue`, a plan floor
   twice, the plan as one lever and `with_plan` off it; 2 before the guard's and the stake's
   rows joined the list and the rule for "did nothing" set aside the counts that part by

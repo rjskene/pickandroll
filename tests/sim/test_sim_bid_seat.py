@@ -781,3 +781,15 @@ def test_a_run_s_record_names_an_arm_s_bid_and_one_without_has_no_key():
     )
     # The counts' notes say each of the three.
     assert all(ss.BIDS_NOTE[m] for m in ct.PACING)
+
+
+def test_the_replay_s_reason_says_the_bid_policy():
+    """The version's reason names what a reader of an older record must know: the block, who
+    bids by it, the three count keys a FAAB run gains, the knob that gains a reader, and that
+    with no ``bid`` named the figures are the version before's."""
+    why = ss.REPLAY_VERSION_WHY
+    assert ss.REPLAY_VERSION >= 18 and "18: the bid policy: " in why
+    mine = why.split("18: the bid policy: ")[1].split("17: the queue's rule: ")[0]
+    for said in ("bid block", "mirror rivals", "playoff_weight", "no stake", "a step", *ct.PACING):
+        assert said in mine, said
+    assert "with no bid named the figures are version 17's" in mine

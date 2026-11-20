@@ -1482,8 +1482,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 17 since the queue's rule (#172, PR E), 16 since the
-#: season guard as an arm's choice and the
+#: The replay's version in its payload: 18 since the bid policy (#172, PR F2), 17 since the
+#: queue's rule (#172, PR E), 16 since the season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
 #: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
 #: (PR Fd),
@@ -1501,8 +1501,20 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 17
+REPLAY_VERSION = 18
 REPLAY_VERSION_WHY = (
+    "18: the bid policy: an arm's spec may name a bid block; its seat on the exact or the "
+    "surrogate tier, and its mirror rivals, then bid in a FAAB league by a family of rules whose "
+    "default member is the live rule (the gain weighed over the week, the three weeks and the "
+    "season; a pace against a spending path; the routine dollar; a cap at the richest other "
+    "team's dollars left plus one; a shade at a quantile of the other teams' winning bids plus "
+    "one); a week plan's step keeps the live value, under the queue's rule too, where the "
+    "executor says which claim is a step; the bid reads the season figure with no stake; the "
+    "reads table has the block's row, playoff_weight is read by a seat that bids on an arm whose "
+    "bid weighs the season, and a plan floor is not read as a seat's typical gain where the bid "
+    "gives the three weeks no weight; a run whose arm names a block records it under bid; with no "
+    "bid named the figures are version 17's, and a FAAB run's counts gain three keys "
+    "(dollars_at_bracket, weeks_at_zero, value_won). "
     "17: the queue's rule: an exact arm's executes may name queue, the live queue's rule (the "
     "three weeks' set as three finds it, then the week plan the engine's plans.for_queue takes "
     "instead of it: the plan with the highest score that beats the set by the plan floor, the "
