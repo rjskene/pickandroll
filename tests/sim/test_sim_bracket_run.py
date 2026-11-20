@@ -773,14 +773,21 @@ def kinds():
     return out
 
 
+def kind_seed(kind: str) -> int:
+    """The seed :func:`kinds`' league ``kind`` is played on: 5, and 6 under the default waiver
+    rule. There only a dropped player waits, and (found paths) on seed 6 a finalist claims one
+    in the final, in both formats, by priority and by bid; on seed 5 no seat does."""
+    return 6 if kind.endswith(DROPPED) else 5
+
+
 @cache
 def kind_season(kind: str, format_: str, me: int):
     """One season of :func:`kinds`' league ``kind`` in ``format_``, team ``me`` weighing the week
-    among market rivals (seed 5): the setup, the result and the day records. Played once for
-    the tests below."""
+    among market rivals (on :func:`kind_seed`'s seed): the setup, the result and the day
+    records. Played once for the tests below."""
     setup = kinds()[kind]
     setup = setup if format_ == "one_win" else every_category(setup)
-    (res,), recs = played(setup, replay_of(setup, 5, 0), [weighing(setup, me)])
+    (res,), recs = played(setup, replay_of(setup, kind_seed(kind), 0), [weighing(setup, me)])
     return setup, res, recs
 
 
@@ -806,10 +813,12 @@ def test_a_round_under_every_league_rule_with_a_seat_that_reads_the_week(kind, f
     """A seat that weighs the week through a final, under each league rule and in each format:
     the audit, the bracket's rule read with the league's own, finds nothing; the final's pair is
     the season's end's, and the seat met its opponent there if it reached the final. Every seat
-    in turn (who reaches the final moves with who holds the seat). Under continuous waivers,
-    where every add is a claim, a seat places claims in the final (by priority, or with a sealed
-    bid); under the default rule only a dropped player waits, and on this path no seat claims
-    one in the final. About 3 s each."""
+    in turn (who reaches the final moves with who holds the seat). Under each of the four waiver
+    kinds a finalist places a claim in the final, by priority or with a sealed bid: under
+    continuous waivers every add is a claim; under the default rule only a dropped player
+    waits, and a finalist claims one (:func:`kind_seed`). A seat out of the final places none:
+    its last week is against nobody, and nothing is left to gain after it. The held-slots
+    league has no waivers and no claim. About 3 s each."""
     met = claimed = 0
     for me in (1, 2, 3, 4):
         setup, res, recs = kind_season(kind, format_, me)
@@ -819,28 +828,36 @@ def test_a_round_under_every_league_rule_with_a_seat_that_reads_the_week(kind, f
         last = max(day for day, _ in recs)
         ((pair,),) = end_pairs(res.result)
         assert recs[(last, 0)].state.seeded == {final.number: (pair,)}
-        claimed += len(final_claims(setup, recs, me))
+        placed = final_claims(setup, recs, me)
+        # A seat out of the final claims nothing in it: its last week is against nobody.
+        assert not placed or me in pair, (me, pair)
+        claimed += len(placed)
         if me in pair:
             (other,) = set(pair) - {me}
             state = recs[(final.start, 0)].state
             assert policy.week_view(setup, state, me, final.number).opponent == other
             met += 1
     assert met, "no seat reached the final"
-    assert (claimed > 0) == kind.endswith(CONTINUOUS), claimed
+    assert (claimed > 0) == (kind != "held"), claimed
 
 
 @pytest.mark.parametrize("format_", FORMATS)
-def test_a_weighted_sets_claims_in_the_seasons_last_week_bid_nothing(format_):
-    """A limit this PR brings into reach, pinned as it is (the README's sixth of a bracket
-    week): a set's claim bids on its move's own gain on the three weeks, whatever set the seat
-    executes (``policy.basis_of``), and in the season's last week the three weeks hold nothing.
-    So every claim of a weighted set there is sized on a gain of exactly 0.0 and bids $0,
-    whatever the week is worth against the round's opponent and whatever the seat has left; a
-    plan's step in the same week bids on its week gain (the plan's test above). Before this PR
-    the case was not met: the blind final gave the weighted set nothing to gain, and the seat
-    placed no claim there. FAAB under continuous waivers, each seat in turn (the seasons of the
-    test above); the blind double for the first seat that claims. About 1 s each."""
-    kind = f"faab-{CONTINUOUS}"
+@pytest.mark.parametrize("way", [CONTINUOUS, DROPPED])
+def test_a_weighted_sets_claims_in_the_seasons_last_week_bid_nothing(way, format_):
+    """A limit pinned as it is (the README's sixth of a bracket week): a set's claim bids on
+    its move's own gain on the three weeks, whatever set the seat executes
+    (``policy.basis_of``), and in the season's last week the three weeks hold nothing. So every
+    claim of a weighted set there is sized on a gain of exactly 0.0 and bids $0, whatever the
+    week is worth against the round's opponent and whatever the seat has left; a plan's step in
+    the same week bids on its week gain (the plan's test above). For a seat with no season
+    term, as here, this PR brings the case into reach: the blind final gave its weighted set
+    nothing to gain, and the seat placed no claim there. (A seat with a season term placed such
+    claims before this PR, on either set: the test below.) FAAB under both waiver rules, each
+    seat in turn (the seasons of the test above): under continuous waivers, where every add is
+    a claim, the same seats bid above $0 before the final; under the default rule the claim is
+    on a dropped player (:func:`kind_seed`). The blind double for the first seat that claims.
+    About 1 s each."""
+    kind = f"faab-{way}"
     seen, earlier = [], []
     for me in (1, 2, 3, 4):
         setup, _, recs = kind_season(kind, format_, me)
@@ -858,13 +875,65 @@ def test_a_weighted_sets_claims_in_the_seasons_last_week_bid_nothing(format_):
                 for claim in rec.claims.get(me, ())
             ]
     assert seen, "no weighted seat placed a claim in the final"
-    # The same seats bid above $0 before the final, on gains that were not 0.
-    assert max(earlier) > 0
+    if way == CONTINUOUS:
+        # The same seats bid above $0 before the final, on gains that were not 0.
+        assert max(earlier) > 0
     me = seen[0]
     setup, _, _ = kind_season(kind, format_, me)
-    _, before = played(setup, replay_of(setup, 5, 0), [weighing(setup, me)], blind=True)
+    w = replay_of(setup, kind_seed(kind), 0)
+    _, before = played(setup, w, [weighing(setup, me)], blind=True)
     final = setup.calendar.weeks[-1]
     assert not any(rec.claims.get(me) for (day, _), rec in before.items() if final.contains(day))
+
+
+#: The seats of the test below, each with a season term: the exact tier on each set it executes,
+#: and the surrogate. Tier and executed set.
+TERMED = {
+    "weighted": ("exact", policy.WEIGHTED),
+    "three": ("exact", policy.QUEUE_SET),
+    "surrogate": ("surrogate", policy.QUEUE_SET),
+}
+
+
+@pytest.mark.parametrize("format_", FORMATS)
+@pytest.mark.parametrize("seat", sorted(TERMED))
+def test_with_a_season_term_a_sets_claims_in_the_last_week_bid_nothing_blind_or_seeded(
+    seat, format_
+):
+    """The same limit for a seat with a season term, which is not this PR's: the term counts a
+    player's games to the season's last day (``policy.SeasonFigure``), so such a seat moves in
+    the last week on either set, with no opponent (the blind double, main's bracket week) as
+    with the final's; and its claims are sized as every set's are, on the three weeks' gain of
+    the plain evaluator, 0.0 there, so each bids $0 whatever the seat has left. The exact tier
+    on the weighted set and on the three weeks', and the surrogate; a seat that does not read
+    the week places the same claims blind and seeded. FAAB under continuous waivers, the
+    four-team final league, seat 2 among market rivals, ``season_weight`` 0.1, seed 6 (a found
+    path: the seat is a finalist and claims in the final in every case). About 1 s each, the
+    surrogate's 0.5 s."""
+    me = 2
+    setup = kinds()[f"faab-{CONTINUOUS}"]
+    setup = setup if format_ == "one_win" else every_category(setup)
+    final = setup.calendar.weeks[-1]
+    tier, executes = TERMED[seat]
+    termed = op.Seat("T", tier, {**KNOBS, "season_weight": 0.1}, executes, with_plan=False)
+    assert rn._reads_week(termed) == (seat == "weighted")
+    variant = {**weighing(setup, me), me: termed}
+    w = replay_of(setup, 6, 0)
+    claims = {}
+    for blind in (True, False):
+        (res,), recs = played(setup, w, [variant], blind=blind)
+        assert not res.breaches, (blind, res.breaches[:2])
+        placed = final_claims(setup, recs, me)
+        assert placed, f"no claim in the final ({'blind' if blind else 'seeded'})"
+        for claim, gain in placed:
+            assert gain == 0.0 and claim.bid == 0, (blind, claim)
+        state = recs[(final.start, 0)].state
+        assert state.dollars[me] > 0
+        # Blind, the last week has no opponent; seeded, the seat is a finalist and has one.
+        assert (policy.opponent_of(setup, state, me, final.number) is None) == blind
+        claims[blind] = [claim for claim, _ in placed]
+    if seat != "weighted":
+        assert claims[True] == claims[False]
 
 
 def points_league():
