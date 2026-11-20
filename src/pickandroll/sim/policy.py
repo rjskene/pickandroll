@@ -213,21 +213,33 @@ EXECUTIONS_FAAB = "free_agents_next_day_claims_by_sealed_bids"
 #: dropped player's clear date, by rolling priority or by sealed bids; no free agent.
 EXECUTIONS_CONTINUOUS_PRIORITY = "claims_only_by_priority"
 EXECUTIONS_CONTINUOUS_FAAB = "claims_only_by_sealed_bids"
+#: A same-day league's (#172, PR today): a free agent's add the day it is made, and in a waiver
+#: league a dropped player's by a claim as before. Under continuous waivers there is no free
+#: agent and the names are the claims' own.
+EXECUTIONS_SAME_DAY = "free_agents_same_day"
+EXECUTIONS_SAME_DAY_PRIORITY = "free_agents_same_day_claims_by_priority"
+EXECUTIONS_SAME_DAY_FAAB = "free_agents_same_day_claims_by_sealed_bids"
 
 
-def executions_of(waivers: str, rule: str = DROPPED) -> str:
+def executions_of(waivers: str, rule: str = DROPPED, same_day: bool = False) -> str:
     """The execution model a run's payload names under ``waivers`` (``shapes.WAIVERS``) and the
     waiver ``rule`` (``shapes.WAIVER_RULES``, PR Fc): the name it always had without waivers, a
-    name of its own for each kind of waivers, and under continuous waivers for each again."""
+    name of its own for each kind of waivers, and under continuous waivers for each again; in a
+    ``same_day`` league (PR today, ``LeagueRules.same_day``; never under continuous waivers) a
+    name of its own for each again."""
     if waivers == "none":
-        return EXECUTIONS
+        return EXECUTIONS_SAME_DAY if same_day else EXECUTIONS
     if rule == CONTINUOUS:
         return EXECUTIONS_CONTINUOUS_FAAB if waivers == "faab" else EXECUTIONS_CONTINUOUS_PRIORITY
+    if same_day:
+        return EXECUTIONS_SAME_DAY_FAAB if waivers == "faab" else EXECUTIONS_SAME_DAY_PRIORITY
     return EXECUTIONS_FAAB if waivers == "faab" else EXECUTIONS_PRIORITY
 
 
 #: A decided move lands this long after it is made: it takes effect then, and is charged to the
 #: week of the day it is made, as Yahoo charges a free-agent add (never the week it lands in).
+#: In a same-day league (PR today, ``Setup.same_day``) a free agent's add lands the day it is
+#: made (``Setup.lands_after``); a claim keeps its own day under either rule.
 LANDS_AFTER = timedelta(1)
 #: The live moves route's figures (``api.season_moves``): the candidates the recommended set is
 #: searched among and the least gain a move must add. They, the weeks ahead and the surrogate's
@@ -428,6 +440,10 @@ class Built:
     guard: str = BLOCK
     stake: float = 0.0
     level: float = 0.0
+    #: How long after it is made a free agent's add plays (``Setup.lands_after``, PR today): a
+    #: day, or none in a same-day league. The surrogate and the ranking tier count a
+    #: candidate's games from then.
+    lands: timedelta = LANDS_AFTER
 
 
 #: How a decision's claims bid in a FAAB league (#172, PR Fb): by the live rule
@@ -642,8 +658,10 @@ def distinct(listed: Iterable[mv.Move]) -> list[mv.Move]:
 def due_on(problem: mv.MoveProblem) -> Callable[[int], date]:
     """:func:`due_by` as the seat's problem holds it: each candidate's effective day
     (``MoveProblem.effective``, which :func:`problem_of` sets by the same reading of the state
-    the executor then queues on: tomorrow, or his clear date when he is on waivers and it is
-    later). What :func:`named` hands :func:`gathered`, where the executor hands it the state's."""
+    the executor then queues on: tomorrow, today for a free agent in a same-day league (PR
+    today), or his clear date when he is on waivers and it is later). What :func:`named` hands
+    :func:`gathered`, where the executor hands it the state's. An add the problem does not hold
+    (no plan's step names one) would be due tomorrow."""
     tomorrow = problem.first_day + LANDS_AFTER
     return lambda add: problem.effective.get(add, tomorrow)
 
@@ -1075,11 +1093,20 @@ def problem_of(
     # those on waivers are ``claims`` (#221: a churn on one is offered only when the held player
     # is worth nothing net of his return), as the live build marks the wire's "W". Under
     # continuous waivers (PR Fc) every candidate is a claim, as every entry of the live queue is
-    # a waiver entry in such a league; one nobody dropped lately clears tomorrow.
-    effective_day = day + LANDS_AFTER
+    # a waiver entry in such a league; one nobody dropped lately clears tomorrow. In a same-day
+    # league (PR today) a free agent's move takes effect today, as the live build sets a free
+    # agent's ``effective`` to its first day; a claim's day is as before.
+    claim_day = day + LANDS_AFTER
+    free_day = day + setup.lands_after
     candidates = tuple(members_of(setup, sorted(k for k in state.pool if k in beliefs), status))
     effective = {
-        k: max(effective_day, state.waivers[k].clears) if k in state.waivers else effective_day
+        k: (
+            max(claim_day, state.waivers[k].clears)
+            if k in state.waivers
+            else claim_day
+            if setup.continuous
+            else free_day
+        )
         for k, _ in candidates
     }
     claims = frozenset(k for k, _ in candidates if setup.continuous or k in state.waivers)
@@ -1088,11 +1115,15 @@ def problem_of(
     # The engine charges a move to the week its day falls in, and a move's day here is the day
     # it lands, one after it is made. So each week's window is its days shifted by the lag: a
     # move made on Sunday lands Monday and spends the ending week's adds, as on Yahoo. This
-    # week's window opens today, so a plan step dated today is charged here too.
+    # week's window opens today, so a plan step dated today is charged here too. In a same-day
+    # league (PR today) a free agent's add lands the day it is made, so the windows are the
+    # weeks' own days, as the live build's are (a claim that clears on a week's first morning
+    # is then weighed against that week's adds; the executor charges it to the week before).
+    shift = setup.lands_after
     limits = tuple(
         mv.AddLimit(
-            day if i == 0 else w.start + LANDS_AFTER,
-            w.end + LANDS_AFTER,
+            day if i == 0 else w.start + shift,
+            w.end + shift,
             None if limit is None else (max(0, limit - used) if i == 0 else limit),
         )
         for i, w in enumerate(weeks)
@@ -1154,7 +1185,16 @@ def problem_of(
     scorer = wk.scorer_of(beliefs, cats, points, pool_n)
     weeks_left = sum(1 for w in setup.calendar.weeks if w.number > this.number)
     return Built(
-        problem, rule, scorer, this, weeks_left, knobs, me, bracket_days(setup), setup.bidding
+        problem,
+        rule,
+        scorer,
+        this,
+        weeks_left,
+        knobs,
+        me,
+        bracket_days(setup),
+        setup.bidding,
+        lands=setup.lands_after,
     )
 
 
@@ -1741,7 +1781,7 @@ def _games(built: Built, member: mv.Member, from_day: date) -> int:
 def _surrogate_pool(built: Built, fields: Fields) -> list[int]:
     """The surrogate's candidates: the best ``pool`` by value times games this week."""
     p = built.problem
-    start = p.first_day + timedelta(1)
+    start = p.first_day + built.lands
     ranked = sorted(
         p.candidates,
         key=lambda m: (-p.value.get(m[0], 0.0) * max(1, _games(built, m, start)), m[0]),
@@ -1777,7 +1817,7 @@ def ranking(built: Built) -> Decision:
     p = built.problem
     if p.stash_threshold is not None:
         p = replace(p, stash_threshold=None)
-    start = p.first_day + timedelta(1)
+    start = p.first_day + built.lands
 
     def worth(m: mv.Member) -> float:
         return p.value.get(m[0], 0.0) * _games(built, m, start)
@@ -2381,12 +2421,15 @@ ALREADY_CLAIMED = "ALREADY_CLAIMED"
 NO_ADDS = "NO_ADDS"
 
 
-def due_by(state: SimState, add: int, tomorrow: date) -> date:
-    """The latest day a plan's step of ``add`` may be dated to be queued today: tomorrow, or a
-    claim's clear date (the autopilot places a claim step dated at or before the day it would
-    clear when placed today, ``autopilot._today``)."""
+def due_by(state: SimState, add: int, tomorrow: date, lands: date | None = None) -> date:
+    """The latest day a plan's step of ``add`` may be dated to be queued today: the day a free
+    agent's add lands (``lands``: tomorrow, or today in a same-day league, PR today; tomorrow
+    when None), or a claim's clear date (the autopilot places a claim step dated at or before the
+    day it would clear when placed today, ``autopilot._today``)."""
     wait = state.waivers.get(add)
-    return tomorrow if wait is None else max(tomorrow, wait.clears)
+    if wait is None:
+        return tomorrow if lands is None else lands
+    return max(tomorrow, wait.clears)
 
 
 def queue(
@@ -2440,12 +2483,17 @@ def queue(
 
     Under continuous waivers (``setup.continuous``, PR Fc) every add is a claim: on a player
     nobody dropped lately it clears tomorrow, on a dropped player on his clear date, by the same
-    rules; nothing is queued to land as a free agent."""
+    rules; nothing is queued to land as a free agent.
+
+    In a same-day league (``setup.same_day``, PR today) a free agent's add queued today lands
+    today, once every seat has decided (``run.simulate``), and a plan's step of a free agent is
+    due today; a claim is placed as before."""
     tomorrow = state.day + timedelta(1)
+    lands = state.day + setup.lands_after if setup is not None else tomorrow
     # What the seat means to queue (:func:`gathered`): under the queue's rule a leading plan's
     # steps and none of the set's moves. The set's gains stay the day's recommended moves' for
     # the fortnight's typical gain (below).
-    moves, due = gathered(decision, execute_plan, lambda add: due_by(state, add, tomorrow))
+    moves, due = gathered(decision, execute_plan, lambda add: due_by(state, add, tomorrow, lands))
     basis = decision.basis if setup is not None and setup.bidding else None
     if basis is None or decision.plan_leads:
         scaled = [0.0] * len(moves)

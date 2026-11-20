@@ -347,6 +347,20 @@ WAIVER_RULES = (DROPPED, CONTINUOUS)
 #: writes from the public leagues' winning bids (``bids.book_bid``).
 ASSUMED, BOOK = "assumed", "book"
 RIVAL_BIDS = (ASSUMED, BOOK)
+#: When a league's free-agent add plays (#172, PR today), by the engine's own word for a league's
+#: lineup rule (``season.state.SeasonSettings.lineup_from``, Yahoo's "Daily - Tomorrow" and
+#: "Daily - Today"): ``tomorrow``, a free agent's add lands the morning after it is made and his
+#: first line for his new team is that day's (the default, every PR's league before this one);
+#: ``today``, it lands the day it is made, before that day's lineups, and his line of that day is
+#: his new team's. A claim is decided as before under either: on a dropped player's clear date,
+#: or under continuous waivers the next morning, so there the rule moves nothing.
+TOMORROW, TODAY = "tomorrow", "today"
+LINEUP_FROM = (TOMORROW, TODAY)
+#: Each lineup rule in words, for the label.
+LINEUP_WORDS: Mapping[str, str] = {
+    TOMORROW: "a free agent's add plays the next day",
+    TODAY: "a free agent's add plays the same day",
+}
 
 
 def _number(x: float) -> str:
@@ -373,9 +387,10 @@ class LeagueRules:
     format ``h2h`` (one of :data:`H2H`, ``one_win`` by default; a points league holds the default
     and names none); a waiver league's ``waiver_rule`` (one of :data:`WAIVER_RULES`, ``dropped``
     by default, named only with waivers, PR Fc); a FAAB league's ``rival_bids`` (one of
-    :data:`RIVAL_BIDS`, ``assumed`` by default, named only with ``faab``, PR Fd). One set for
-    every path of a run, never a grid axis; :data:`PLAIN` is today's league. ValueError, in
-    words, on anything else."""
+    :data:`RIVAL_BIDS`, ``assumed`` by default, named only with ``faab``, PR Fd); when a free
+    agent's add plays, ``lineup_from`` (one of :data:`LINEUP_FROM`, ``tomorrow`` by default, PR
+    today). One set for every path of a run, never a grid axis; :data:`PLAIN` is today's league.
+    ValueError, in words, on anything else."""
 
     scoring: str = "categories"
     points: tuple[tuple[str, float], ...] | None = None
@@ -387,6 +402,7 @@ class LeagueRules:
     h2h: str = ONE_WIN
     waiver_rule: str = DROPPED
     rival_bids: str = ASSUMED
+    lineup_from: str = TOMORROW
     #: The book's prices under ``rival_bids`` ``book`` (``bids.prices_of``), read by the command
     #: and handed to each path's ``Setup``: data, not a rule, so never in the label or the record
     #: (the record names the book's file and hash).
@@ -398,6 +414,10 @@ class LeagueRules:
         self._check_h2h()
         self._check_waiver_rule()
         self._check_rival_bids()
+        if self.lineup_from not in LINEUP_FROM:
+            raise ValueError(
+                f"lineup rule {self.lineup_from!r} is not one of {', '.join(LINEUP_FROM)}"
+            )
 
     def _check_rival_bids(self) -> None:
         kind = self.rival_bids
@@ -509,6 +529,9 @@ class LeagueRules:
         # today's league stays what it was. A league that counts every category says so.
         if self.h2h != ONE_WIN:
             scoring = f"{scoring}, {H2H_WORDS[self.h2h]}"
+        # The default lineup rule goes unsaid too (PR today); a same-day league says so.
+        if self.lineup_from == TODAY:
+            held = f"{held}, {LINEUP_WORDS[TODAY]}"
         if not self.waiting:
             return f"{scoring}, {held}"
         days = f"{self.waiver_days} day{'s' if self.waiver_days > 1 else ''}"
@@ -541,6 +564,13 @@ class LeagueRules:
         return self.waiting and self.waiver_rule == CONTINUOUS
 
     @property
+    def same_day(self) -> bool:
+        """Whether a free agent's add plays the day it is made (PR today): ``lineup_from``
+        ``today`` in a league that has free agents. Under continuous waivers every add is a
+        claim, so the rule moves nothing there."""
+        return self.lineup_from == TODAY and not self.continuous
+
+    @property
     def one_win(self) -> bool:
         """Whether a week is one result in the standings and a seat weighs the matchup's odds: a
         categories league of the ``one_win`` format (a points league's measure is its own)."""
@@ -552,7 +582,8 @@ class LeagueRules:
         waiver days and waiver rule (PR Fc), and in a FAAB league its budget, the rivals' bid
         scale and how the rivals bid (PR Fd; a league without waivers records the keys it did
         before PR Fa, and one by priority those it did before PR Fb, the format's and the rule's
-        beside them)."""
+        beside them); and ``lineup_from`` when it is ``today`` (PR today): a league of the default
+        rule records the keys it did before it."""
         out: dict[str, Any] = {
             "scoring": self.scoring,
             "points": self.table,
@@ -572,6 +603,8 @@ class LeagueRules:
                 "rival_scale": float(self.rival_scale),
                 "rival_bids": self.rival_bids,
             }
+        if self.lineup_from != TOMORROW:
+            out["lineup_from"] = self.lineup_from
         return out
 
     def slots(self, roster: tuple[str, ...]) -> tuple[str, ...]:
@@ -702,6 +735,18 @@ def parse_waiver_rule(waivers: str, rule: str | None) -> str:
     return kind
 
 
+def parse_lineup_from(rule: str | None) -> str:
+    """The lineup rule ``replay --lineup-from`` names (#172, PR today): ``tomorrow`` (the default
+    when not named) or ``today``, in any league (under continuous waivers ``today`` moves
+    nothing: every add is a claim). ValueError, in words, on anything else."""
+    if rule is None:
+        return TOMORROW
+    kind = rule.strip().lower()
+    if kind not in LINEUP_FROM:
+        raise ValueError(f"--lineup-from {rule}: one of {', '.join(LINEUP_FROM)}")
+    return kind
+
+
 def parse_rival_bids(waivers: str, kind: str | None) -> str:
     """How the market rivals bid, as ``replay --rival-bids`` names it (#172, PR Fd): ``assumed``
     (the default when not named) or ``book``, named only with ``--waivers faab`` (``waivers`` as
@@ -765,6 +810,8 @@ __all__ = [
     "H2H_WORDS",
     "HELD_MOST",
     "LEAGUE_KEYS",
+    "LINEUP_FROM",
+    "LINEUP_WORDS",
     "PLAIN",
     "POINTS_DEFAULT",
     "RIVAL_BIDS",
@@ -772,6 +819,8 @@ __all__ = [
     "SCORINGS",
     "SLOTS",
     "STRIDE",
+    "TODAY",
+    "TOMORROW",
     "VISIT_RULE",
     "WAIVERS",
     "WAIVER_DAYS",
@@ -788,6 +837,7 @@ __all__ = [
     "parse_h2h",
     "parse_held",
     "parse_league",
+    "parse_lineup_from",
     "parse_points",
     "parse_rival_bids",
     "parse_waiver_rule",

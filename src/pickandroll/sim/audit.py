@@ -11,7 +11,9 @@ Fa, :func:`rules_of`): a run without waivers reads only :data:`RULES`. A FAAB le
 held to the wait and :data:`BID_RULES` instead: its claims go by bid, not by priority alone. A
 league under continuous waivers (PR Fc) is held to :data:`CLAIMS_ONLY` after them: every add is a
 claim. A league whose bracket is read and has a round (PR bracket, :func:`has_round`) is held to
-:data:`BRACKET_PAIRS` after :data:`RULES`: the round's pairs a state holds are the league's.
+:data:`BRACKET_PAIRS` after :data:`RULES`: the round's pairs a state holds are the league's. A
+same-day league (PR today, ``Setup.same_day``) is held to :data:`LANDS_SAME_DAY` in the place of
+``lands_next_day``: a free agent's add lands the day it is decided.
 
 A breach voids its path: the runner records it (:class:`Breach`), the commands leave the path out
 of every aggregate, list the breaches in the payload and exit non-zero after writing. Nothing is
@@ -46,6 +48,10 @@ class Day:
     state: SimState
     status: Mapping[int, str | None]
     starters: Mapping[int, Mapping[int, str]]
+    #: A same-day league's (PR today): the state once every seat had decided and queued, before
+    #: the day's free-agent adds landed (``state`` is after them, its queue empty). None in a
+    #: league of the default rule.
+    decided: SimState | None = None
 
 
 @dataclass(frozen=True)
@@ -152,6 +158,45 @@ def lands_next_day(setup: Setup, today: Day, before: Day | None) -> Found:
         for k, _ in roster:
             if k not in had and k not in due:
                 yield team, f"player {k} joined without a move queued the day before"
+
+
+def lands_same_day(setup: Setup, today: Day, before: Day | None) -> Found:
+    """A same-day league's rule (PR today), in the place of :func:`lands_next_day`: a free
+    agent's add decided on day d lands on d, and a claim on its clear date as before. Every
+    player who joined a roster today is the add of a move the same team queued today
+    (``Day.decided``'s queue) or of a claim it had open the day before whose player clears
+    today; each move queued today whose add is not on the team's roster was lost at the day's
+    landing (counted in the team's ``gone_by`` there: an earlier team of the rotation took
+    him, his drop had gone, or no spot was open); and a player a move that landed today
+    dropped starts nowhere for that team today, so no line of his day is credited to the team
+    that let him go."""
+    was = _rosters_before(setup, before)
+    decided = today.decided
+    queued = {} if decided is None else decided.pending
+    claims = {} if before is None else before.state.claims
+    for team, roster in sorted(today.state.rosters.items()):
+        had = {k for k, _ in was.get(team, ())}
+        due = {m.add for m in queued.get(team, ())} | {
+            c.move.add for c in claims.get(team, ()) if c.clears <= today.day
+        }
+        for k, _ in roster:
+            if k not in had and k not in due:
+                yield team, f"player {k} joined without a move queued today or a claim clearing"
+    if decided is None:
+        return
+    for team in setup.teams:
+        moves = queued.get(team, ())
+        if not moves:
+            continue
+        on = {k for k, _ in today.state.rosters.get(team, ())}
+        absent = sum(1 for m in moves if m.add not in on)
+        lost = int(today.state.gone_by.get(team, 0)) - int(decided.gone_by.get(team, 0))
+        if absent != lost:
+            yield team, f"{absent} of today's adds not on the roster, {lost} lost at the landing"
+        starters = today.starters.get(team, {})
+        for m in moves:
+            if m.add in on and m.drop is not None and m.drop in starters:
+                yield team, f"player {m.drop} starts the day his drop landed"
 
 
 def held_kind(setup: Setup, today: Day, before: Day | None) -> Found:
@@ -404,6 +449,14 @@ BID_RULES: tuple[Rule, ...] = (
 )
 
 
+#: A same-day league's landing rule (PR today), in the place of ``lands_next_day``.
+LANDS_SAME_DAY = Rule(
+    "lands_same_day",
+    lands_same_day,
+    "a free agent's add decided on day d lands on d or is lost there, a claim on its clear date",
+)
+
+
 #: A league's rule under continuous waivers (PR Fc), after its waivers' rules.
 CLAIMS_ONLY = Rule(
     "claims_only", claims_only, "nobody joins a roster but by a claim won that morning"
@@ -424,14 +477,23 @@ def has_round(setup: Setup) -> bool:
     return setup.spec is not None and bool(lg.round_weeks(setup.spec))
 
 
-def rules_of(waivers: str = "none", rule: str = DROPPED, bracket: bool = False) -> tuple[Rule, ...]:
+def rules_of(
+    waivers: str = "none", rule: str = DROPPED, bracket: bool = False, same_day: bool = False
+) -> tuple[Rule, ...]:
     """The rules a run under ``waivers`` (``shapes.WAIVERS``) and the waiver ``rule``
-    (``shapes.WAIVER_RULES``, PR Fc) is held to: :data:`RULES`; then :data:`BRACKET_PAIRS` when
-    the league's ``bracket`` is read and has a round (PR bracket, :func:`has_round`; False by
-    default, so a caller that names no bracket reads the rules as before); and after them
-    :data:`WAIVER_RULES` in a league by priority, or the wait and :data:`BID_RULES` in a FAAB
-    league, and :data:`CLAIMS_ONLY` last under continuous waivers."""
-    base = (*RULES, BRACKET_PAIRS) if bracket else RULES
+    (``shapes.WAIVER_RULES``, PR Fc) is held to: :data:`RULES`, with :data:`LANDS_SAME_DAY` in
+    the place of ``lands_next_day`` in a ``same_day`` league (PR today, ``Setup.same_day``;
+    False by default); then :data:`BRACKET_PAIRS` when the league's ``bracket`` is read and has
+    a round (PR bracket, :func:`has_round`; False by default, so a caller that names no bracket
+    reads the rules as before); and after them :data:`WAIVER_RULES` in a league by priority, or
+    the wait and :data:`BID_RULES` in a FAAB league, and :data:`CLAIMS_ONLY` last under
+    continuous waivers."""
+    own = (
+        tuple(LANDS_SAME_DAY if r.name == "lands_next_day" else r for r in RULES)
+        if same_day
+        else RULES
+    )
+    base = (*own, BRACKET_PAIRS) if bracket else own
     if waivers == "none":
         return base
     more = (CLAIMS_ONLY,) if rule == CONTINUOUS else ()
@@ -447,7 +509,7 @@ class Auditor:
 
     def __init__(self, setup: Setup, rules: Sequence[Rule] | None = None, path: int | None = None):
         self.setup = setup
-        own = rules_of(setup.waivers, setup.waiver_rule, has_round(setup))
+        own = rules_of(setup.waivers, setup.waiver_rule, has_round(setup), setup.same_day)
         self.rules = tuple(own if rules is None else rules)
         self.path = path
         self.breaches: list[Breach] = []
