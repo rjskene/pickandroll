@@ -138,7 +138,7 @@ def test_every_flag_of_a_run_s_cells_and_world_is_a_key_of_the_screen_s_spec():
 
 def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: Path, whole):
     rec, out = whole
-    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 2)
+    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 3)
     assert rec["note"] == ss.SCREEN_NOTE and rec["rule"] == sc.RULE
     assert rec["measure"] == "matchup_wins" and rec["hold_out"] == 2025
     assert len(rec["fit_sha"]) == 64 and rec["fit_file"].endswith("fit.json")
@@ -150,7 +150,7 @@ def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: 
     }
     # The spec: the baseline verbatim, the levers in the list's order, the world's flags.
     spec = rec["spec"]
-    assert spec["arm"] == BASE and spec["screen_version"] == 2 and spec["fit_sha"] == rec["fit_sha"]
+    assert spec["arm"] == BASE and spec["screen_version"] == 3 and spec["fit_sha"] == rec["fit_sha"]
     assert spec["replay_version"] == ss.REPLAY_VERSION
     assert set(spec) == {"screen_version", "replay_version", "arm", "levers", "world", "fit_sha"}
     assert spec["levers"] == ["protection_floor", "weeks_ahead", "surrogate_days", "system"]
@@ -214,7 +214,10 @@ def test_a_lever_that_cannot_matter_did_nothing_and_one_that_can_moved_the_count
     cell = idle["cells"]["2024"]["prior"]
     assert all(d["mean"] == 0.0 for d in cell["difference"].values() if d["mean"] is not None)
     assert cell["counts"]["a"] == cell["counts"]["b"]
-    assert "did nothing (both arms' counts and outcomes are equal on every path)" in whole[1]
+    assert (
+        "did nothing (both arms' counts and outcomes are equal on every path, less the counts "
+        "that part by construction between two arms): "
+    ) in whole[1]
     moved = rows["surrogate_days-monday"]["result"]
     assert not moved["did_nothing"] and not moved["counts_equal"]
     counts = moved["cells"]["2024"]["prior"]["counts"]
@@ -235,7 +238,7 @@ def test_a_pair_s_record_is_a_replay_s_with_one_screen_block(data: Path, whole):
     row = rows_of(rec)["surrogate_days-monday"]
     assert got["screen"] == {
         "name": "whole",
-        "screen_version": 2,
+        "screen_version": 3,
         **{k: v for k, v in row.items() if k != "file"},
     }
     assert got["screen"]["both"] == {} and got["screen"]["tier"] == "surrogate"

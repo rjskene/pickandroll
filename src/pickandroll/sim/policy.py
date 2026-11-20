@@ -98,6 +98,18 @@ is over its spots; with no name, or one who is not on the roster, the least valu
 leaves, as before. The world reads neither the knob nor the keep rule. The day's choice of an
 activation's drop (``moves.choose_activation``, #360) is not made here: no problem a seat decides
 on holds a cleared player.
+
+**The guard and the stake** (the guard PR, an arm's two season fields, :data:`SEASON_FIELDS`).
+``guard`` is ``block`` (the default: the engine's season guard on every search of the tier, as
+live) or ``off`` (no search of the tier is handed an allowed set, :func:`allowed_of`; what holds
+a set back is the season term alone). ``stake``, 0 to 1 (0 by default), moves the season term's
+weight from the season after the running week to that week as the week's stake grows: the term
+is ``season_weight x (this week's part + (1 - stake x L) x the rest)``, the season figure split
+at the running week's last day (:func:`later_share`, :class:`StakedFigure`;
+:func:`season_figure_of` is the one place every reader of the term takes its figure), ``L`` the
+week's stake for the seat from the finished weeks' standings (``sim/stake.py``). Both are the
+arm's own seat's (:func:`guarded`): a rival, a mirror too, stays on the block and reads no
+stake. With neither named nothing moves.
 """
 
 from __future__ import annotations
@@ -130,6 +142,7 @@ from .engine import (
 )
 from .league import fpts
 from .shapes import BOOK, CONTINUOUS, DROPPED
+from .stake import level as week_stake
 from .state import (
     BENCH,
     FAILED,
@@ -187,6 +200,14 @@ TIERS = ("exact", "surrogate", "ranking")
 SURROGATE_DAYS = (0, 3)
 #: An absence read without a return date is taken to last this long (``moves.SHORT_ABSENCE_DAYS``).
 DEFAULT_ABSENCE_DAYS = mv.SHORT_ABSENCE_DAYS
+#: An arm's guard (#172, the guard PR): ``block``, the season guard on every search of its tier
+#: (live's hard block, the default); ``off``, no block: a set that loses on the rest of the
+#: season may be queued, and what holds it back is the season term at the arm's season weight.
+BLOCK, OFF = "block", "off"
+GUARDS = (BLOCK, OFF)
+#: The tiers that search sets under the season guard and hold odds for a season term: the only
+#: ones that read an arm's guard or its stake.
+GUARDED_TIERS = ("exact", "surrogate")
 
 
 #: The simulator's own knobs (#172, PR C): the season term's weight, and the weight of a game in
@@ -335,6 +356,13 @@ class Built:
     #: Whether a claim carries a bid: a FAAB league (PR Fb). The tiers that bid then give their
     #: decision a :class:`Basis`.
     bids: bool = False
+    #: The seat's guard, its stake and the week's stake ``L`` for it (the guard PR,
+    #: :func:`guarded`): the block, no stake and no ``L`` unless the arm's seat says otherwise.
+    #: E reads ``guard`` through :func:`allowed_of`; every reader of the season term reads
+    #: ``stake`` and ``level`` through :func:`later_share` (:func:`season_figure_of`).
+    guard: str = BLOCK
+    stake: float = 0.0
+    level: float = 0.0
 
 
 #: How a decision's claims bid in a FAAB league (#172, PR Fb): by the live rule
@@ -387,6 +415,9 @@ class Decision:
     #: The seat's players the engine read as returning on the day (PR G, :func:`returning_of`),
     #: for the count of those it then drops; a tier's decision made by :func:`decide` has it.
     returning: frozenset[int] = frozenset()
+    #: Whether its set is one the season guard would have refused (the guard PR): only a seat
+    #: whose guard is ``off`` decides one (:func:`mark_past_guard`). A count, read by no decision.
+    past_guard: bool = False
 
 
 NONE = Decision()
@@ -758,6 +789,47 @@ def guard_of(built: Built) -> mv.Allowed:
     return mv.season_guard(ros_of(built))
 
 
+def allowed_of(built: Built) -> mv.Allowed | None:
+    """The allowed set every search of a tier is handed (the guard PR), the one place a tier
+    takes it: the season guard (:func:`guard_of`) under ``block``, none under ``off`` (the
+    engine's searches then test feasibility alone)."""
+    return guard_of(built) if built.guard == BLOCK else None
+
+
+def stake_unread(setup: Setup) -> str:
+    """Why no seat reads a stake in ``setup``, a league whose bracket is not read."""
+    return (
+        "a stake reads the cut line and the bracket's weeks, and this league's bracket is not "
+        f"read ({setup.bracket_unread or 'no spec'}): the bracket is not trusted"
+    )
+
+
+def stake_of(setup: Setup, state: SimState, team: int, week: int) -> float:
+    """``L``, the stake of week ``week`` for ``team`` (``sim/stake.py``): the runner's figure for
+    the week when the state holds one (``SimState.stakes``, set once a week), else the same
+    function of the state's finished weeks. A league whose bracket is not read has no cut line
+    and no bracket's weeks to trust: refused by name (ValueError)."""
+    if setup.spec is None:
+        raise ValueError(stake_unread(setup))
+    held = state.stakes.get(team)
+    return week_stake(setup.spec, state.totals, team, week) if held is None else held
+
+
+def guarded(
+    built: Built, setup: Setup, state: SimState, guard: str = BLOCK, stake: float = 0.0
+) -> Built:
+    """``built`` as an arm's seat with ``guard`` and ``stake`` decides on it (the guard PR): its
+    guard, its stake and, at a stake above 0, the week's ``L`` for the seat (:func:`stake_of`).
+    At the defaults ``built`` itself: a seat that names neither, a rival and a mirror decide as
+    before."""
+    if guard not in GUARDS:
+        raise ValueError(f"guard {guard!r}: one of {', '.join(GUARDS)}")
+    if guard == BLOCK and not stake > 0:
+        return built
+    level = stake_of(setup, state, built.team, built.week.number) if stake > 0 else 0.0
+    return replace(built, guard=guard, stake=float(stake), level=level)
+
+
 # --------------------------------------------------------------------------- the season term
 class SeasonFigure:
     """``ROS_w``, the season term's figure (#172, PR C), on one problem at one ``playoff_weight``.
@@ -862,14 +934,66 @@ class Seasoned:
         return self.value(key, moves) - self.base[key]
 
 
+def later_share(built: Built) -> float:
+    """``1 - stake x L``: how many times the season term counts a game after the running week
+    on ``built``'s day (the guard PR), the one function every reader of the stake in force
+    calls; ``L`` is the week's stake for the seat (``Built.level``, 0 to 1). 1 at ``stake`` 0
+    and in a week whose stake is 0: the term is then the season figure itself
+    (:func:`season_figure_of`). The season scale (:func:`scale_of`) is measured without the
+    term and does not read it."""
+    return 1.0 - built.stake * built.level
+
+
+class StakedFigure(SeasonFigure):
+    """The season figure a seat's term reads in a week that has a stake for it (the guard PR):
+    :class:`SeasonFigure` with a game after the running week's last day counted ``share`` times
+    (:func:`later_share`, ``1 - stake x L``) and a game of the running week counted in full, a
+    bracket day's ``playoff_weight`` times in both parts as there. So a move's figure is
+
+        its part over the days from its landing to the running week's last day
+        + share x its part over the days after
+
+    and a decisive week moves the term's weight from the later season to the week itself: at a
+    share of 0 a player whose games are all after this week has no term, and one who plays
+    this week keeps this week's. A move that lands after the running week (one decided on its
+    last day, or a claim that clears later) has no part in it: its whole figure is scaled, by
+    the stake of the week it was decided in (a limit, stated in the README)."""
+
+    def __init__(self, built: Built, playoff_weight: float, share: float) -> None:
+        super().__init__(built, playoff_weight)
+        self.share = float(share)
+        #: The first day after the running week: where the figure is split.
+        self.later = built.week.end + timedelta(1)
+
+    def games(self, nba_team: str | None, start: date) -> float:
+        """``nba_team``'s games from ``start`` on, those after the running week counted
+        ``share`` times."""
+        whole = super().games(nba_team, start)
+        rest = super().games(nba_team, max(start, self.later))
+        return (whole - rest) + self.share * rest
+
+
+def season_figure_of(built: Built) -> SeasonFigure:
+    """The season term's figure in force on ``built``'s day (the guard PR), the one place every
+    reader of the term takes it: :class:`SeasonFigure` at the arm's ``playoff_weight``, the
+    figure as it was, whenever ``stake x L`` is 0 (no stake, or a week whose stake is 0: the
+    same object on the same path, never a sum of two parts); :class:`StakedFigure` at
+    :func:`later_share` otherwise."""
+    playoff = knob(built.knobs, "playoff_weight")
+    if built.stake * built.level == 0:
+        return SeasonFigure(built, playoff)
+    return StakedFigure(built, playoff, later_share(built))
+
+
 def seasoned(built: Built, inner: mv.Valued, key: str) -> mv.Valued:
     """``inner`` with the season term on ``key`` (:class:`Seasoned`) at the arm's
-    ``season_weight``; ``inner`` itself at ``season_weight`` 0, where the wrapper is not built and
-    the search is the engine's own."""
+    ``season_weight``, on the season figure in force (:func:`season_figure_of`: with a
+    ``stake``, the games after the running week count ``1 - stake x L`` times); ``inner`` itself
+    at ``season_weight`` 0, where the wrapper is not built and the search is the engine's own."""
     weight = float(knob(built.knobs, "season_weight"))
     if weight == 0:
         return inner
-    return Seasoned(inner, key, weight, SeasonFigure(built, knob(built.knobs, "playoff_weight")))
+    return Seasoned(inner, key, weight, season_figure_of(built))
 
 
 # --------------------------------------------------------------------------- the tiers
@@ -911,12 +1035,13 @@ def exact(
     fields: Fields = DEFAULT_FIELDS,
 ) -> Decision:
     """The live moves route's set on ``QUEUE_SET`` (or the strategy route's weighted set), the
-    season guard on every search, the streaming plan beside. With a ``season_weight`` the single
+    season guard on every search (:func:`allowed_of`: none under the arm's guard ``off``), the
+    streaming plan beside. With a ``season_weight`` the single
     swaps, the pool's ranking and the recommended set (or the weighted search) all take the
     season term (:func:`seasoned`); the week's plan does not."""
     p = built.problem
     ev = mv.Evaluator(p)
-    allowed = guard_of(built)
+    allowed = allowed_of(built)
     solves = 0
     if executes == WEIGHTED:
         pool = _weighted_pool(ev, fields)
@@ -982,11 +1107,11 @@ def _surrogate_pool(built: Built, fields: Fields) -> list[int]:
 def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
     """The same evaluator on the ``pool`` best candidates by value times games this week, the
     greedy search alone on ``QUEUE_SET`` (with the season term at a ``season_weight``), the
-    season guard kept."""
+    season guard kept (:func:`allowed_of`: none under the arm's guard ``off``)."""
     p = built.problem
     plain = mv.Evaluator(p)
     ev = seasoned(built, plain, QUEUE_SET)
-    allowed = guard_of(built)
+    allowed = allowed_of(built)
     moves = mv.search(
         ev,
         QUEUE_SET,
@@ -1025,6 +1150,20 @@ def ranking(built: Built) -> Decision:
     return Decision((move,), (), (), 0, "ranking")
 
 
+def mark_past_guard(built: Built, decision: Decision) -> Decision:
+    """``decision`` marked when its set is one the season guard would have refused (the guard
+    PR): its rest of the season is below 0 by the engine's own figure (:func:`guard_of`, the
+    guard itself asked). Only a seat whose guard is ``off`` can decide such a set, so under
+    ``block`` nothing is asked and the decision is returned as it is. The week plan's steps are
+    not asked about, nor the exact tier's week set. A mark is a decision the block would have
+    turned; an unmarked one may be too (the block tests every set a search tries, so its search
+    can end on another set where this one passes as a whole): the count of marks is a lower
+    bound on how often the block binds."""
+    if built.guard == BLOCK or not decision.moves or guard_of(built)(decision.moves):
+        return decision
+    return replace(decision, past_guard=True)
+
+
 def decide(
     built: Built,
     tier: str,
@@ -1050,13 +1189,14 @@ def _decide(
     """The tier's decision on the day: the surrogate solves on its days only. On its other days
     it still names whom each of its held players sends when he comes back (:func:`sends_of`, PR
     G: no solve, the plan's charge with no move made), so a return on any morning finds the
-    seat's own choice."""
+    seat's own choice. Under the arm's guard ``off`` (the guard PR) a set the season guard would
+    have refused is marked so (:func:`mark_past_guard`)."""
     if tier == "exact":
-        return exact(built, executes, with_plan, fields)
+        return mark_past_guard(built, exact(built, executes, with_plan, fields))
     if tier == "surrogate":
         if built.problem.first_day.weekday() not in fields.surrogate_days:
             return Decision(source="surrogate", sends=sends_of(built.problem))
-        return surrogate(built, fields)
+        return mark_past_guard(built, surrogate(built, fields))
     if tier == "ranking":
         return ranking(built)
     raise ValueError(f"unknown tier {tier!r}: one of {TIERS}")
@@ -1246,6 +1386,11 @@ WHEN_READ: Mapping[str, str] = {
     "min_gain": "the exact or the surrogate tier",
     "weeks_ahead": "the exact or the surrogate tier",
     "surrogate_days": "the surrogate tier",
+    "guard": "the exact or the surrogate tier, whose searches the season guard blocks",
+    "stake": (
+        "a season_weight above 0 on the exact or the surrogate tier, in a league whose bracket "
+        "is read"
+    ),
 }
 STATIC = "a static seat makes no move"
 #: Why the ranking tier does not read the stash threshold (PR G).
@@ -1349,6 +1494,74 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     else:
         out["playoff_weight"] = READ
     return {k: out[k] for k in KNOBS}
+
+
+#: The arm's two season fields beside its knobs and its four fields (#172, the guard PR), in the
+#: order the payload names them: ``guard``, one of :data:`GUARDS`; ``stake``, 0 to 1. Both have
+#: a default (the block, no stake), and an arm's payload carries one only when its spec names
+#: it. They are the arm's own seat's: a rival, a mirror too, stays on the block with no stake.
+SEASON_FIELDS = ("guard", "stake")
+NO_GUARD = "the ranking tier searches no set, so no season guard blocks one"
+NO_TERM = "season_weight is 0: there is no season term to scale"
+
+
+def season_of(
+    spec: Mapping[str, Any], tier: str, knobs: Mapping[str, Any]
+) -> tuple[str, float, tuple[str, ...]]:
+    """An arm's guard and stake from its spec (the guard PR), each at its default when the spec
+    names none (None is not a name), and which of the two it names. Refused by name
+    (ValueError): a guard out of :data:`GUARDS`; a guard named on the ranking tier or a static
+    seat, which have none; a stake that is not a number from 0 to 1; a stake above 0 with
+    ``season_weight`` 0, which scales nothing."""
+    guard, stake = spec.get("guard"), spec.get("stake")
+    named = tuple(k for k, v in zip(SEASON_FIELDS, (guard, stake), strict=True) if v is not None)
+    if guard is None:
+        guard = BLOCK
+    elif guard not in GUARDS:
+        raise ValueError(f"guard {guard!r}: one of {', '.join(GUARDS)}")
+    elif tier not in GUARDED_TIERS:
+        where = "the ranking tier has" if tier == "ranking" else "a static seat has"
+        raise ValueError(
+            f"guard {guard!r} named on tier {tier!r}: {where} no season guard; the exact and "
+            "the surrogate tiers search under one"
+        )
+    if stake is None:
+        stake = 0.0
+    elif (
+        isinstance(stake, bool)
+        or not isinstance(stake, int | float)
+        or not math.isfinite(stake)
+        or not 0 <= stake <= 1
+    ):
+        raise ValueError(f"stake {stake!r}: a number from 0 to 1")
+    if stake > 0 and not float(knob(knobs, "season_weight")) > 0:
+        raise ValueError(
+            f"stake {stake:g} with season_weight 0: the stake scales the season term, and "
+            "there is none to scale"
+        )
+    return str(guard), float(stake), named
+
+
+def season_reads(arm: Configured, shape: Shape) -> dict[str, str]:
+    """For each of the arm's two season fields, :data:`READ` or the reason it is not, as
+    :func:`reads`: the guard on the tiers that search under one; the stake where there is a
+    season weight to scale, on those tiers, in a league whose bracket is read. Neither is read
+    through a mirror: a rival stays on the block with no stake."""
+    out: dict[str, str] = {}
+    if arm.tier in GUARDED_TIERS:
+        out["guard"] = READ
+        if not float(arm.knobs["season_weight"]) > 0:
+            out["stake"] = NO_TERM
+        elif not shape.bracket:
+            out["stake"] = "the league has no bracket read"
+        else:
+            out["stake"] = READ
+    elif arm.tier == "ranking":
+        out["guard"] = NO_GUARD
+        out["stake"] = "the ranking tier ranks by value times games and holds no odds"
+    else:
+        out["guard"] = out["stake"] = STATIC
+    return {k: out[k] for k in SEASON_FIELDS}
 
 
 def field_reads(arm: Configured, mirrored: bool = False) -> dict[str, str]:

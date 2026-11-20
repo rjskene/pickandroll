@@ -10,12 +10,15 @@ This module is the list and the rules, and touches no file:
   the PR that builds it; no flag invents a nudge.
 - :func:`rows_of`, the pairs a baseline arm gives: for each lever, arm A is the baseline on the
   cheapest tier that reads the lever, set to whatever else makes it read, and arm B is A with the
-  one nudge. A lever the run's league does not read (``policy.reads``, ``policy.field_reads``) is
+  one nudge. A lever the run's league does not read (``policy.reads``, ``policy.field_reads``,
+  and for the guard and the stake ``policy.season_reads``) is
   listed with the reason and not played; a nudge the knob's own bounds refuse, or the grid has no
   step for, is listed and not played; a nudge equal to the baseline's value is refused by name.
 - :func:`result_of`, what a played pair's figures say: the paired difference on the measure the
   league's standings count against one standard error, and "did nothing" when the two arms'
-  counts and outcomes are equal on every path.
+  counts and outcomes are equal on every path, less the counts that part by construction
+  between two arms (declared where the counts are defined, ``counts.APART_BY_CONSTRUCTION``;
+  no count is named here).
 
 The command that plays each pair, by the code ``replay`` plays a pair with, is ``cli.cmd_screen``.
 """
@@ -26,15 +29,18 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import counts as ct
 from . import forecast as fc
 from . import policy
 from . import run as rn
 from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 
-#: The screen's version in its record: 2 since the stash threshold's lever (PR G: two rows more),
-#: 1 the list of PR H1. A change to the list, to a nudge or to a rule below is a new version, and
+#: The screen's version in its record: 3 since the guard PR (two rows more, ``guard`` and
+#: ``stake``, and the rule's clause: "did nothing" sets aside the counts that part by
+#: construction between two arms, ``counts.APART_BY_CONSTRUCTION``), 2 since the stash
+#: threshold's lever (PR G: two rows more), 1 the list of PR H1. A change to the list, to a nudge or to a rule below is a new version, and
 #: a folder started under another is refused.
-SCREEN_VERSION = 2
+SCREEN_VERSION = 3
 #: What the Monday step multiplies a plan floor by (``season.hillclimb``'s plan rule, where the
 #: figure is written in the rule itself): the step up of the knob's own grid; the step down
 #: divides by it.
@@ -72,9 +78,9 @@ PLAN_FAAB_NOTE = (
 RULE = (
     "a lever survives when its paired difference (B less A) clears one standard error, either "
     "way, on the measure the league's standings count, in a cell of the run; a lever whose two "
-    "arms' counts and outcomes are equal on every path did nothing (its difference is zero by "
-    "construction) and does not survive; advisory: a survivor is a candidate for the tune, not "
-    "a finding"
+    "arms' counts and outcomes are equal on every path, less the counts that part by "
+    "construction between two arms, did nothing (its difference is zero by construction) and "
+    "does not survive; advisory: a survivor is a candidate for the tune, not a finding"
 )
 #: The measures by name, for the table.
 MEASURE_WORDS = {"matchup_wins": "matchup wins", "category_wins": "category wins"}
@@ -259,6 +265,17 @@ def _blend(base: rn.Arm, ctx: Context) -> tuple[Mapping[str, Any], Sequence[Step
     )
 
 
+def _guard(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    return (Step("off", "to off", {"guard": policy.OFF}),)
+
+
+def _stake(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    return (
+        Step("0.5", "to 0.5", {"stake": 0.5}),
+        Step("1", "to 1", {"stake": 1.0}),
+    )
+
+
 #: The list (Rule 2: written before any result), one row a lever, in the order the table prints.
 #: A floor's step is the Monday step's own grid: the protection floor's a game by scoring
 #: (``FLOOR_STEP``), a plan floor's times and divided by :data:`PLAN_STEP`, never above
@@ -346,6 +363,10 @@ LEVERS: tuple[Lever, ...] = (
         _plain(_system),
     ),
     Lever("blend", "surrogate", "to 0.25 and to 0.75", _blend, "system blend"),
+    # The guard PR's two: the season guard off, and the stake (read only where the baseline has
+    # a season weight to scale, in a league whose bracket is read).
+    Lever("guard", "surrogate", "the block to off", _plain(_guard)),
+    Lever("stake", "surrogate", "to 0.5 and to 1", _plain(_stake)),
 )
 #: The levers' names, in the list's order.
 NAMES: tuple[str, ...] = tuple(lever.name for lever in LEVERS)
@@ -389,7 +410,10 @@ def shown(value: Any) -> str:
 def read_why(name: str, arm: rn.Arm, shapes: Sequence[policy.Shape]) -> str | None:
     """Why the run's league does not read lever ``name`` on ``arm`` in any of ``shapes``; None
     when it does in one. A knob and a field by the reads table (``policy.reads``,
-    ``policy.field_reads``; a mirror's rivals read what the surrogate reads). The three spec
+    ``policy.field_reads``; a mirror's rivals read what the surrogate reads). The guard and the
+    stake by theirs (``policy.season_reads``); the stake must be read in every shape, since an
+    arm with a stake is refused in a run that holds a league whose bracket is not read. The
+    three spec
     keys by what they are: ``executes`` is read on the exact tier; a week plan only recorded
     changes no season, so ``with_plan`` is read only by an arm that executes the plan and
     ``execute_plan`` only by one that draws it."""
@@ -398,6 +422,11 @@ def read_why(name: str, arm: rn.Arm, shapes: Sequence[policy.Shape]) -> str | No
         whys = [policy.reads(arm, shape, mirror)[name] for shape in shapes]
     elif name in policy.FIELDS:
         whys = [policy.field_reads(arm, mirror)[name]]
+    elif name in policy.SEASON_FIELDS:
+        whys = [policy.season_reads(arm, shape)[name] for shape in shapes]
+        unread = [w for w in whys if w != policy.READ]
+        if name == "stake" and unread:
+            return unread[0]
     elif arm.tier != "exact":
         whys = [f"only the exact tier reads {name}"]
     elif name == "with_plan" and not arm.execute_plan:
@@ -539,6 +568,14 @@ def clears(mean: float | None, se: float | None) -> bool:
     return mean is not None and se is not None and abs(mean) > se
 
 
+def _compared(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A seat's row of counts as "did nothing" compares it: less the counts that part by
+    construction between two arms (``counts.APART_BY_CONSTRUCTION``)."""
+    if row is None:
+        return None
+    return {k: v for k, v in row.items() if k not in ct.APART_BY_CONSTRUCTION}
+
+
 def result_of(
     payload: Mapping[str, Any], standing: Sequence[Mapping[str, Any]], measure: str
 ) -> dict[str, Any]:
@@ -549,7 +586,12 @@ def result_of(
     the two arms and whether its outcomes are; whether the lever did nothing (both: the two arms
     played one season on every path, as far as a record tells); and whether it survives
     (:data:`RULE`). Both arms play one world, so equal counts with an outcome that differs is a
-    lever that changed which moves were made, not how many: it did something."""
+    lever that changed which moves were made, not how many: it did something. The counts
+    compared are every key of a row less the counts that part by construction between two arms
+    (``counts.APART_BY_CONSTRUCTION``, the one declaration, read here when asked and never
+    written here by name): such a count can differ between two arms that played one season,
+    so it is no difference of the season, and whatever of it reached the season shows in the
+    counts that are compared. Both arms' counts are recorded whole, those among them."""
     cells = {
         t: {
             label: {
@@ -564,7 +606,7 @@ def result_of(
         }
         for t, by_label in payload["results"].items()
     }
-    counts = all(r["counts"]["a"] == r["counts"]["b"] for r in standing)
+    counts = all(_compared(r["counts"]["a"]) == _compared(r["counts"]["b"]) for r in standing)
     outcomes = all(all(not v for v in r["delta"].values()) for r in standing)
     nothing = counts and outcomes
     return {
@@ -594,7 +636,11 @@ def result_words(result: Mapping[str, Any]) -> str:
             parts.append(f"{where}{words} {mean} (SE {se}) over {c['paths']} paths")
     out = "; ".join(parts)
     if result["did_nothing"]:
-        out = "did nothing (both arms' counts and outcomes are equal on every path): " + out
+        # The rule's clause, whatever the declaration holds (:data:`RULE`).
+        out = (
+            "did nothing (both arms' counts and outcomes are equal on every path, less the "
+            "counts that part by construction between two arms): " + out
+        )
     elif result["survives"]:
         out += "; survives"
     if result["voided"]:
