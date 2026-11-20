@@ -281,7 +281,8 @@ def test_the_decision_key_holds_the_weeks_view_for_a_strategy_that_reads_the_wee
     assert policy.week_view(setup, one, ME, WEEK) == policy.WeekView(
         other, tuple(LOW.items()), tuple(HIGH.items())
     )
-    # A week the pairings do not hold (the bracket's) has no opponent and nobody else's totals.
+    # A week the pairings do not hold (the bracket's), on a state that holds no round's pairs
+    # (PR bracket seeds them), has no opponent and nobody else's totals.
     last = setup.calendar.weeks[-1].number
     assert last not in setup.pairings
     assert policy.week_view(setup, one, ME, last) == policy.WeekView(None, (), None)

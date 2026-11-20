@@ -4,7 +4,8 @@ A :class:`Setup` is a league as read once for a run: its calendar, pairings, tea
 rosters, free-agent pool, the policy's projection on day one, the schedule, the roster slots and
 the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class:`SimState` is
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
-tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
+tomorrow with the held-slot moves they need, every week's totals so far, and each round of the
+bracket as seeded on its first morning (PR bracket); in a waiver league
 (PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
 priority; in a FAAB league (PR Fb) each team's dollars left and what its bids scale by, and
 (PR F2) the season's winning bids; under
@@ -305,6 +306,13 @@ class SimState:
     #: A decision of such a seat depends on its own figure, so the runner's cache of shared
     #: decisions keys on it beside :meth:`key`, which leaves it out: no other seat reads it.
     stakes: Mapping[int, float] = field(default_factory=dict)
+    #: The bracket's rounds as this arm has seeded them (#172, PR bracket): week number to that
+    #: round's matchups (team ids, the higher seed first; ``league.round_pairs``), set once a
+    #: round on its first simulated morning from this arm's own totals (``policy.seed_round``).
+    #: A problem reads its week's opponent from them where the pairings have no entry
+    #: (``policy.opponent_of``). Empty in a league with no round, and on a state built by hand.
+    #: No part of :meth:`key`.
+    seeded: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
 
     @property
     def executed(self) -> int:
@@ -332,9 +340,10 @@ class SimState:
         due (#172, PR Fa); the priority is read by no decision, and neither is a claim's value
         (PR F2: what its bid was sized on, the counts' alone), so the key holds each claim
         without it and two seasons apart on that only share what they shared before it. The
-        week's totals are left out: a strategy that reads the week is keyed on its team's view
-        of it besides (``run.decision_key``, ``policy.week_view``), and every other decision
-        reads none."""
+        round's pairs (``seeded``, PR bracket) are left out as the week's totals are: a rival's
+        decision reads neither, and with them in the key two variants that seed different pairs
+        would stop sharing their rivals' decisions. A strategy that does read the week is keyed
+        on its team's view of it besides (``run.decision_key``, ``policy.week_view``, PR F2)."""
         base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),

@@ -397,7 +397,8 @@ def test_a_faab_run_is_held_to_the_wait_and_the_bid_rules_in_place_of_claim_prio
         "bid_paid",
         "bid_order",
     ]
-    assert audit.Auditor(league()).rules == audit.rules_of("faab")
+    # The league's bracket has a round: its own audit reads the bracket's rule too (PR bracket).
+    assert audit.Auditor(league()).rules == audit.rules_of("faab", bracket=True)
     for bids in ((7, 5), (5, 5), (0, 0)):
         setup, before, after, *_ = morning(*bids)
         for rule in audit.rules_of("faab"):

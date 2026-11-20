@@ -608,6 +608,16 @@ def counts_note(
     return {**note, **PLANS_NOTE} if queue else note
 
 
+def audit_rules(league_rules: shapes.LeagueRules, grid: shapes.Grid) -> tuple[audit.Rule, ...]:
+    """The rules a replay on ``grid`` under ``league_rules`` is held to, for its record
+    (``audit.rules_of``): its waivers' and its waiver rule's, and the bracket's (PR bracket) when
+    a league shape of the grid has a round to play, as each path's own audit reads it
+    (``audit.has_round``). Every shape of the ruled grid has one: a replay's league is drafted
+    with its bracket (``run.replay_setup``)."""
+    bracket = any(s.playoff_teams > 1 and s.playoff_weeks > 0 for s in grid.shapes)
+    return audit.rules_of(league_rules.waivers, league_rules.waiver_rule, bracket)
+
+
 def audited(
     keys: Sequence[Mapping[str, Any]],
     results: Sequence[Mapping[str, Any]],
@@ -615,8 +625,8 @@ def audited(
 ) -> tuple[list[bool], dict[str, Any]]:
     """Which tasks stand and the payload's audit block. A task with a breach is a voided path: it
     is left out of every aggregate, and each breach is listed with the task it voids. ``rules``,
-    the rules the run was held to (``audit.rules_of`` its waivers and its waiver rule; :data:`audit.RULES` by
-    default)."""
+    the rules the run was held to (:func:`audit_rules`: its waivers, its waiver rule and its
+    bracket; :data:`audit.RULES` by default)."""
     keep = [not r.get("breaches") for r in results]
     return keep, {
         "rules": audit.names(rules),
@@ -1482,7 +1492,8 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 18 since the bid policy (#172, PR F2), 17 since the
+#: The replay's version in its payload: 19 since the bracket's rounds (#172, PR bracket), 18
+#: since the bid policy (#172, PR F2), 17 since the
 #: queue's rule (#172, PR E), 16 since the season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
 #: arm's seat drafts from the market's board (the draft PR), 13 since the rivals' adds and bids
@@ -1501,8 +1512,16 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 18
+REPLAY_VERSION = 19
 REPLAY_VERSION_WHY = (
+    "19: the bracket's rounds: in a week of the bracket a seat's problem reads its round's "
+    "opponent, seeded that morning from the variant's own totals as the season's end seeds it "
+    "(before, the week had no opponent and was worth nothing): the weighted set weighs the "
+    "matchup, a week's plan can be drawn there, the queue's rule takes a plan on the matchup's "
+    "odds in a round the seat plays, and a bid that weighs the week sizes a claim against the "
+    "round's opponent; the view of the week a decision is keyed on (version 18) holds the "
+    "round's pair; the audit holds the round's pairs (bracket_pairs); a seat that executes the "
+    "three weeks' set alone and names no bid on the week plays version 18's season. "
     "18: the bid policy: an arm's spec may name a bid block; its seat on the exact or the "
     "surrogate tier, and its mirror rivals, then bid in a FAAB league by a family of rules whose "
     "default member is the live rule (the gain weighed over the week, the three weeks and the "
@@ -2614,7 +2633,7 @@ def replay_payload(
         plan.shapes_read,
     )
     keys, paths, visits = made.keys, made.paths, made.visits
-    rules = audit.rules_of(league_rules.waivers, league_rules.waiver_rule)
+    rules = audit_rules(league_rules, grid)
     keep, note = audited(keys, results, rules)
     keys = [k for k, ok_ in zip(keys, keep, strict=True) if ok_]
     results = [r for r, ok_ in zip(results, keep, strict=True) if ok_]
@@ -2833,7 +2852,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"the task timed is path {slow}, on the grid's largest draft with its loosest add "
             f"limit ({visits[slow].shape.label()}): the estimate errs long"
         )
-    rules = audit.rules_of(league_rules.waivers, league_rules.waiver_rule)
+    rules = audit_rules(league_rules, grid)
     if args.dry_run:
         return dry_run(keys[slow], first_run, rules)
     ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
@@ -3854,12 +3873,12 @@ def cmd_screen(args: argparse.Namespace) -> int:
         f"{len(todo)} pair(s) to play, about {left_hours:.2f} h on {workers} workers; the whole "
         f"screen ({len(todo) + len(results)} pairs) about {whole_hours:.2f} h"
     )
-    audit_rules = audit.rules_of(rules.waivers, rules.waiver_rule)
+    held_to = audit_rules(rules, plan.grid)
     if args.dry_run:
         code = 0
         for r in untimed:
             made = plans[r.key][1]
-            _, note = audited([made.keys[made.slow]], [firsts[r.key]], audit_rules)
+            _, note = audited([made.keys[made.slow]], [firsts[r.key]], held_to)
             if note["paths_voided"]:
                 print(f"the pair of {r.key}, its timed task:")
                 code = max(code, audit_exit(note))

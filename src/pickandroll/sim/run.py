@@ -782,11 +782,11 @@ def decision_key(
     strategy in its seat (its ``repr``) and ``SimState.key()``; and for a strategy that reads
     the week (``policy.reads_week``: the exact tier on the weighted set, the queue's rule or a
     week's plan; a seat or a mirror whose ``bid`` weighs the week), the team's view of the week
-    too (``policy.week_view``: its opponent and both sides' totals so far), which the state's
-    key does not hold (PR F2). Before it, two variants that held one such ``repr`` in a seat,
-    two arms of one name or one mirror rival of two arms, could be handed each other's decision
-    once their states agreed again on other totals. Every other strategy's decision is the same
-    whatever the view.
+    too (``policy.week_view``: its opponent, a round's included since PR bracket, and both
+    sides' totals so far), which the state's key does not hold (PR F2). Before it, two variants
+    that held one such ``repr`` in a seat, two arms of one name or one mirror rival of two arms,
+    could be handed each other's decision once their states agreed again on other totals. Every
+    other strategy's decision is the same whatever the view.
 
     A seat that reads a stake (the guard PR) decides on its own week's figure too
     (``SimState.stakes``, which the state's key leaves out), so the key holds it, None for a
@@ -820,7 +820,10 @@ def simulate(
     (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
     forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
     reads its table on the rosters before the landing for the forced drops, and on the rosters after
-    it for the rest of the day. The world's draws are common to all of them. ``stash``: the run
+    it for the rest of the day. The world's draws are common to all of them. On the first morning
+    of a round of the bracket each variant's state takes the round's pairs from its own totals
+    (``policy.seed_round``, PR bracket), and a seat's problem reads its opponent from them.
+    ``stash``: the run
     names a stash threshold (:func:`stash_named`, PR G), and every variant's counts carry the
     returning players each seat dropped (``counts.STASH``); nothing else reads it.
     ``queue_counts``: whether the run has an arm that takes the queue's rule, so every seat's
@@ -933,6 +936,9 @@ def simulate(
                 tallies[vi].left(was[vi], s)
         if monday:
             states = [policy.new_week(s) for s in states]
+        # A round of the bracket is seeded on its first morning, each variant's from its own
+        # totals: the weeks finished before it (PR bracket).
+        states = [policy.seed_round(setup, s, week.number) for s in states]
         # From here on, the day's rosters: yesterday's moves are in, today's land tomorrow.
         seats = [
             {t: tables.of(label, s) for t, label in h.items()}

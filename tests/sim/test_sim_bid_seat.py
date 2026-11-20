@@ -499,13 +499,15 @@ def test_a_faab_run_counts_the_dollars_at_the_bracket_the_weeks_at_zero_and_the_
         return replace(s, dollars={**s.dollars, **{int(k[1:]): v for k, v in dollars.items()}})
 
     tally = ct.Tally(setup)
-    tally.day(5, at(t1=40, t2=0))
-    tally.day(5, at(t1=40, t2=0))
+    # The fourth team holds exactly one dollar on every day: a dollar left is not zero (from
+    # the review of #449, where a count of "one or less" lived against every test).
+    tally.day(5, at(t1=40, t2=0, t4=1))
+    tally.day(5, at(t1=40, t2=0, t4=1))
     # The first simulated day of the bracket's first week, then a later one.
-    tally.day(6, at(t1=30, t2=0))
-    tally.day(6, at(t1=10, t2=0, t3=0))
-    rows = tally.rows(replace(at(t1=10, t2=0, t3=0), value_won={1: 7.5}))
-    assert [rows[t]["dollars_at_bracket"] for t in setup.teams] == [30.0, 0.0, 100.0, 100.0]
+    tally.day(6, at(t1=30, t2=0, t4=1))
+    tally.day(6, at(t1=10, t2=0, t3=0, t4=1))
+    rows = tally.rows(replace(at(t1=10, t2=0, t3=0, t4=1), value_won={1: 7.5}))
+    assert [rows[t]["dollars_at_bracket"] for t in setup.teams] == [30.0, 0.0, 100.0, 1.0]
     assert [rows[t]["weeks_at_zero"] for t in setup.teams] == [0.0, 4 / 7, 1 / 7, 0.0]
     assert [rows[t]["value_won"] for t in setup.teams] == [7.5, 0.0, 0.0, 0.0]
     assert list(rows[1])[-len(ct.BIDS) :] == list(ct.BIDS)

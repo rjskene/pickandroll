@@ -5,8 +5,11 @@ tiers that solve it, and the executor that lands what they decide.
 spans from the setup's calendar, the opponents projected with ``weekly.project_week`` from the
 shared beliefs, the candidates from the pool, the add limits from the league's rule and the adds
 used, the keep rule's inputs from the same beliefs, then the knobs. This week's opponent and
-both sides' totals so far come from one place, :func:`week_view`; the runner keys a strategy
-that reads the week (:func:`reads_week`) on the same view (PR F2).
+both sides' totals so far come from one place, :func:`week_view`: the pairing's opponent, and in
+a round of the bracket the round's (PR bracket: :func:`seed_round` seeds each round on its first
+morning from the state's own totals, :func:`opponent_of` reads it), where a week had no opponent
+before; the runner keys a strategy that reads the week (:func:`reads_week`) on the same view (PR
+F2).
 **Every knob comes in as a
 mapping of the twelve names of** :data:`KNOBS` **(the ten the live knob file takes,
 ``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two); a
@@ -167,7 +170,7 @@ from .engine import (
     typical_gain,
     wk,
 )
-from .league import fpts
+from .league import fpts, round_pairs, round_weeks
 from .shapes import BOOK, CONTINUOUS, DROPPED
 from .stake import level as week_stake
 from .state import (
@@ -876,6 +879,16 @@ def bracket_days(setup: Setup) -> frozenset[date]:
     return frozenset(d for w in setup.calendar.weeks if w.number in weeks for d in w.days())
 
 
+def opponent_of(setup: Setup, state: SimState, me: int, week: int) -> int | None:
+    """Whom ``me`` plays in ``week`` (#172, PR bracket): the other team of its pair in the
+    setup's pairings, which hold the regular weeks; where they have no entry for the week, of
+    its pair among the round's pairs the state holds for it (``SimState.seeded``, the bracket's
+    round seeded that morning). None for a team in no pair: a week off, a team out of the
+    field, on a bye or knocked out, and a bracket week on a state that holds no pairs."""
+    pairs = setup.pairings[week] if week in setup.pairings else state.seeded.get(week, ())
+    return next((b if a == me else a for a, b in pairs if me in (a, b)), None)
+
+
 class WeekView(NamedTuple):
     """What a team's problem reads of this week beyond ``SimState.key()`` (:func:`week_view`):
     its opponent, and each side's totals so far this week as the week's span takes them (a
@@ -888,21 +901,18 @@ class WeekView(NamedTuple):
 
 
 def week_view(setup: Setup, state: SimState, me: int, week: int) -> WeekView:
-    """``me``'s view of ``week`` on ``state``: whom it plays (the other team of its pair in the
-    setup's pairings, None in a week they do not hold) and both sides' totals so far. The one
-    source of the week's opponent and totals: :func:`problem_of` builds the week's span from
-    it, and the runner's decision cache keys on it for a strategy that reads the week
-    (:func:`reads_week`), so a decision is never shared across two views the problem tells
-    apart."""
+    """``me``'s view of ``week`` on ``state``: whom it plays (:func:`opponent_of`) and both
+    sides' totals so far. The one source of the week's opponent and totals: :func:`problem_of`
+    builds the week's span from it, and the runner's decision cache keys on it for a strategy
+    that reads the week (:func:`reads_week`), so a decision is never shared across two views
+    the problem tells apart, a round's pairs included."""
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
 
     def so_far_of(team: int) -> tuple[tuple[str, float], ...]:
         totals = dict(state.totals.get(week, {}).get(team, {}))
         return tuple(({wk.FPTS: fpts(totals, points)} if points else totals).items())
 
-    other = next(
-        (b if a == me else a for a, b in setup.pairings.get(week, ()) if me in (a, b)), None
-    )
+    other = opponent_of(setup, state, me, week)
     return WeekView(other, so_far_of(me), so_far_of(other) if other is not None else None)
 
 
@@ -925,7 +935,8 @@ def reads_week(
     The surrogate, the ranking and the exact tier's recommended set on the three weeks search
     no week, and a ``bid`` that weighs the season reads the schedule and no matchup
     (:class:`SeasonFigure`): their decisions are the same whatever the view (held by behaviour,
-    ``tests/sim/test_sim_bid_key.py``). A seat that says it reads the week where no claim is
+    ``tests/sim/test_sim_bid_key.py``; in a round of the bracket,
+    ``tests/sim/test_sim_bracket_run.py``). A seat that says it reads the week where no claim is
     ever sized (a league without FAAB) shares a little less and decides the same."""
     searches = tier == "exact" and (executes in (WEIGHTED, QUEUE) or with_plan)
     # The ranking tier holds no live basis, so its claims are sized on nothing (``with_bid``).
@@ -945,8 +956,10 @@ def problem_of(
 ) -> Built | None:
     """The move problem for ``me`` on ``state.day``; None with no week left. Mirrors
     ``api.season_moves.build`` from in-memory inputs. This week is read through
-    :func:`week_view`: against the pairing's opponent, projected on the same beliefs from its
-    active roster with both sides' totals so far, and against nobody for a team in no pair."""
+    :func:`week_view`: against the pairing's opponent, or in a round of the bracket the round's
+    (PR bracket), projected on the same beliefs from its active roster with both sides' totals
+    so far, and against nobody for a team in no pair. Every later week is against the whole field,
+    a bracket week too, as the live route builds them."""
     knobs = check_knobs(knobs)
     day = state.day
     weeks = setup.calendar.ahead(day, weeks_ahead)
@@ -2880,6 +2893,20 @@ def clear_waivers(
 def new_week(state: SimState) -> SimState:
     """Monday: the adds used this week start over."""
     return replace(state, adds_used={})
+
+
+def seed_round(setup: Setup, state: SimState, week: int) -> SimState:
+    """The bracket's round of ``week`` seeded on the state (#172, PR bracket): its pairs as the
+    league gives them from the state's own totals (``league.round_pairs``: the season's own
+    bracket on the weeks finished before the round), kept under the week's number in
+    ``SimState.seeded``. The runner calls it each morning before the day's decisions; it seeds a
+    round once, on the first day the state does not hold it, and leaves the state as it is in a
+    week that is no round's and in a league whose bracket is not read. So no pair reads a total
+    of its own week (no peek), and two arms whose seasons differ seed their own."""
+    spec = setup.spec
+    if spec is None or week in state.seeded or week not in round_weeks(spec):
+        return state
+    return replace(state, seeded={**state.seeded, week: round_pairs(spec, state.totals, week)})
 
 
 # --------------------------------------------------------------------------- the day's lineup

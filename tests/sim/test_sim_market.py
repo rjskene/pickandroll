@@ -419,7 +419,7 @@ def test_a_replay_with_adp_none_named_is_the_replay_with_nothing_named(pair_data
     named = _run(pair_data, *seats, "--name", "same", "--adp", "none")
     plain = _run(pair_data, *seats, "--name", "same")
     assert _as_written(named) == _as_written(plain)
-    assert plain["replay_version"] == 18 and plain["adp"] == {"source": "none"}
+    assert plain["replay_version"] == 19 and plain["adp"] == {"source": "none"}
     assert plain["unprojected"]["note"] == ss.UNPROJECTED_NOTE
     assert plain["draft"].startswith("snake on the run's forecaster's projection")
 
@@ -463,7 +463,7 @@ def test_a_table_run_that_names_no_rule_records_the_market_s(pair_data):
     assert block["seat_draft"] == "market" and "pair" not in block
     assert (block["seat"], block["limit"]) == (ss.ADP_SEAT["market"], ss.ADP_LIMIT["market"])
     assert p["draft"] == ss.ADP_DRAFT["market"]
-    assert p["replay_version"] == ss.REPLAY_VERSION == 18
+    assert p["replay_version"] == ss.REPLAY_VERSION == 19
     assert "14: the arm's seat's draft under a table" in p["replay_version_why"]
     # The note is the one a run without a table carries: the arm's seat drafts nobody its own
     # forecaster has no line for, under either rule.

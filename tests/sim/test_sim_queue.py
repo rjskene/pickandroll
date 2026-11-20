@@ -66,9 +66,11 @@ def cats():
 
 
 def bracketed(setup):
-    """``setup`` with the bracket week's matchups named, as no simulated season names them (a
-    replay's bracket is decided at the season's end): a problem of that week then reads an
-    opponent, so the engine's odds branch is really entered."""
+    """``setup`` with the bracket week's matchups named in its pairings, as a regular week's
+    are. A simulated season names its own on the state, on the round's first morning (PR
+    bracket, ``SimState.seeded``); a state built by hand holds none, so here the pairings carry
+    them: a problem of that week then reads an opponent, and the engine's odds branch is really
+    entered."""
     last = max(w.number for w in setup.calendar.weeks)
     return replace(setup, pairings={**setup.pairings, last: ((1, 2), (3, 4))})
 
@@ -418,7 +420,7 @@ PARITY = {
         True,
         False,
     ),
-    "a bracket week of a season's own, no opponent read": (
+    "a bracket week with no pair, no opponent read": (
         lambda: built_on(cats(), day=14, three_weight=0.9),
         0.0,
         True,
@@ -459,11 +461,12 @@ def test_the_seat_s_choice_is_the_library_s_for_queue_through_the_door(case):
 
 
 def test_the_parity_cases_are_what_their_names_say():
-    """The cases' own power: the bracket week without a pairing reads no opponent (so the
-    engine's gate is None and the set stands, the simulated season's case), the one with a
-    pairing reads one; the held case's plans carry a return's worth, which only
+    """The cases' own power: the bracket week without a pair reads no opponent (so the
+    engine's gate is None and the set stands: a seat on a bye or out of the bracket, and every
+    bracket week before PR bracket), the one with a pair reads one; the held case's plans carry
+    a return's worth, which only
     ``plans.held_out`` gives; the plan over several days has a step after tomorrow."""
-    own = PARITY["a bracket week of a season's own, no opponent read"][0]()
+    own = PARITY["a bracket week with no pair, no opponent read"][0]()
     assert own.problem.horizons["week"][0].opponents == ()
     assert pl.gate(mv.Evaluator(own.problem), (), 0.0, True) is None
     named = PARITY["a bracket week, a plan on the odds"][0]()
