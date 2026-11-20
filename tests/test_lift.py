@@ -25,7 +25,7 @@ from pickandroll.season import reserve as rs
 
 from .test_moves import build, player, rates, schedule
 from .test_season import LEAGUE, client, fixture_names, projection_csv  # noqa: F401
-from .test_season_guard import built_of
+from .test_season_guard import built_of, drop_clocks
 
 
 def minutes(projected: float, *recent: float, games: tuple[int, int] = (4, 4)) -> fl.Signal:
@@ -168,7 +168,7 @@ def test_no_lift_gives_todays_payload_byte_for_byte():
     empty = replace(p, lifted={}, marginal=frozenset({3}))
     a, b = sm._payload(built_of(p)), sm._payload(built_of(empty))
     for out in (a, b):
-        out["search"].pop("seconds")
+        drop_clocks(out)
     assert json.dumps(a) == json.dumps(b)
 
 
@@ -232,7 +232,7 @@ def test_every_lift_knob_at_zero_gives_todays_moves_byte_for_byte(client, monkey
     # The solve read the flags, every candidate flagged.
     assert seen and seen[-1] == len(cands)
     for out in (before, off):
-        out["search"].pop("seconds")
+        drop_clocks(out)
         out.pop("stale", None)
     assert json.dumps(off, sort_keys=True) == json.dumps(before, sort_keys=True)
     # The code's first guesses: every candidate lifted by the must-add floor.
