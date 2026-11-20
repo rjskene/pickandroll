@@ -11,7 +11,8 @@ roster change in one arm reshuffles nothing for any player: common random number
 :func:`simulate` advances several variants of one league through the same world day by day: the
 moves decided yesterday land, each seat decides on the day's beliefs, the lineup is set, the day
 is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
-states agree share one solve (the lockstep of the design note); from the first divergence each
+states agree share one solve (the lockstep of the design note; a seat that reads the week, on
+one view of the week too: :func:`decision_key`, PR bracket); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
 of the season's outcomes, B less A; :func:`room` runs a league's seats under named arms rotated
 across paths.

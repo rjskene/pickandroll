@@ -273,10 +273,13 @@ far, exactly as a regular week is; the later weeks and the measure are as before
 set weighs the matchup, a week's plan can be drawn against it, an arm that executes its plan
 queues the plan's steps, and in a FAAB league a step's claim bids on its week gain. Two arms whose
 seasons differ seed their own rounds and each seat meets its own opponent. There is no switch:
-a round is always seeded. A seat on the three weeks' set with no executed plan, the surrogate,
-the ranking, a market, a mirror and a static rival search no week, and their seasons do not
-change. The audit holds the pairs every day of a round (`bracket_pairs`, **The audit and the
-counts**).
+a round is always seeded. The exact tier's recommended set on the three weeks, the surrogate,
+the ranking, a market, a mirror and a static rival search no week: no move of theirs reads the
+round's opponent, and their seasons do not change. An exact seat on the three weeks' set that
+draws the week's plan and does not execute it (an arm's default) does search the week, for the
+plan alone: in a round it plays its day's record can hold a plan where a blind week drew none,
+and it plays the same season, move for move and solve for solve. The audit holds the pairs
+every day of a round (`bracket_pairs`, **The audit and the counts**).
 
 What a bracket week does not model, each plainly:
 
@@ -293,6 +296,19 @@ What a bracket week does not model, each plainly:
 5. **The season's last week on the three weeks' set.** The three weeks' set holds the weeks
    after this one, so in the last week it is empty: a seat that executes it, with no season
    term, makes no gain-based move there, as live's three weeks' set does not.
+6. **A weighted set's claims in the season's last week bid $0.** In a FAAB league a claim of a
+   seat's set bids on its move's own gain on the three weeks, whatever set the seat executes
+   (**FAAB**, the `gain` row), and in the last week the three weeks hold nothing. So every claim
+   a weighted set places there is sized on a gain of exactly 0 and bids $0, whatever the week
+   is worth against the round's opponent and whatever the seat has left: it wins a player only
+   when no other team bids above $0 for him (a tie at $0 goes by priority). Before this PR no
+   season with a bracket met the case: its last week was blind, the weighted set had nothing to
+   gain there, and the seat placed no claim in it. A plan's step in the same week bids on its
+   week gain, so one seat's two kinds of claim are sized on two things; and the set's zeros
+   count in the seat's fortnight of gains, whose median a later bid of that week scales by (a
+   step's bid, for an arm that weighs and executes its plan). How a set's claim is sized is not
+   changed here: an arm sizes a claim on the week by naming a `bid` with a week weight (the bid
+   policy's PR).
 
 ## The knobs, the fields and the season term (`sim/policy.py`, PR C)
 
@@ -504,8 +520,11 @@ problem; a screen names its second arm apart, a room is one variant, and a pair 
 never shared). Every other strategy is keyed as before, so what a run shares and solves is the
 same wherever no such pair is played; the same arm twice still shares every decision. Which
 strategies read the week is held by behaviour (`tests/sim/test_sim_bracket_run.py`): each kind
-decides on two states of one key and two views, and one that does not say it reads the week
-gives one decision.
+decides on three states of one key and three views of the week (two opponents, and none), in a
+first round, in a FAAB league and in the season's last week, and one that does not say it reads
+the week gives one decision. That the round's pairs are no part of `SimState.key()` is held by
+a season too: two variants that seed a round differently share their mirror's solve in it, and
+`shared` and `solves` are those of the same run with no round seeded.
 
 **Determinism.** The same spec, seed and fit give the same outcomes in one process and across
 worker counts, except at an exact tie: there an order-dependent sum in the engine's evaluator can
@@ -1225,7 +1244,8 @@ Who bids, and how:
   `three_weight` knob) times its three weeks' increment; the simulator has no queue weight until
   PR E, so a step here bids on its week increment alone (below). The decision carries what its claims bid on
   (`policy.Basis`): the bid is set in the queue on the state's dollars that day, so two arms
-  still share a decision while their states agree.
+  still share a decision while their states agree (and, for a seat that reads the week, their
+  view of the week: **The decision's key**).
 - **The ranking tier** holds no gain in the engine's units (it ranks by per-game value) and bids
   $0. Its claims go by priority among the $0 bids.
 - **A market rival** bids by an assumed form (`--rival-bids assumed`, the default) or on the
