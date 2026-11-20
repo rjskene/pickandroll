@@ -510,7 +510,8 @@ finite is refused like any knob's (the engine's own check passes a NaN).
   plan beside the set is drawn against the week's set, so a step due can take the add or the
   drop of a move of the three weeks' set; the executor queues one move an add, and a second
   move of one drop finds its drop gone, so such a step is left out of the names (the queue
-  itself is what it was). The engine's charge leaves a dropped player out, so a named player is
+  itself is what it was). The add of a step that is gone never arrives, so a later step that
+  drops him is left out too (PR F2, from the review of PR E). The engine's charge leaves a dropped player out, so a named player is
   never the drop of a move queued for the same morning. The list is what the seat means to
   queue, not what the day's cap, the week's adds or the claim rules then leave of it (limits,
   item 7, says what follows, and the one case the refit leaves).
@@ -804,7 +805,8 @@ agree, and the key holds no week totals. A rival is the same seat in both arms' 
 that read the week, as the queue's rule does (the week's totals so far are in its problem),
 would share a decision between two seasons whose totals differ. An arm's own seat is never
 shared between two arms (its name is in the seat), and in a room every seat is an arm's, in one
-season.
+season. Since PR F2 a strategy that says it reads the week is keyed on its view of it (**The
+decision's key**), which is what such a rival would need; none is built.
 
 **The rule** (`policy.queue_rule`, `draw_queue`), each day:
 
@@ -841,7 +843,8 @@ plan's steps and for one that does not, and the executor keeps the ones that mat
 queues. The set and a streaming plan beside it are two plans queued together, the plan drawn
 against the week's set, so the list cannot always land whole: a step due can take the add or the
 drop of a move of the three weeks' set. The executor queues one move an add and skips such a
-step; of two moves of one drop the second to land finds its drop gone. The names are made with
+step; of two moves of one drop the second to land finds its drop gone, its add never arrives,
+and a later step that drops that add finds nobody (left out too since PR F2). The names are made with
 the part of the list that can land together, each add and each drop taken once by the first move
 that takes it (`policy.distinct`, held to the executor's own queue and landing by a test, list
 by list); the queue itself is what it was. So a named player is never the drop of a move queued
@@ -963,9 +966,10 @@ lands (a held player whose status has cleared comes back to the bench first and 
 trimmed to the league's spots, then a churn's held drop, the held-slot moves and the adds, an add
 with no active spot gone), Monday resets the adds, a round of the bracket is seeded on
 its first morning (**A bracket week**), each seat decides (a decision cached by team, seat and
-state, so arms in lockstep solve once; `run.decision_key`; a seat that reads a stake is cached
-on its week's `L` too, which the runner sets on each week's first simulated day), the day is
-played and scored; the season is then scored by the league.
+state, so arms in lockstep solve once; a seat that reads a stake is cached on its week's `L`
+too, which the runner sets on each week's first simulated day, and a strategy that reads the
+week on its team's view of the week, **The decision's key** below), the day is played and
+scored; the season is then scored by the league.
 `paired` runs arm A and arm B in one seat and returns each outcome (playoff
 odds, rank, category wins, matchup wins, title) and their difference. **The difference is B less
 A**: arm B's outcome less arm A's, path by path, so a positive difference is what B gains over A
@@ -977,30 +981,36 @@ workers start by `spawn` on every machine: Linux's default, `fork`, copies a par
 already solved (each command runs its first task in the parent), and a HiGHS solve in such a
 worker can spin for ever; a spawned worker is a fresh process, as on macOS by default.
 
-**The decision's key** (`run.decision_key`, PR bracket). Two variants share a team's decision on a
-day when they hold the same strategy in its seat (by its `repr`) and their states agree in
-`SimState.key()`: the day, the rosters, the wire, the adds used, the queue and a waiver league's
-claims. The key holds no totals and no round's pairs, and a rival's decision reads neither. A
-seat that reads the value of this week does (`policy.reads_week`: the exact tier when it executes
-the weighted set or the queue's rule or draws the week's plan; and a seat on the exact or the
-surrogate tier, or a mirror rival, whose `bid` weighs the week, for its claims' size alone), so
-its key also holds its team's **view of the week**
+**The decision's key** (`run.decision_key`, PR F2; the round's pairs, PR bracket). Two variants
+share a team's decision on a day when they hold the same strategy in its seat (by its `repr`)
+and their states agree in `SimState.key()`: the day, the rosters, the wire, the adds used, the
+queue and a waiver league's claims. The key holds no totals and no round's pairs, and most
+decisions read neither. A strategy that reads the value of this week does (`policy.reads_week`:
+the exact tier when it executes the weighted set or the queue's rule or draws the week's plan;
+and a seat on the exact or the surrogate tier, or a mirror rival, whose `bid` weighs the week,
+for its claims' size alone), so its key also holds its team's **view of the week**
 (`policy.week_view`): its opponent, a round's included, and both sides' totals so far. The view
 is the one thing `problem_of` builds the week's span from, so what the problem tells apart the
-cache tells apart. Before this PR the key had no view: two arms of one name whose seats are one
-`repr`, apart only in their rivals or in `execute_plan`, could be handed each other's decision
-once their states agreed again on different totals (on main since the week's totals entered the
-problem; a screen names its second arm apart, a room is one variant, and a pair of two names
-never shared). Every other strategy is keyed as before (a seat that reads a stake on its
-week's `L` too, the guard PR), so what a run shares and solves is the
-same wherever no such pair is played; the same arm twice still shares every decision. Which
-strategies read the week is held by behaviour (`tests/sim/test_sim_bracket_run.py`): each kind
-decides on three states of one key and three views of the week (two opponents, and none), in a
-first round, in a FAAB league and in the season's last week, and one that does not say it reads
-the week gives one decision; a seat with a `bid` block, the guard off, a stake or a stash
-threshold is asked the same. That the round's pairs are no part of `SimState.key()` is held by
-a season too: two variants that seed a round differently share their mirror's solve in it, and
-`shared` and `solves` are those of the same run with no round seeded.
+cache tells apart. Before PR F2 the key had no view. That left a hole on main: two arms of one
+name whose seats are one `repr`, apart only in their rivals or in `execute_plan`, could be
+handed each other's decision once their states agreed again on different totals (a screen names
+its second arm apart, a room is one variant, and a pair of two names never shared a seat). A
+`bid` that weighs the week would have widened it to a plain pair: the two arms' mirror rivals
+are one `repr` when the arms are apart only in the seat's own things, sharing that rival's
+decisions is the design, and its claims would have been sized on the other season's week. Found
+by reading PR F2 beside the bracket PR and closed in PR F2 for every strategy that reads the
+week; the bracket PR added the round's pairs to the view, which two seasons can seed
+differently. Every other strategy is keyed as before (a seat that reads a stake on its week's
+`L` too, the guard PR), so what a run shares and solves is the same wherever no such pair is
+played, and the same arm twice still shares every decision. Who reads the week is held by
+behaviour: each kind of strategy, and a seat with each setting an arm can name, decides on
+states of one key and different views of a week, and one that does not say it reads the week
+gives one decision (`tests/sim/test_sim_bid_key.py` in a regular week;
+`tests/sim/test_sim_bracket_run.py` on three views of a round, two opponents and none, in a
+first round, in a FAAB league and in the season's last week). That the round's pairs are no
+part of `SimState.key()` is held by a season too: two variants that seed a round differently
+share their mirror's solve in it, and `shared` and `solves` are those of the same run with no
+round seeded.
 
 **Determinism.** The same spec, seed and fit give the same outcomes in one process and across
 worker counts, except at an exact tie: there an order-dependent sum in the engine's evaluator can
@@ -1212,7 +1222,9 @@ its figures version 15's with neither named (the season scale's rows now say how
 their ratio rests on, `paths_with_ratio`, in every run that has a scale); 17 since the
 queue's rule (PR E), its figures version 16's with no arm naming `queue` and none executing a
 streaming plan in a league with held slots; and 18 since the bid policy (PR F2), its figures
-version 17's with no `bid` named (a FAAB run's counts gain three keys).
+version 17's with no `bid` named (a FAAB run's counts gain three keys), but for two arms of one
+name whose seat reads the week, which the decision's key now keeps apart on two views of a week
+(**The decision's key**).
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,

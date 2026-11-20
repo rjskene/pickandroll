@@ -8,7 +8,8 @@ used, the keep rule's inputs from the same beliefs, then the knobs. This week's 
 both sides' totals so far come from one place, :func:`week_view`: the pairing's opponent, and in
 a round of the bracket the round's (PR bracket: :func:`seed_round` seeds each round on its first
 morning from the state's own totals, :func:`opponent_of` reads it), where a week had no opponent
-before; the runner keys a seat that reads the week (:func:`reads_week`) on the same view.
+before; the runner keys a strategy that reads the week (:func:`reads_week`) on the same view (PR
+F2).
 **Every knob comes in as a
 mapping of the twelve names of** :data:`KNOBS` **(the ten the live knob file takes,
 ``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two); a
@@ -557,19 +558,25 @@ def distinct(listed: Iterable[mv.Move]) -> list[mv.Move]:
     one is skipped, :func:`queue`), and of two moves of one drop the second to land finds its
     drop gone (:func:`land`). So a move left out for its add takes nothing, and one left out
     for its drop still holds its add: it is queued, and a later move of that add is skipped all
-    the same. A test holds the two readings together, list by list
+    the same. Its add never arrives, though, so a later move that drops him finds nobody at the
+    landing and is left out too, and so on down a chain (the lead's review of PR E; built in PR
+    F2). A test holds the two readings together, list by list
     (``tests/sim/test_sim_queue.py``). Nothing is taken out of the queue here: the executor
     queues from the whole list, as it did before the names were made with it. In a waiver
     league a claim rule can cut a move of the list first (README, limits, item 7)."""
     adds: set[int] = set()
     drops: set[int] = set()
+    gone: set[int] = set()
     out: list[mv.Move] = []
     for m in listed:
         if m.add in adds:
             continue  # the executor queues one move an add
         adds.add(m.add)
-        if m.drop is not None and m.drop in drops:
-            continue  # queued, and gone at the landing: an earlier move took its drop
+        if m.drop is not None and (m.drop in drops or m.drop in gone):
+            # Queued, and gone at the landing: an earlier move took its drop, or its drop is
+            # the add of a move that is itself gone. Either way its own add never arrives.
+            gone.add(m.add)
+            continue
         if m.drop is not None:
             drops.add(m.drop)
         out.append(m)
@@ -928,6 +935,7 @@ def reads_week(
     The surrogate, the ranking and the exact tier's recommended set on the three weeks search
     no week, and a ``bid`` that weighs the season reads the schedule and no matchup
     (:class:`SeasonFigure`): their decisions are the same whatever the view (held by behaviour,
+    ``tests/sim/test_sim_bid_key.py``; in a round of the bracket,
     ``tests/sim/test_sim_bracket_run.py``). A seat that says it reads the week where no claim is
     ever sized (a league without FAAB) shares a little less and decides the same."""
     searches = tier == "exact" and (executes in (WEIGHTED, QUEUE) or with_plan)

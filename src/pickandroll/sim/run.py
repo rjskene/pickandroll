@@ -11,8 +11,8 @@ roster change in one arm reshuffles nothing for any player: common random number
 :func:`simulate` advances several variants of one league through the same world day by day: the
 moves decided yesterday land, each seat decides on the day's beliefs, the lineup is set, the day
 is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
-states agree share one solve (the lockstep of the design note; a seat that reads the week, on
-one view of the week too: :func:`decision_key`, PR bracket); from the first divergence each
+states agree share one solve (the lockstep of the design note; a strategy that reads the week,
+on one view of the week too: :func:`decision_key`, PR F2); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
 of the season's outcomes, B less A; :func:`room` runs a league's seats under named arms rotated
 across paths.
@@ -781,11 +781,12 @@ def decision_key(
     """What two variants must hold alike on a day to share ``team``'s decision: the team, the
     strategy in its seat (its ``repr``) and ``SimState.key()``; and for a strategy that reads
     the week (``policy.reads_week``: the exact tier on the weighted set, the queue's rule or a
-    week's plan; a seat or a mirror whose ``bid`` weighs the week), the team's view of the week too (``policy.week_view``: its opponent, a round's
-    included, and both sides' totals so far), which the state's key does not hold (PR bracket).
-    Before it, two arms of one name apart only in their rivals or in ``execute_plan`` held one
-    ``repr`` in the seat, and once their states agreed again one variant was handed the decision
-    made on the other's week. Every other strategy's decision is the same whatever the view.
+    week's plan; a seat or a mirror whose ``bid`` weighs the week), the team's view of the week
+    too (``policy.week_view``: its opponent, a round's included since PR bracket, and both
+    sides' totals so far), which the state's key does not hold (PR F2). Before it, two variants
+    that held one such ``repr`` in a seat, two arms of one name or one mirror rival of two arms,
+    could be handed each other's decision once their states agreed again on other totals. Every
+    other strategy's decision is the same whatever the view.
 
     A seat that reads a stake (the guard PR) decides on its own week's figure too
     (``SimState.stakes``, which the state's key leaves out), so the key holds it, None for a

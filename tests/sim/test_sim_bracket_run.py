@@ -1,6 +1,8 @@
 """The bracket's opponent through the runner (#172, PR bracket): the decision cache's key holds
-a team's view of its week for a strategy that reads the week, and for no other; the seasons that
-play a round. The pure pairs, the state's and the audit's rule are ``test_sim_bracket.py``'s.
+a team's view of its week for a strategy that reads the week, and for no other (PR F2's key,
+held in a regular week by ``test_sim_bid_key.py``; here with a round's pair in the view); the
+seasons that play a round. The pure pairs, the state's and the audit's rule are
+``test_sim_bracket.py``'s.
 
 Every league is made up and every seed fixed. Each season's test names its time below."""
 

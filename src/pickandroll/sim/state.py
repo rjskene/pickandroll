@@ -343,7 +343,7 @@ class SimState:
         round's pairs (``seeded``, PR bracket) are left out as the week's totals are: a rival's
         decision reads neither, and with them in the key two variants that seed different pairs
         would stop sharing their rivals' decisions. A strategy that does read the week is keyed
-        on its team's view of it besides (``run.decision_key``, ``policy.week_view``)."""
+        on its team's view of it besides (``run.decision_key``, ``policy.week_view``, PR F2)."""
         base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),

@@ -46,7 +46,7 @@ OUT = wk.OUT_ALL | wk.OUT_THIS_WEEK
 
 class Strategy(Protocol):
     """What a seat does on a day: a decision from the problem's inputs. A strategy whose
-    decision reads the value of this week says so (``reads_week``, PR bracket: a :class:`Seat`
+    decision reads the value of this week says so (``reads_week``, PR F2: a :class:`Seat`
     that ``policy.reads_week``, and a :class:`Mirror` whose ``bid`` weighs the week); the runner
     then keys its decisions on the team's week view too. One that does not say is keyed on the
     state alone, as every other rival here is."""
@@ -218,8 +218,8 @@ class Mirror:
     @property
     def reads_week(self) -> bool:
         """Whether this rival's decision reads the week's opponent and totals so far: only
-        when it bids by a ``bid`` that weighs the week (``policy.reads_week``; PR bracket on PR
-        F2). A mirror that names no such block searches no week and says no, as before."""
+        when it bids by a ``bid`` that weighs the week (``policy.reads_week``, PR F2). A mirror
+        that names no such block searches no week and says no, as before."""
         return policy.reads_week("surrogate", bid=self.bid)
 
     def decide(
@@ -271,7 +271,7 @@ class Seat:
     @property
     def reads_week(self) -> bool:
         """Whether this seat's decision reads the week's opponent and totals so far
-        (``policy.reads_week``): the runner's decision cache then keys on them (PR bracket)."""
+        (``policy.reads_week``): the runner's decision cache then keys on them (PR F2)."""
         return policy.reads_week(self.tier, self.executes, self.with_plan, self.bid)
 
     def decide(
