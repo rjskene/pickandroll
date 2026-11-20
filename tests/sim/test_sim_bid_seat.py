@@ -22,9 +22,9 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN
-from pickandroll.sim.shapes import BOOK
+from pickandroll.sim.shapes import BOOK, CONTINUOUS
 from pickandroll.sim.state import LOST, Resolved, initial
-from tests.sim.sim_league import KNOBS, arm, every_category
+from tests.sim.sim_league import KNOBS, arm, every_category, rates
 from tests.sim.test_sim_faab import DAY, built_on, claim, league, on_waivers, spots_of
 
 #: A block naming every key.
@@ -374,6 +374,68 @@ def test_a_claim_s_value_is_no_part_of_the_key_two_seasons_share_a_decision_on()
     ):
         assert replace(state, claims={2: (other,)}).key() != one.key(), other
     assert replace(state, claims={3: (c,)}).key() != one.key()
+
+
+@pytest.mark.parametrize("h2h", [ONE_WIN, EACH_CATEGORY])
+def test_no_decision_reads_an_open_claim_s_value(h2h):
+    """Why the key may leave a claim's value out (the lead's a-8): no decision reads it. Two
+    states of one key, apart only on the values of their open claims (the deciding team's own
+    and two other teams'), give one decision, and one queue after it: the same claims placed,
+    at the same bids and values, and the same state beside them. Held for the seat on each tier
+    with a block naming every key and with none, a mirror rival of each such arm, and a market
+    rival bidding by the assumed form and on the price book. Every add is a claim here (FAAB
+    under continuous waivers) and the day's beliefs make two free agents the best of all, so
+    each of them places one."""
+    base = league(pool=12) if h2h == ONE_WIN else every_category(league(pool=12))
+    setup = replace(base, waiver_rule=CONTINUOUS)
+    spots, _ = spots_of(setup)
+    s = replace(initial(setup), day=setup.start)
+    riser, second, *_, x, y, z = sorted(s.pool)
+    beliefs = {**setup.projection, riser: rates(3.0), second: rates(2.5)}
+    waiting = (x, y, z)
+
+    def at(value: float):
+        claims = {}
+        for team, k in zip((1, 2, 3), waiting, strict=True):
+            c = claim(k, setup.rosters[team][-1][0], s.day + DAY, 3)
+            claims[team] = (replace(c, value=value * team),)
+        return replace(s, claims=claims)
+
+    one, two = at(0.4), at(7.0)
+    assert one != two and one.key() == two.key()
+    rule = bp.of(EVERY_KEY)
+    knobs = {**KNOBS, "plan_floor_cats": 0.25}
+    # The surrogate decides on every day here, so this one is a day of its own.
+    daily = replace(policy.DEFAULT_FIELDS, surrogate_days=tuple(range(7)))
+    cases = []
+    for tier in ("exact", "surrogate", "ranking"):
+        u = replace(arm("U", tier, plan_floor_cats=0.25), fields=daily)
+        cases += [(setup, 1, u.seat()), (setup, 1, replace(u, bid=rule).seat())]
+    cases += [(setup, 2, op.Mirror(knobs, daily, bid=block)) for block in (None, rule)]
+    market = op.Market(1.0, op.SEASON, 3)
+    book = replace(setup, rival_bids=BOOK, rival_prices=((0.0, 1), (0.5, 7)))
+    cases += [(setup, 3, market), (book, 3, market)]
+    bids = []
+    for room, team, strategy in cases:
+        got = []
+        for state in (one, two):
+            g = np.random.default_rng(7)
+            decision = strategy.decide(room, state, team, beliefs, {}, {}, g)
+            # The day's cap as a run reads it: the arm's knob, and one move for a market rival.
+            cap = int(policy.knob(strategy.knobs, "daily_cap")) if team != 3 else 1
+            out = policy.queue(state, team, decision, cap, room.max_weekly_adds, False, spots, room)
+            held = len(state.claims[team])
+            # The claims that stood are as they stood, their values with them.
+            assert out.claims[team][:held] == state.claims[team]
+            assert all(out.claims[t] == state.claims[t] for t in (1, 2, 3) if t != team)
+            got.append((decision, out.claims[team][held:], replace(out, claims={}), g.random()))
+        assert got[0] == got[1], strategy
+        assert got[0][0].moves and got[0][1], strategy
+        bids.append(max(c.bid for c in got[0][1]))
+    # The comparison is of bids that are there: every seat that bids placed one above $0.
+    exact, exact_named, sur, sur_named, ranked, ranked_named, mirror, mirror_named, *rivals = bids
+    assert min(exact, exact_named, sur, sur_named, mirror, mirror_named, *rivals) > 0
+    assert ranked == ranked_named == 0
 
 
 # --------------------------------------------------------------------------- the decision
