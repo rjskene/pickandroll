@@ -771,7 +771,9 @@ def test_a_value_found_on_the_exact_tier_is_confirmed_on_the_exact_tier(data: Pa
     )
     assert flipped["change"] == {"execute_plan": True}
     pair = pair_of(data, "exact", "p1-execute_plan-flipped")
-    assert pair["specs"]["a"] == {**BASE, "tier": "exact"}
+    # Since PR E the row writes the plan drawn in both arms. Here that is the arm's default
+    # written out, so it is no change from the baseline and ``both`` above does not name it.
+    assert pair["specs"]["a"] == {**BASE, "tier": "exact", "with_plan": True}
     final = rec["final"]
     assert final["arm"] == {**BASE, "execute_plan": True} and final["set"] == {"execute_plan": True}
     assert (final["tier"], final["unread"]) == ("exact", {})
@@ -1097,10 +1099,21 @@ def test_a_dry_run_prints_the_plan_and_the_estimate_and_writes_nothing(data: Pat
     confirmation season is planned: the season is not read."""
     log: list = []
     monkeypatch.setattr(ss, "task_paired", made_up(WIDER, log))
+    held: list = []
+    audited = ss.audited
+
+    def spy(keys, results, rules=None):
+        held.append(rules)
+        return audited(keys, results, rules)
+
+    monkeypatch.setattr(ss, "audited", spy)
     before, counted, mark = folders(data), looks(data), len(READS)
     code, out = tune(data, "--dry-run", levers=(*LEVERS, "system"), name="dry", arm="R")
     assert code == 0, out
     assert set(READS[mark:]) == {2024}
+    # Each timed task is audited under the rules the run's pairs are held to, as a screen's is:
+    # the league's bracket has a round, so PR bracket's rule is among them (``cli.audit_rules``).
+    assert len(held) == 2 and all(audit.BRACKET_PAIRS in rules for rules in held)
     assert "one task of each of 2 lever(s) timed in" in out
     assert "the tune dry, its plan: 1 pass(es) over 3 lever(s) in this order" in out
     assert "the search's cells: season(s) 2024 by prior, 2 paths a cell; never the hold-out" in out
@@ -1665,7 +1678,11 @@ def test_a_lever_first_read_after_another_moved_is_timed_then_and_the_hour_s_rul
         ("execute_plan", {"execute_plan": False}),
     ]
     assert rec["final"]["set"] == {"with_plan": True, "execute_plan": False}
-    assert rec["left"] is None and list(rec["final"]["unread"]) == ["with_plan"]
+    # Nothing of the final set is called unread: since PR E the screen's reads have no clause
+    # for a plan drawn and not executed (``with_plan`` is no lever of a season; here it is one
+    # of this test's two made-up switches). What a final arm does not read is held by the
+    # tests of the season scale and of the horizon's weight, above.
+    assert rec["left"] is None and rec["final"]["unread"] == {}
 
 
 def test_a_piece_stopped_at_the_confirmation_s_pair_has_not_opened_the_season(

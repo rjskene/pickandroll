@@ -4677,12 +4677,12 @@ def cmd_tune(args: argparse.Namespace) -> int:
         "search may play pairs this plan does not list, and the hour's rule is read again "
         "before each pair)"
     )
-    audit_rules = audit.rules_of(rules.waivers, rules.waiver_rule)
+    held_to = audit_rules(rules, plan.grid)
     if args.dry_run:
         code = 0
         for _, row, made in untimed:
             key = ident(wa, row.a or {}, row.b or {})
-            _, note = audited([timed_keys[row.key]], [firsts[key]], audit_rules)
+            _, note = audited([timed_keys[row.key]], [firsts[key]], held_to)
             if note["paths_voided"]:
                 print(f"the pair of {row.key}, its timed task:")
                 code = max(code, audit_exit(note))
