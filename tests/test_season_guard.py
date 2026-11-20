@@ -51,6 +51,15 @@ def built_of(problem: mv.MoveProblem, scorer=POINTS, **kw) -> sm.Built:
     return sm.Built(problem, {"key": "bbm"}, HORIZONS, {}, 0, scorer=scorer, **kw)
 
 
+def drop_clocks(out: dict) -> dict:
+    """``out`` without its wall-clock fields, for a byte-for-byte payload test (#451): the
+    search's seconds and the week plans' seconds, which differ between two builds."""
+    out["search"].pop("seconds", None)
+    if isinstance(out.get("week_plans"), dict):
+        out["week_plans"].pop("seconds", None)
+    return out
+
+
 # --------------------------------------------------------------------------- the line
 def test_a_set_is_allowed_at_zero_or_more_and_a_move_without_a_line_counts_none():
     ros = {mv.Move(10, 3): -2.0, mv.Move(11, 2): 2.0, mv.Move(12, 1): None}.get
