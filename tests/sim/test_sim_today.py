@@ -647,3 +647,14 @@ def test_the_rule_is_part_of_the_league_kind_and_a_screens_world_names_it_only_w
 
     assert kind(TOMORROW) == ss.league_kind(SimpleNamespace(grid=grid, league_rules=shapes.PLAIN))
     assert kind(TODAY) != kind(TOMORROW) and kind(TODAY)["rules"]["lineup_from"] == TODAY
+
+
+def test_the_version_says_the_rule():
+    """``replay_version`` 21 says the rule; no screen version moves: a screen that names no
+    lineup rule records the world it did before."""
+    why = ss.REPLAY_VERSION_WHY
+    assert ss.REPLAY_VERSION == 21
+    assert why.startswith("21: a league whose free-agent adds play the same day: ")
+    mine = why.split("20: the union pool")[0]
+    for said in ("lineup_from", "lands_same_day", "free_agents_same_day", "version 20's"):
+        assert said in mine, said

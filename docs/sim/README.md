@@ -1116,7 +1116,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
   `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
-  the run's league rules ("The league shapes"). The payload (`replay_version` 20) keys by season
+  the run's league rules ("The league shapes"). The payload (`replay_version` 21) keys by season
   what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
@@ -1298,8 +1298,10 @@ version 17's with no `bid` named (a FAAB run's counts gain three keys), but for 
 name whose seat reads the week, which the decision's key now keeps apart on two views of a week
 (**The decision's key**); 19 since the bracket's rounds (PR bracket), its figures version
 18's for a seat that executes the three weeks' set alone and names no `bid` on the week (**A
-bracket week**); and 20 since the union pool as an arm's choice (PR pool), its figures version
-19's with the field left off.
+bracket week**); 20 since the union pool as an arm's choice (PR pool), its figures version
+19's with the field left off; and 21 since a league whose free-agent adds play the same day (PR
+today, `--lineup-from today`), its figures version 20's with the rule left off (**A league whose
+adds play the same day**).
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,

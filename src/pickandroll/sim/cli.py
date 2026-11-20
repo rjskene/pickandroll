@@ -1546,8 +1546,20 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 20
+REPLAY_VERSION = 21
 REPLAY_VERSION_WHY = (
+    "21: a league whose free-agent adds play the same day: a league rule of the run, "
+    "lineup_from (--lineup-from, tomorrow by default, today); under today a free agent's add "
+    "decided on a day lands that day, once every seat has decided on the morning's wire and "
+    "before the day's lineups, in the day's rotation, with its drop and its held-slot moves, "
+    "and his line of the day is his new team's; a claim is decided as before; the seat's "
+    "problem is the live build's (a free agent effective today, the weeks' own add windows); "
+    "the audit holds such a league to lands_same_day in the place of lands_next_day; the record "
+    "names the rule in the league's rules, the label, the execution model "
+    "(free_agents_same_day, with a name of its own for each kind of waivers) and lineup_note; a "
+    "screen's or a tune's world names the flag only when named, and the rule is part of the "
+    "league kind; under continuous waivers every add is a claim and the rule moves nothing; "
+    "with the rule left off the figures are version 20's. "
     "20: the union pool as an arm's choice: an arm may set a fifth field, guard_pool, the size "
     "of the guard's list (0, the default, is off); above 0, while the arm's guard blocks, the "
     "exact tier's three weeks' set, its weighted search and under the queue's rule its week's "
