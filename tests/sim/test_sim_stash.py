@@ -761,6 +761,86 @@ def test_the_lever_does_something_the_threshold_changes_the_roster_at_the_end(h2
     assert plain.counts[1] == {m: none.counts[1][m] for m in ct.METRICS}
 
 
+#: The seasons in which an exact arm that names a threshold and executes its streaming plan
+#: beside its set queued a step whose drop its set moved to a held slot the same morning (found
+#: by PR E's refit review on that PR's tree, and met on this PR's): the league (scoring,
+#: waivers, the waiver rule, the format, the held slots) and the world's seed and path.
+HELD_STEP = {
+    "every category, no waivers, IL and IL+": (
+        ("categories", "none", DROPPED, EACH_CATEGORY, ("IL", "IL+")),
+        (1, 0),
+    ),
+    "points, one win, priority, IL": (
+        ("points", "priority", DROPPED, ONE_WIN, ("IL",)),
+        (1, 1),
+    ),
+}
+
+
+def plan_season(kind, path, threshold: float | None = SHARE):
+    """A made-up season of six weeks with a two-week bracket, four seats and twelve free
+    agents, in the league ``kind`` says: seat 1 an exact arm at ``threshold`` that executes its
+    streaming plan beside its set (two moves a day, both plan floors below zero, so it takes
+    each plan the stream draws) among market rivals at 0.3 a day. The result and the day
+    records."""
+    scoring, waivers, rule, h2h, held = kind
+    setup = make_setup(teams=4, pool=12, weeks=6, playoff_weeks=2, held_slots=held)
+    if scoring == "points":
+        spec = replace(setup.spec, scoring="points", points=POINTS_TABLE, cats=())
+        setup = replace(setup, scoring="points", points=POINTS_TABLE, cats=("fpts",), spec=spec)
+    if waivers != "none":
+        setup = replace(setup, waivers=waivers, waiver_days=2, waiver_rule=rule)
+    setup = of_format(setup, h2h)
+    knobs = {
+        **KNOBS,
+        "daily_cap": 2,
+        "plan_floor_cats": -1.0,
+        "plan_floor_points": -1.0,
+        "stash_threshold": threshold,
+    }
+    seat = rn.Arm("P", "exact", knobs, {"kind": "market"}, policy.QUEUE_SET, True, True)
+    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *path)
+    days: list = []
+    variant = {**{t: op.Market(0.3) for t in setup.teams}, TEAM: seat.seat()}
+    (result,) = rn.simulate(
+        setup,
+        w,
+        [variant],
+        [seat.execute_plan],
+        on_day=days.append,
+        stash=threshold is not None,
+    )
+    return result, days
+
+
+@pytest.mark.parametrize("kind", HELD_STEP)
+def test_no_add_of_an_arm_that_executes_its_plan_lands_in_a_held_slot(kind):
+    """The set and the streaming plan are two plans queued together, and the list cannot always
+    land whole: on some night of each of these seasons the arm's set carries a held-slot move
+    for a player and a plan step due drops that same player. The morning takes him to the slot
+    and the step is gone, counted as one (``policy.land``; ``test_sim_held_landing.py`` has the
+    night by hand). Before, the step's add took the slot his drop sat in, and the audit found a
+    healthy player in a held slot (``held_kind``). The landing's line is main's; a season
+    meets it only when the arm also names a threshold, whose kept players its set moves to a
+    held slot where the search at None drops them. Two league kinds, as found: every category
+    without waivers, and a points league with one win a matchup and waivers by priority."""
+    league, path = HELD_STEP[kind]
+    result, days = plan_season(league, path)
+    assert result.breaches == ()
+    nights = [
+        i
+        for i, r in enumerate(days[:-1])
+        if {k for k, _ in r.state.pending_held.get(TEAM, ())}
+        & ({m.drop for m in r.queued.get(TEAM, ())} | {c.move.drop for c in r.claims.get(TEAM, ())})
+    ]
+    assert nights, "no night queued a step whose drop a queued held-slot move takes"
+    gone = [
+        days[i + 1].state.gone_by.get(TEAM, 0) - days[i].state.gone_by.get(TEAM, 0) for i in nights
+    ]
+    assert max(gone) >= 1, gone
+    assert result.counts[TEAM]["gone"] >= 1
+
+
 def test_a_pair_and_a_room_carry_the_count_when_an_arm_names_a_threshold_and_only_then():
     """The count through the runner's pair and room (``run.paired``, ``run.room``): a row of
     every arm, and the rivals' (market rivals build no problem, so theirs is None), when one arm

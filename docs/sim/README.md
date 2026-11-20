@@ -424,6 +424,16 @@ held slots at None is the one before, key for key, but for one word of the recor
 table's row for `stash_threshold` ("What each knob reads"), which every record carries and which
 now says who reads the knob, at None too. No figure moves.
 
+**No add lands in a held slot** (`policy.land`). An arm that executes its streaming plan beside
+its set queues two plans together, and a plan step due can drop the player the set's held-slot
+move takes to a held slot that same morning. The step is then gone, as a claim whose drop is no
+longer an active player fails. Before this PR the step's add took the slot its drop sat in, a
+healthy player in a held slot, which the audit finds (`held_kind`). The landing's line was
+main's; a made-up season meets it only when the arm also names a threshold, so it is fixed here
+(found by PR E's refit review). Rule 1 so has a second exception, in a league with held slots
+only: a season the audit refused before plays now, and an arm that executes its plan may differ
+from main on such a morning.
+
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters
 what is recorded, such as a plan drawn and not executed, is not read. The shape is the league's
