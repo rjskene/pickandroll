@@ -7,6 +7,7 @@ its time below."""
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import replace
 from datetime import timedelta
@@ -297,6 +298,53 @@ def test_an_arm_at_its_weeks_limit_sends_no_add_on_the_weeks_last_day():
     s = policy.queue(s, 1, policy.Decision((mv.Move(f, one),)), 1, 2, False, spots, setup)
     s = policy.queue(s, 2, policy.Decision((mv.Move(g, two),)), 1, 2, False, spots, setup)
     assert s.pending[1] == () and s.pending[2] == (mv.Move(g, two),)
+
+
+def test_a_seat_at_five_adds_in_a_week_sends_no_sixth_and_the_audits_weekly_rule_holds_it():
+    """The user's league allows five adds a week (``--league adds=5``): a seat with five charged
+    this week queues no sixth, one with four queues its fifth, which lands the same day, and the
+    audit's weekly rule finds nothing on that day and names a sixth."""
+    setup = same_day(make_setup(teams=4, max_weekly_adds=5))
+    spots, counts = spots_of(setup)
+    day = setup.start + DAY
+    s = replace(initial(setup), day=day, adds_used={1: 5, 2: 4})
+    f, g = sorted(s.pool)[:2]
+    one, two = setup.rosters[1][-1][0], setup.rosters[2][-1][0]
+    s = policy.queue(s, 1, policy.Decision((mv.Move(f, one),)), 1, 5, False, spots, setup)
+    s = policy.queue(s, 2, policy.Decision((mv.Move(g, two),)), 1, 5, False, spots, setup)
+    assert s.pending[1] == () and s.pending[2] == (mv.Move(g, two),)
+    after = policy.land(s, setup.teams, spots, counts, arrived=True)
+    assert g in {k for k, _ in after.rosters[2]} and not after.pending.get(2)
+    clean = audit.Day(day, 0, after, {}, {1: {}}, decided=s)
+    assert list(audit.weekly_adds(setup, clean, None)) == []
+    sixth = replace(after, adds_used={**after.adds_used, 2: after.adds_used.get(2, 0) + 1})
+    found = list(audit.weekly_adds(setup, replace(clean, state=sixth), None))
+    assert found == [(2, "6 adds this week on a cap of 5")]
+
+
+# --------------------------------------------------------------------------- the league's adds
+def test_a_league_of_five_adds_a_week_parses_and_the_grids_axis_does_not_move():
+    """``--league adds=`` takes any positive whole count or ``none`` (PR today): the user's
+    league allows five. The other keys take the grid's values as before, the grid's own adds axis
+    is the same, and a one-shape grid's visit rule plays every seat in turn as before."""
+    five = shapes.parse_league("adds=5")
+    assert five == replace(shapes.FIXED, weekly_adds=5)
+    assert five.label() == "12 teams, 13 slots, 5 adds a week, 6 playoff teams over 3 weeks"
+    assert shapes.parse_league("adds=none").weekly_adds is None
+    assert shapes.parse_league("teams=10,adds=12").weekly_adds == 12
+    assert [shapes.parse_league(f"adds={a}").weekly_adds for a in (2, 3, 4)] == [2, 3, 4]
+    assert shapes.FULL.adds == (2, 3, 4, None) and len(shapes.FULL.shapes) == 72
+    grid = shapes.one("league", five)
+    assert [shapes.visit(i, grid) for i in range(3)] == [shapes.Visit(five, 0, i) for i in range(3)]
+    with pytest.raises(ValueError, match="the grid's teams are 10, 12, 14"):
+        shapes.parse_league("teams=11,adds=5")
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "five", "2.5", ""])
+def test_adds_of_zero_a_negative_or_a_word_are_refused_by_name(value):
+    why = f"--league adds={value}: a positive whole count of adds a week, or none"
+    with pytest.raises(ValueError, match=re.escape(why)):
+        shapes.parse_league(f"adds={value}")
 
 
 # --------------------------------------------------------------------------- the audit's rule
@@ -620,6 +668,26 @@ def test_a_same_day_run_records_its_rule_its_model_its_note_and_its_audit(wire: 
     names = [r["name"] for r in p["audit"]["rules"]]
     assert "lands_same_day" in names and "lands_next_day" not in names
     assert p["audit"]["paths_voided"] == 0
+
+
+def test_the_users_league_of_five_adds_runs_and_its_record_names_five(wire: Path):  # noqa: F811
+    """The user's league on the command line: five adds a week (``--league adds=5``), two IL
+    slots, waivers by priority on which only a dropped player waits two days, and adds that play
+    the same day. The record names five, the audit (its weekly rule among the rest) finds
+    nothing, and zero adds is refused by name before any path."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--league", "adds=5")
+    rules = ("--held", "IL=2", "--waivers", "priority", "--waiver-days", "2")
+    code, out = replay(wire, *room, *rules, "--lineup-from", "today")
+    assert code == 0, out
+    p = written(out)
+    assert p["league"]["shapes"] == [replace(shapes.FIXED, weekly_adds=5).payload()]
+    assert p["league"]["rules"]["lineup_from"] == TODAY and p["league"]["rules"]["held"]
+    names = [r["name"] for r in p["audit"]["rules"]]
+    assert "weekly_adds" in names and "lands_same_day" in names
+    assert p["audit"]["paths_voided"] == 0
+    code, out = replay(wire, "--seats", *spec(wire, "R", "S"), "--paths", "1", "--league", "adds=0")
+    assert code == 2 and "--league adds=0: a positive whole count of adds a week, or none" in out
+    assert "tasks (" not in out
 
 
 def test_under_continuous_waivers_the_record_says_the_rule_moves_nothing(wire: Path):  # noqa: F811

@@ -78,7 +78,7 @@ def test_league_and_grid_are_refused_by_name(wire: Path):
     pair = ("--arms", *spec(wire, "S", "R"))
     for flags, why in (
         (("--league", "teams=11"), "--league teams=11: the grid's teams are 10, 12, 14"),
-        (("--league", "adds=5"), "the grid's adds are 2, 3, 4, none"),
+        (("--league", "adds=0"), "--league adds=0: a positive whole count of adds a week, or none"),
         (("--league", "size=3"), "is not one of teams, slots, adds, playoffs="),
         (("--league", "teams=10", "--grid", "full"), "--league names one league shape"),
     ):

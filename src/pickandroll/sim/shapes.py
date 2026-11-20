@@ -234,9 +234,11 @@ LEAGUE_KEYS = ("teams", "slots", "adds", "playoffs")
 
 def parse_league(text: str) -> LeagueShape:
     """One league shape for a whole run (``replay --league``, #172, PR D4b), as
-    ``teams=10,slots=15,adds=none,playoffs=4/2``: each key a value of the full grid's axis
-    (``adds`` a count or ``none``, ``playoffs`` teams/weeks); a key left out takes the fixed
-    shape's value. ValueError, in words, on anything else."""
+    ``teams=10,slots=15,adds=none,playoffs=4/2``: ``teams``, ``slots`` and ``playoffs``
+    (teams/weeks) each a value of the full grid's axis; ``adds`` any positive whole count or
+    ``none`` (PR today: the private league's five is no value of the grid's; the grid's own
+    axis does not change); a key left out takes the fixed shape's value. ValueError, in words,
+    on anything else."""
     given: dict[str, str] = {}
     for part in (x.strip() for x in text.split(",") if x.strip()):
         key, eq, value = part.partition("=")
@@ -255,10 +257,12 @@ def parse_league(text: str) -> LeagueShape:
     choices: dict[str, dict[str, Any]] = {
         "teams": {str(t): t for t in FULL.teams},
         "slots": {str(len(r)): r for r in FULL.rosters},
-        "adds": {"none" if a is None else str(a): a for a in FULL.adds},
         "playoffs": {f"{p}/{w}": (p, w) for p, w in FULL.playoffs},
     }
     for key, value in given.items():
+        if key == "adds":
+            out[key] = parse_adds(value)
+            continue
         if value not in choices[key]:
             raise ValueError(
                 f"--league {key}={value}: the grid's {key} are {', '.join(choices[key])}"
@@ -266,6 +270,17 @@ def parse_league(text: str) -> LeagueShape:
         out[key] = choices[key][value]
     playoff_teams, playoff_weeks = out["playoffs"]
     return LeagueShape(out["teams"], out["slots"], out["adds"], playoff_teams, playoff_weeks)
+
+
+def parse_adds(value: str) -> int | None:
+    """``--league adds=``: ``none`` (no limit) or a positive whole count of adds a week, any
+    count (PR today), not only the grid's two, three or four. ValueError, naming the value, on
+    zero, a negative or a word."""
+    if value == "none":
+        return None
+    if not value.isdigit() or int(value) < 1:
+        raise ValueError(f"--league adds={value}: a positive whole count of adds a week, or none")
+    return int(value)
 
 
 def axis_values(shape: LeagueShape) -> Mapping[str, Any]:
@@ -833,6 +848,7 @@ __all__ = [
     "Visit",
     "axis_values",
     "one",
+    "parse_adds",
     "parse_budget",
     "parse_h2h",
     "parse_held",

@@ -5507,7 +5507,8 @@ def _world_args(p: argparse.ArgumentParser) -> None:
         default=None,
         metavar="KEY=VALUE,...",
         help="one league shape for the whole run, as teams=10,slots=15,adds=none,playoffs=4/2: "
-        "each a value of the grid's, a key left out the fixed shape's; not with --grid full",
+        "teams, slots and playoffs each a value of the grid's, adds any positive whole count or "
+        "none, a key left out the fixed shape's; not with --grid full",
     )
     p.add_argument(
         "--scoring",

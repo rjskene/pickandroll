@@ -1681,9 +1681,12 @@ parameter with the rest and sets the grid.
   two weeks, six over three or eight over three. Seventy-two shapes, in the order of
   `itertools.product(playoffs, adds, slots, teams)`, the team count fastest. The order is part of
   the record and is never changed (a test pins it).
-- **One shape for a run** (`--league teams=10,slots=15,adds=none,playoffs=4/2`): each value one of
-  the grid's, a key left out the fixed shape's; refused with `--grid full`. A pair's paths round
-  up to that shape's team count. It is for the tests, a real look and a question about one shape.
+- **One shape for a run** (`--league teams=10,slots=15,adds=none,playoffs=4/2`): the teams, the
+  slots and the playoffs each one of the grid's values, the adds any positive whole count or
+  `none` (since PR today: the private league allows five a week, no value of the grid's; the
+  grid's own axis does not change, and zero, a negative or a word is refused by name), a key left
+  out the fixed shape's; refused with `--grid full`. A pair's paths round up to that shape's team
+  count. It is for the tests, a real look and a question about one shape.
 
 **The visit rule** (`shapes.visit`, a pure function of the path and the grid). With N shapes, path
 `i` plays shape `c = i mod N` in round `j = i div N`. Inside a round each team count's 24 shapes
