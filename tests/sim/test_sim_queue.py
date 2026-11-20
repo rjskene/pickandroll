@@ -11,8 +11,10 @@ problems, not seasons; a season is played only where a season is the point.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import itertools
 import json
+import sys
 from collections import Counter
 from dataclasses import replace
 from datetime import timedelta
@@ -240,7 +242,8 @@ def check_parity(built, weight: float, playoff: bool) -> policy.Drawn:
     p = built.problem
     drawn = policy.draw_queue(built)
     ev = mv.Evaluator(p)
-    allowed = policy.guard_of(built)
+    # The arm's allowed set: the season guard, or none under the arm's guard ``off``.
+    allowed = policy.allowed_of(built)
     held = pl.held_out(ev)
     assert (drawn.weight, drawn.playoff) == (weight, playoff)
     # The three weeks' set as ``executes: three`` finds it.
@@ -266,6 +269,49 @@ def check_parity(built, weight: float, playoff: bool) -> policy.Drawn:
     chosen = pl.for_queue(ev, every, three, weight, playoff, allowed, held)
     assert drawn.chosen == chosen
     return drawn
+
+
+def engine_calls(monkeypatch) -> list[tuple[str, object]]:
+    """Every call the queue's rule makes of the engine from here on that takes an allowed set,
+    with the set it hands over: ``moves.recommend``, ``moves.search``, ``stream.plan``,
+    ``plans.every_plan`` and ``plans.for_queue`` as ``sim/policy.py`` calls them (the engine's
+    own calls of one another, and this file's, are not kept)."""
+    seen: list[tuple[str, object]] = []
+    doors = ((mv, "recommend"), (mv, "search"), (st, "plan"), (pl, "every_plan"), (pl, "for_queue"))
+    for module, name in doors:
+        real = getattr(module, name)
+        signature = inspect.signature(real)
+
+        def spy(*a, _real=real, _sig=signature, _name=name, **k):
+            if sys._getframe(1).f_code.co_filename.endswith("sim/policy.py"):
+                seen.append((_name, _sig.bind(*a, **k).arguments.get("allowed")))
+            return _real(*a, **k)
+
+        monkeypatch.setattr(module, name, spy)
+    return seen
+
+
+@pytest.mark.parametrize("case", ["every category, a plan taken", "one win, a plan taken"])
+def test_under_the_guard_off_the_queue_s_rule_hands_the_engine_no_allowed_set(case, monkeypatch):
+    """The guard PR's field on the queue's rule. Every call the rule makes of the engine takes
+    the arm's allowed set (``policy.allowed_of``): the season guard under the block, and none
+    under ``off``, for the three weeks' set, the week's set, the streaming plan, the plans and
+    the queue's choice alike. Under ``off`` what the seat draws is still the library's own
+    answer on those inputs, with no allowed set (:func:`check_parity`). The seat's problem
+    under ``off`` is the one ``policy.guarded`` makes at no stake: the same problem, the
+    guard's name changed."""
+    make, weight, playoff, _ = PARITY[case]
+    built = make()
+    off = replace(built, guard=policy.OFF)
+    assert policy.allowed_of(built) is not None and policy.allowed_of(off) is None
+    seen = engine_calls(monkeypatch)
+    for b, none in ((built, False), (off, True)):
+        seen.clear()
+        policy.draw_queue(b)
+        names = [name for name, _ in seen]
+        assert names[-3:] == ["plan", "every_plan", "for_queue"] and names.count("recommend") == 2
+        assert all((allowed is None) is none for _, allowed in seen), (names, none)
+    check_parity(off, weight, playoff)
 
 
 def decision_of(built, drawn: policy.Drawn, monkeypatch) -> policy.Decision:

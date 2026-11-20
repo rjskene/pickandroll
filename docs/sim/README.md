@@ -486,7 +486,9 @@ stake. Both are here to be measured, and a result here changes nothing live with
   handed the engine's season guard (`moves.season_guard`: a set whose rest of the season is below
   0 is not allowed), as live. Under `off` no search of the tier is handed an allowed set: the
   exact tier's recommended set (or its weighted search), its week set and its streaming plan, and
-  the surrogate's search. A set that loses on the rest of the season may then be queued, and what
+  the surrogate's search; and for an arm that executes `queue` (PR E) every call of its rule,
+  the week's plans and the queue's choice among them too (`policy.draw_queue`). A set that loses
+  on the rest of the season may then be queued, and what
   holds it back is the season term at the arm's `season_weight`, which may be 0. The week plan
   takes no season term, so under `off` the season guard no longer holds its steps back; the
   stream's own check (a step's path must be no worse on the weeks after, `stream.plan`) still
@@ -768,7 +770,11 @@ the gate that weighs a plan against the set are the engine's, without the term. 
 does not read the term either (**The knobs, the fields and the season term**): it admits or
 refuses every set and every plan on the engine's own season figure, the same at any weight. A
 set the term chose can therefore be worth little on the engine's score, and a plan then passes
-it; the guard holds every plan all the same. The reads table says so beside `season_weight` for
+it; the guard holds every plan all the same. That is under the arm's `guard: block`, the default.
+Under `off` (**The season guard and the week's stake**) the rule hands the engine no allowed
+set at all: the three weeks' set, the week's set, the streaming plan, the plans and the queue's
+choice are searched without the season guard, and the count of sets decided past the guard asks
+about the three weeks' set only, never about a leading plan's steps. The reads table says so beside `season_weight` for
 an arm that executes `queue`, and the count of the days the queue took a plan (below) is where a
 run shows it. At `season_weight` 0 the rule is the library's choice on the plain set.
 

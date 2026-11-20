@@ -119,7 +119,7 @@ the plan's steps, dated, when a plan leads (:attr:`Decision.plan_leads`), else t
 term is on the three weeks' set only; the plans and the gate are the engine's own score (the
 library's functions do not take the term's wrapper: a bracket week's gate reads the matchup's
 odds, which it has not), and the season guard, which does not read the term, admits or refuses
-every plan all the same.
+every plan all the same; under the arm's guard ``off`` (below) none of them is handed it.
 
 **The guard and the stake** (the guard PR, an arm's two season fields, :data:`SEASON_FIELDS`).
 ``guard`` is ``block`` (the default: the engine's season guard on every search of the tier, as
@@ -1299,8 +1299,9 @@ def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
        (:func:`in_bracket`);
     4. ``plans.held_out``, ``plans.every_plan`` and ``plans.for_queue``, each given the guard.
 
-    The guard is the arm's season guard (:func:`guard_of`), taken once here for every call; it
-    is the engine's own season figure and does not read the season term. The plans and the gate
+    The allowed set is the arm's (:func:`allowed_of`: the season guard under ``block``, none
+    under the arm's guard ``off``, the guard PR), taken once here for every call; the guard is
+    the engine's own season figure and does not read the season term. The plans and the gate
     are valued on the engine's plain evaluator: the season term reaches the choice through the
     three weeks' set only (``plans.matchup`` reads the evaluator's odds and ``plans.held_out``
     builds evaluators of its own, so the library does not take :class:`Seasoned`). Two things
@@ -1309,7 +1310,7 @@ def draw_queue(built: Built, fields: Fields = DEFAULT_FIELDS) -> Drawn:
     p = built.problem
     three = exact(built, QUEUE_SET, False, fields)
     ev = mv.Evaluator(p)
-    allowed = guard_of(built)
+    allowed = allowed_of(built)
     swaps = mv.single_swaps(ev, "week")
     week = mv.recommend(
         ev, "week", _three_pool(swaps, fields), min_gain=fields.min_gain, allowed=allowed
