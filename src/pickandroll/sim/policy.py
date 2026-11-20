@@ -82,6 +82,17 @@ own (``stream.floor_of``: ``PLAN_FLOOR_ODDS``), so ``plan_floor_cats`` is read b
 seat that bids scales by that floor until ten moves. A league that counts every category, and a
 points league, are valued as before. The ranking tier, a market rival and a static seat read no
 odds and do not change. :func:`measure_of` names the measure for the record.
+
+**The union pool** (PR pool, an arm's fifth field, ``guard_pool``). The exact tier cuts its pool
+before the season guard sees anything: the best ``pool`` by single-swap gain. Live has searched
+a union since #424 (``season.pool``): that head, then the adds whose best single move the guard
+admits. At a ``guard_pool`` above 0 the exact tier's searches take it, the three weeks' set by
+``pool.pool_for`` and the weighted search by its head and each horizon's admitted list joined
+(:func:`exact`, :func:`_weighted_union`); the rule is the engine's, called through the door
+(``sp``), with the one guard the day's searches share. At 0, the default, the lines of before
+run and the rule is not called. The week plan's set, :func:`scale_of`, the surrogate, the
+ranking tier and the rivals do not read the field (:func:`field_reads`). A decision says what
+its union was (:class:`PoolUnion`), for the counts.
 """
 
 from __future__ import annotations
@@ -923,17 +934,19 @@ def exact(
     (``pool.pool_for`` through the door on the single swaps the arm ranks today, the season
     term on them; for the weighted search :func:`_weighted_union`). The guard is the one object
     every search of the day is handed, so what it has worked out for the list is not worked out
-    again. The decision then says what the union was (:class:`PoolUnion`). The week plan's set
-    below is not part of it: it searches the first ``pool`` candidates in candidate order,
-    whatever the field."""
+    again. The decision then says what the union was (:class:`PoolUnion`). A list needs a
+    guard: handed none, the rule gives the head alone, so the searches run as at 0 and no union
+    is kept. The week plan's set below is not part of it: it searches the first ``pool``
+    candidates in candidate order, whatever the field."""
     p = built.problem
     ev = mv.Evaluator(p)
     allowed = guard_of(built)
+    listed = fields.guard_pool > 0 and allowed is not None
     solves = 0
     union: sp.Pool | None = None
     tables: tuple[Swaps, ...] = ()
     if executes == WEIGHTED:
-        if fields.guard_pool > 0:
+        if listed:
             both = _horizon_swaps(ev)
             union = _weighted_union(both, allowed, fields)
             pool, tables = list(union.players), tuple(both.values())
@@ -952,7 +965,7 @@ def exact(
     else:
         scored = seasoned(built, ev, QUEUE_SET)
         swaps = mv.single_swaps(scored, QUEUE_SET)
-        if fields.guard_pool > 0:
+        if listed:
             union, _ = sp.pool_for(swaps, allowed, fields.pool, fields.guard_pool, fields.min_gain)
             pool, tables = list(union.players), (swaps,)
         else:

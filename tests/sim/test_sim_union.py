@@ -11,11 +11,15 @@ says why it names one."""
 
 from __future__ import annotations
 
+import contextlib
 import inspect
+import io
+import json
 import re
 import sys
 from dataclasses import replace
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -24,13 +28,24 @@ import pytest
 from pickandroll.season import pool as season_pool
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
-from pickandroll.sim import engine, policy
+from pickandroll.sim import engine, nopeek, policy, shapes
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, sg, wk
+from pickandroll.sim.shapes import CONTINUOUS
 from pickandroll.sim.state import Member, initial
-from tests.sim.sim_league import KNOBS, NINE, make_setup, of_format, rates, replay_of
+from tests.sim.sim_league import (
+    KNOBS,
+    NINE,
+    make_data_dir,
+    make_setup,
+    of_format,
+    rates,
+    replay_of,
+)
+from tests.sim.test_no_peek import DAYS, SEED, WEIGHTS, recorded
+from tests.sim.test_sim_knobs import points_setup
 from tests.sim.test_sim_screen import pair, path
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
@@ -72,6 +87,9 @@ SOON, SOONER, STEADY, NOW = 101, 102, 103, 104
 #: A head of two: the made-up leagues below have few free agents, and a head that holds them all
 #: leaves the guard's list nothing to bring.
 TWO = policy.Fields(pool=2)
+#: The two sets an exact arm executes whose search takes the union: named here, not read from
+#: ``policy.EXECUTES``, so a later choice of what an arm executes brings its own tests.
+SETS = (policy.QUEUE_SET, policy.WEIGHTED)
 
 
 def refusing(h2h: str = ONE_WIN, now: bool = False):
@@ -399,7 +417,7 @@ def test_the_weighted_search_is_handed_the_head_and_each_horizon_s_list_joined(
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-@pytest.mark.parametrize("executes", policy.EXECUTES)
+@pytest.mark.parametrize("executes", SETS)
 def test_the_week_plan_s_set_is_searched_among_the_same_candidates_on_and_off(
     h2h, executes, monkeypatch
 ):
@@ -417,7 +435,7 @@ def test_the_week_plan_s_set_is_searched_among_the_same_candidates_on_and_off(
 
 # --------------------------------------------------------------------------- it bites
 @pytest.mark.parametrize("h2h", FORMATS)
-@pytest.mark.parametrize("executes", policy.EXECUTES)
+@pytest.mark.parametrize("executes", SETS)
 def test_the_guard_refuses_the_whole_head_and_the_union_queues_the_add_it_admits(executes, h2h):
     """A made-up day: the head's two adds are refused by the season guard with every drop, and
     the one add the guard admits is not in the head. At 0 the search has nothing it may queue;
@@ -444,7 +462,7 @@ def test_the_guard_refuses_the_whole_head_and_the_union_queues_the_add_it_admits
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-@pytest.mark.parametrize("executes", policy.EXECUTES)
+@pytest.mark.parametrize("executes", SETS)
 def test_a_head_that_already_holds_the_admitted_add_takes_nothing_from_the_list(executes, h2h):
     """The same day with a head of four: the admitted add is in the head, so the list brings
     nothing new, the decision is the one at 0, and the union says so. The head's refused adds
@@ -462,7 +480,7 @@ def test_a_head_that_already_holds_the_admitted_add_takes_nothing_from_the_list(
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-@pytest.mark.parametrize("executes", policy.EXECUTES)
+@pytest.mark.parametrize("executes", SETS)
 @pytest.mark.parametrize("full", [False, True], ids=["an open slot", "a full slot"])
 def test_in_a_held_slot_league_a_move_with_no_drop_and_a_churn_reach_the_guard(
     full, executes, h2h, monkeypatch
@@ -502,14 +520,31 @@ def test_at_zero_the_rule_is_never_called_and_no_union_is_kept(h2h, monkeypatch)
     built = built_of(of_format(make_setup(teams=4, pool=12), h2h))
     on = {
         executes: policy.exact(built, executes=executes, fields=policy.Fields(guard_pool=30))
-        for executes in policy.EXECUTES
+        for executes in SETS
     }
     no_door(monkeypatch)
-    for executes in policy.EXECUTES:
+    for executes in SETS:
         plain = policy.exact(built, executes=executes)
         named = policy.exact(built, executes=executes, fields=policy.fields_of({"guard_pool": 0}))
         assert plain == named and plain.union is None
         assert on[executes].union is not None
+
+
+@pytest.mark.parametrize("h2h", FORMATS)
+@pytest.mark.parametrize("executes", SETS)
+def test_with_no_guard_there_is_no_list_and_the_seat_is_the_one_at_zero(executes, h2h, monkeypatch):
+    """A list is drawn from a guard. A seat whose searches are handed none has the head alone
+    (``pool_for`` without a guard), so with the field on it decides as at 0, keeps no union and
+    never calls the rule. No arm on main is without a guard; an arm of the guard PR with its
+    guard off is, and is then the seat with 0."""
+    built = built_of(refusing(h2h, now=True))
+    monkeypatch.setattr(policy, "guard_of", lambda built: None)
+    no_door(monkeypatch)
+    off = policy.exact(built, executes=executes, with_plan=False, fields=TWO)
+    on = policy.exact(built, executes=executes, with_plan=False, fields=replace(TWO, guard_pool=30))
+    assert on == off and on.union is None
+    # With no guard the head's own adds are queued: not the guarded day, on which 0 queues none.
+    assert off.moves and STEADY not in adds(off)
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
@@ -537,7 +572,7 @@ def test_the_surrogate_the_ranking_tier_and_a_mirror_decide_the_same_with_the_fi
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-@pytest.mark.parametrize("executes", policy.EXECUTES)
+@pytest.mark.parametrize("executes", SETS)
 def test_the_season_scale_is_the_same_figure_with_the_field_on(executes, h2h, monkeypatch):
     """The season scale does not read the field: the same figure for the arm at 0 and above,
     on a day when the field changes what the seat queues, and with no call of the pool rule."""
@@ -609,7 +644,7 @@ def test_a_run_counts_the_union_when_an_arm_sets_the_field_on_its_arms_exact_sea
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
-@pytest.mark.parametrize("executes", policy.EXECUTES)
+@pytest.mark.parametrize("executes", SETS)
 def test_a_season_with_the_field_on_differs_from_the_one_at_zero_and_the_counts_say_so(
     executes, h2h
 ):
@@ -709,19 +744,19 @@ def test_a_baseline_already_at_the_row_s_size_is_refused_by_name():
     assert "its nudge to 30 is the baseline's value (30)" in row.why and "--levers" in row.why
 
 
-def test_did_nothing_leaves_out_the_counts_that_describe_an_arm_s_own_search():
+def test_did_nothing_leaves_out_the_counts_that_part_by_construction_between_two_arms():
     """The counts an arm with the field on has by construction (it builds a union every
     decision day, an arm at 0 never) are declared beside their definition, and the screen's
     "did nothing" compares every count but those. A decided add from the list is not one of
     them: it is a real difference. A row whose counts declare nothing is read as before."""
-    assert ct.BY_CONSTRUCTION == (
+    assert set(ct.APART_BY_CONSTRUCTION) & set(UNION_KEYS) == {
         "union_days",
         "union_admitted",
         "union_admitted_days",
         "union_head_refused_days",
-    )
-    assert set(ct.BY_CONSTRUCTION) == set(UNION_KEYS) - {"union_taken_days"}
-    assert not set(ct.BY_CONSTRUCTION) & {*ct.METRICS, *ct.CLAIMS, *ct.BIDS}
+    }
+    assert "union_taken_days" not in ct.APART_BY_CONSTRUCTION
+    assert not set(ct.APART_BY_CONSTRUCTION) & {*ct.METRICS, *ct.CLAIMS, *ct.BIDS}
     zeros = dict.fromkeys(UNION_KEYS, 0.0)
     searched = {
         **zeros,
@@ -744,6 +779,20 @@ def test_did_nothing_leaves_out_the_counts_that_describe_an_arm_s_own_search():
     # The same search with an outcome that differs did something.
     apart = sc.result_of(flat, [path(a=zeros, b=searched, delta=1.0)], "matchup_wins")
     assert apart["counts_equal"] and not apart["outcomes_equal"] and not apart["did_nothing"]
+
+
+def test_a_key_another_lever_declares_is_left_out_by_the_same_clause(monkeypatch):
+    """The rule names no key: one more name in ``counts.APART_BY_CONSTRUCTION`` (one line,
+    beside the key's own definition) is all a later count of that kind needs, and no count's
+    key is written in ``sim/screen.py``."""
+    flat = pair({("2024", "prior"): {}})
+    moved = [path(b={"made_up": 3.0})]
+    assert not sc.result_of(flat, moved, "matchup_wins")["did_nothing"]
+    monkeypatch.setattr(ct, "APART_BY_CONSTRUCTION", (*ct.APART_BY_CONSTRUCTION, "made_up"))
+    got = sc.result_of(flat, moved, "matchup_wins")
+    assert got["counts_equal"] and got["did_nothing"]
+    source = inspect.getsource(sc)
+    assert not [k for k in (*UNION_KEYS, *ct.APART_BY_CONSTRUCTION) if k in source]
 
 
 @pytest.mark.parametrize("h2h", FORMATS)
@@ -771,3 +820,192 @@ def test_the_row_s_pair_did_nothing_when_no_set_takes_an_add_from_the_list(h2h):
     counts, result = seen[2]
     assert counts["b"]["union_taken_days"] >= 1
     assert not result["counts_equal"] and not result["did_nothing"]
+
+
+# --------------------------------------------------------------------------- no peek
+def union_records(setup, lines):
+    """The no-peek test's small season with an exact seat in seat 1 whose head is two and whose
+    list is on, among market rivals: every day record's digest (the decisions' unions are part
+    of it), the seat's unions by day, and the season's result."""
+    a = armed("A", opponents="market", pool=2, guard_pool=30)
+    got: dict = {}
+    unions: dict = {}
+
+    def keep(r: rn.DayRecord) -> None:
+        got[(r.day, r.variant)] = nopeek.digest(r)
+        if 1 in r.decisions:
+            unions[r.day] = r.decisions[1].union
+
+    w = rn.replay_world(setup, lines, 1, SEED, 0, WEIGHTS)
+    variant = {**rn.opponents_of(setup, a, 1), 1: a.seat()}
+    (res,) = rn.simulate(setup, w, [variant], on_day=keep, counted=[rn._counted([a], {1: a})])
+    return got, unions, res
+
+
+@pytest.fixture(scope="module")
+def peek():
+    setup, lines = recorded()
+    return setup, lines, union_records(setup, lines)
+
+
+@pytest.mark.parametrize("day", DAYS[:2], ids=["a Monday", "a Thursday"])
+def test_a_seat_with_the_list_on_knows_nothing_dated_after_the_day(peek, day):
+    """Rule 3: two worlds equal through the day and different after it. Every record through
+    the day is the same, the seat's union and what it decided among it too; some record after
+    it differs. One format (the no-peek league's): what is asked is what the seat could know,
+    not what it weighs."""
+    setup, lines, (base, unions, res) = peek
+    # The check is of something: the seat moves, its search took a union on every decision day
+    # through the day, and on some of them the guard refused the best move of an add of the
+    # head, so the rule asked the guard on down the ranking. In this league (four slots, few
+    # free agents) that walk finds no add the head does not hold: a list's add being taken is
+    # the made-up day's and the seasons' above, not this check's.
+    assert res.counts[1]["landed"] > 0 and res.breaches == ()
+    through = [u for d, u in unions.items() if d <= day]
+    assert through and all(u is not None for u in through)
+    assert any(u.refused for u in through)
+    other = nopeek.perturb(lines, rn.game_days_of(setup), day, SEED)
+    got, _, _ = union_records(setup, other)
+    assert set(got) == set(base)
+    found = nopeek.first_difference(base, got)
+    assert found is not None, "the change after the day reached no record: it tested nothing"
+    assert found[0] > day, f"a record on {found[0]} saw past {day}: {found[2]}"
+    same = [key for key in base if key[0] <= day]
+    assert same and all(base[key] == got[key] for key in same)
+
+
+# --------------------------------------------------------------------------- every league kind once
+def kind_of(name: str):
+    """The made-up leagues of the kinds a season is played in: held slots, points, waivers by
+    priority and by FAAB under both waiver rules, both formats."""
+    if name == "held, FAAB, continuous, every category":
+        base = make_setup(teams=4, pool=12, held_slots=("IL",))
+        base = replace(base, waivers="faab", waiver_days=2, waiver_rule=CONTINUOUS)
+        return of_format(base, EACH_CATEGORY)
+    if name == "held, priority, a dropped player waits, one win":
+        base = make_setup(teams=4, pool=12, held_slots=("IL",))
+        return replace(base, waivers="priority", waiver_days=2)
+    if name == "points, FAAB, a dropped player waits":
+        return replace(points_setup(), waivers="faab", waiver_days=2)
+    assert name == "points, priority, continuous"
+    return replace(points_setup(), waivers="priority", waiver_days=2, waiver_rule=CONTINUOUS)
+
+
+KINDS = (
+    "held, FAAB, continuous, every category",
+    "held, priority, a dropped player waits, one win",
+    "points, FAAB, a dropped player waits",
+    "points, priority, continuous",
+)
+
+
+@pytest.mark.parametrize("executes", SETS)
+@pytest.mark.parametrize("name", KINDS)
+def test_every_league_kind_plays_a_season_with_the_list_on_and_a_clean_audit(name, executes):
+    """The lesson of Fc's review: a season of an exact seat with a head of two and the list on,
+    in each kind of league (seed 1, path 0, among market rivals at 0.4 a day): the audit finds
+    nothing, the seat moves, the list brings adds the head did not hold (the lever acts in
+    every kind), a held slot is used where the league has one, and the counts carry the
+    union's keys on the arm's seat alone."""
+    setup = kind_of(name)
+    a = armed("A", opponents="market", executes=executes, pool=2, guard_pool=30)
+    variant = {**{t: op.Market(0.4) for t in setup.teams}, 1: a.seat()}
+    (res,) = rn.simulate(
+        setup, replay_of(setup, 1, 0), [variant], counted=[rn._counted([a], {1: a})]
+    )
+    assert res.breaches == ()
+    row = res.counts[1]
+    assert row["landed"] > 0, row
+    assert row["union_days"] > 1 and row["union_admitted_days"] >= 1, row
+    assert row["union_admitted"] >= row["union_admitted_days"] >= row["union_taken_days"]
+    assert row["held_stints"] >= 1 or "held" not in name
+    assert all(not set(UNION_KEYS) & set(res.counts[t]) for t in setup.teams if t != 1)
+    if "continuous" in name:  # every add is a claim there
+        assert row["claims_placed"] > 0, row
+
+
+# --------------------------------------------------------------------------- the command
+#: Two seats of six slots, four adds a week, both in a one-week final after two regular weeks.
+SMALL = shapes.one("fixed", shapes.LeagueShape(2, ("PG", "SG", "G", "C", "Util", "BN"), 4, 2, 1))
+WEEKS = 3
+#: A pair's fewest paths in a league of two seats: each seat is taken once.
+PATHS = 2
+#: A replay records no market rate, so the arms name their rivals' own.
+RIVALS = {"kind": "market", "rate": 0.4}
+SPECS = {
+    "A": {**spec("A", pool=2), "opponents": RIVALS},
+    "B": {**spec("B", pool=2, guard_pool=30), "opponents": RIVALS},
+    "S": {**spec("S", "surrogate"), "opponents": RIVALS},
+    "SG": {**spec("SG", "surrogate", guard_pool=30), "opponents": RIVALS},
+}
+
+
+@pytest.fixture(scope="module")
+def data(tmp_path_factory) -> Path:
+    """The made-up seasons with a wire of 120, a made-up frozen fit (a replay reads its lag and
+    its hash) and the arms' spec files."""
+    folder = make_data_dir(tmp_path_factory.mktemp("union"), wire=120)
+    fit = folder / "sim" / "fit" / "2026-01-01"
+    fit.mkdir(parents=True)
+    made_up = {"hold_out": 2025, "parameters": {"refresh_defaults": {"lag": 1}}}
+    (fit / "fit.json").write_text(json.dumps(made_up))
+    for name, body in SPECS.items():
+        (folder / f"{name}.json").write_text(json.dumps(body))
+    return folder
+
+
+@pytest.fixture
+def small(monkeypatch):
+    """The league made small, as ``test_sim_screen_run.py``'s: the fixed shape two seats of six
+    slots and a season of three weeks, so an exact pair's path is a few seconds."""
+    real = rn.replay_setup
+    monkeypatch.setitem(ss.GRIDS, "fixed", SMALL)
+    monkeypatch.setattr(rn, "replay_setup", lambda *a, **k: real(*a, **{**k, "weeks": WEEKS}))
+
+
+def replay(data: Path, a: str, b: str, *extra: str) -> tuple[int, str]:
+    argv = ["--data", str(data), "--rooms", "0", "replay", "--seasons", "2024", "--workers", "1"]
+    argv += ["--forecasters", "prior", "--seed", "5", "--paths", str(PATHS)]
+    argv += ["--arms", str(data / f"{a}.json"), str(data / f"{b}.json"), *extra]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = ss.main(argv)
+    return code, buf.getvalue()
+
+
+def test_a_replay_s_record_names_the_field_its_row_and_the_counts(data: Path, small):
+    """The record end to end, one format (the command's default; the pieces are the tests'
+    above): arm A leaves the field off and arm B sets it to 30, both with a head of two."""
+    code, out = replay(data, "A", "B", "--name", "union")
+    assert code == 0, out
+    (line,) = [x for x in out.splitlines() if x.startswith("written: ")]
+    p = json.loads(Path(line.removeprefix("written: ")).read_text())
+    assert p["audit"]["paths_voided"] == 0 and p["audit"]["breaches"] == []
+    assert p["specs"]["b"]["guard_pool"] == 30 and "guard_pool" not in p["specs"]["a"]
+    # A record's keys are written sorted, so these are sets.
+    assert set(p["fields"]["a"]) == set(FOUR)
+    assert set(p["fields"]["b"]) == set(policy.FIELDS) and p["fields"]["b"]["guard_pool"] == 30
+    (shape,) = p["reads"]["a"]
+    assert set(p["reads"]["a"][shape]["fields"]) == set(FOUR)
+    assert set(p["reads"]["b"][shape]["fields"]) == set(policy.FIELDS)
+    assert p["reads"]["b"][shape]["fields"]["guard_pool"] == policy.READ
+    assert set(UNION_KEYS) <= set(p["counts"]["note"])
+    cell = p["counts"]["by_season"]["2024"]["prior"]
+    for side in ("a", "b"):
+        assert set(UNION_KEYS) <= set(cell[side])
+        assert cell[side]["union_days"]["n"] == PATHS and cell[side]["landed"]["mean"] > 0
+    assert {cell["a"][k]["mean"] for k in UNION_KEYS} == {0.0}
+    assert cell["b"]["union_days"]["mean"] > 1 and cell["b"]["union_admitted"]["mean"] > 0
+    assert not set(UNION_KEYS) & set(cell["rivals"])
+    # The season scale is each arm's own figure and does not read the field.
+    scale = p["season_scale"]["by_season"]["2024"]
+    assert scale["a"] == scale["b"]
+
+
+def test_the_command_refuses_a_pair_that_differs_only_in_the_field_where_it_is_unread(
+    data: Path, small
+):
+    code, out = replay(data, "S", "SG", "--dry-run")
+    assert code == 2, out
+    assert "refused: arms a and b are the same seat: they differ only in guard_pool (the " in out
+    assert "read by the exact tier" in out and "tasks (" not in out

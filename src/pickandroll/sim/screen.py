@@ -15,8 +15,8 @@ This module is the list and the rules, and touches no file:
   step for, is listed and not played; a nudge equal to the baseline's value is refused by name.
 - :func:`result_of`, what a played pair's figures say: the paired difference on the measure the
   league's standings count against one standard error, and "did nothing" when the two arms'
-  counts and outcomes are equal on every path (the counts a lever's arm has by construction,
-  ``counts.BY_CONSTRUCTION``, left out).
+  counts and outcomes are equal on every path (less the counts that part by construction
+  between two arms, ``counts.APART_BY_CONSTRUCTION``).
 
 The command that plays each pair, by the code ``replay`` plays a pair with, is ``cli.cmd_screen``.
 """
@@ -537,8 +537,10 @@ def clears(mean: float | None, se: float | None) -> bool:
 
 
 def _played(counts: Mapping[str, Any]) -> dict[str, Any]:
-    """A seat's counts without the ones an arm has by construction (``counts.BY_CONSTRUCTION``)."""
-    return {k: v for k, v in counts.items() if k not in ct.BY_CONSTRUCTION}
+    """A seat's counts less the ones that part by construction between two arms and are no
+    difference of the season it played (``counts.APART_BY_CONSTRUCTION``, declared beside each
+    key's definition)."""
+    return {k: v for k, v in counts.items() if k not in ct.APART_BY_CONSTRUCTION}
 
 
 def result_of(
@@ -553,9 +555,10 @@ def result_of(
     (:data:`RULE`). Both arms play one world, so equal counts with an outcome that differs is a
     lever that changed which moves were made, not how many: it did something.
 
-    The counts compared are every one but those declared to describe an arm's own search
-    (``counts.BY_CONSTRUCTION``, PR pool): an arm with such a lever on has them above 0 whatever
-    it plays, so they say nothing of whether the two played one season. A row whose counts
+    The counts compared are every one but those declared to part by construction between two
+    arms (``counts.APART_BY_CONSTRUCTION``, PR pool): an arm with such a lever on counts them
+    and an arm with it off never does, whatever either plays, so they say nothing of whether
+    the two played one season. Both arms' counts are still recorded whole. A row whose counts
     declare none is read on all of them."""
     cells = {
         t: {

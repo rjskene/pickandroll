@@ -88,13 +88,15 @@ SEASON: dict[str, tuple[str, ...]] = {
         "union_head_refused_days",
     ),
 }
-#: Of the counts above, the ones that describe an arm's own search and so differ between an arm
-#: with the field on and one with it off by construction, whatever either plays: an arm at 0
-#: builds no union and counts 0 in each. A rule that asks whether two arms played one season
-#: leaves them out (the screen's "did nothing", ``screen.result_of``). ``union_taken_days`` is
-#: not one of them: a decided add that came from the list is a real difference. A count
-#: declares nothing unless it is named here.
-BY_CONSTRUCTION: tuple[str, ...] = (
+#: The counts that part by construction between two arms and are no difference of the season
+#: they played. A rule that asks whether two arms played one season leaves them out (the
+#: screen's "did nothing", ``screen.result_of``, which names no key itself). A key is declared
+#: here, beside its definition above, by the PR that adds it, one line a key; a count not named
+#: here declares nothing. Four of the union's, which describe an arm's own search: an arm with
+#: ``guard_pool`` on counts them and an arm at 0 never does, whatever either plays (it builds a
+#: union every decision day). ``union_taken_days`` is not one of them: a decided add that came
+#: from the list is a real difference.
+APART_BY_CONSTRUCTION: tuple[str, ...] = (
     "union_days",
     "union_admitted",
     "union_admitted_days",
@@ -234,8 +236,8 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
 
 
 __all__ = [
+    "APART_BY_CONSTRUCTION",
     "BIDS",
-    "BY_CONSTRUCTION",
     "CLAIMS",
     "METRICS",
     "SEASON",
