@@ -983,10 +983,13 @@ Under `market` the seat's roster is an average manager's on the table and not wh
 likes, so nothing a seat could gain at the draft is in a result. These limits stay:
 
 - **An average roster is not an average finish, and how far above average is not settled.** A
-  seat that starts from the market's roster finishes above the middle of the room: it plays the
-  season harder than its rivals do, adding far more often. How far above was read on looks of
-  twelve paths of one real season in the public leagues' kind, and they do not agree. At one
-  seed the seat finished near the top of the room and made the playoffs on every path, so the
+  surrogate seat that starts from the market's roster finishes above the middle of the room: it
+  plays the season harder than its rivals do, adding far more often. That is true of the
+  surrogate seat of those looks only: on the same rosters and paths the ranking seat finished
+  near the bottom of the room at all three seeds, as it does without a table, which is its
+  tier's weakness and not the draft's. How far above was read on looks of twelve paths of one
+  real season in the public leagues' kind, and they do not agree. At one seed the surrogate
+  seat finished near the top of the room and made the playoffs on every path, so the
   paired change in playoff odds had no spread and the advisory verdict could not hold. At two
   more seeds it finished above the middle and missed the playoffs on a share of the paths, and
   the change had a spread. Under `own` at one of those two seeds a seat on the same forecaster

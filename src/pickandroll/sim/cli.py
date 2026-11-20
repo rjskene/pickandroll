@@ -1499,9 +1499,9 @@ ADP_LIMIT = {
         "in a result; it never drafts a player its forecaster has no line for (a rookie under a "
         "forecaster built on earlier seasons), where a rival does, so the season's best "
         "newcomers always start on rivals' rosters; a starting belief taken from the market for "
-        "such a player is not built; and an average roster is no average finish: a seat that "
-        "plays the season harder than its rivals finishes above the middle of the room, and how "
-        "far above is not settled (looks of twelve paths: near the top on every path at one "
+        "such a player is not built; and an average roster is no average finish: a surrogate "
+        "seat that plays the season harder than its rivals finishes above the middle of the room, "
+        "and how far above is not settled (looks of twelve paths: near the top on every path at one "
         "seed, out of the playoffs on a share of the paths at two more), so a verdict on "
         "playoff odds needs more paths than a look plays"
     ),
