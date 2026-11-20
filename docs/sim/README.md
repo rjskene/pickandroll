@@ -2149,7 +2149,12 @@ screen's or a tune's world records the flag only when it is named. The decision'
 run shares hold nothing new: the rule is the setup's, the same in every season of a run.
 
 **The audit** holds a same-day league to `lands_same_day` in the place of `lands_next_day`
-(below). **The counts** gain no key: `landed`, `gone`, the claims' and the held stints' are true
+(below), and its claim rules (`claim_priority`, `bid_order`) hold each winner to its roster after
+the morning, before the day's landing (`audit.Day.decided`): a team may win a claim in the morning
+and drop that player the same day for a free agent (a market rival's drop is its weakest, which a
+player it took among the best few can be), where under the default rule that drop lands the next
+morning, after the audit has read the claim's day. A run without the rule reads the day's state as
+before. **The counts** gain no key: `landed`, `gone`, the claims' and the held stints' are true
 as before, a same-day add counted on the day it lands.
 
 What the rule does not model, each plainly (the brief's working defaults):
@@ -2390,8 +2395,9 @@ reads the six and the bracket's, and the payload lists the rules it read):
 - `waiver_wait`: nobody who left a roster joins one before his clear date.
 - `claim_priority`: every contested claim went to the best priority that morning (the day before's
   order replayed through the morning's decisions, a failed claim's team passed over), each winner
-  then last, every lost claim's player to another team, and the order after the morning the
-  state's.
+  then last, every lost claim's player to another team, every winner holding its player after
+  the morning (in a same-day league before the day's landing, PR today), and the order after the
+  morning the state's.
 
 A FAAB league is held to the wait and three rules in place of `claim_priority`, a run by priority's
 rule only (`audit.BID_RULES`, PR Fb):
@@ -2403,7 +2409,8 @@ rule only (`audit.BID_RULES`, PR Fb):
   taken, a tie to the better priority: every claim on a won player that stood ahead of the winner
   (a higher bid, or the same bid and a better place in the day before's order) failed; every lost
   claim's player went to another team on a bid at least its own; the order rolls only on a win
-  that broke a tie, and the order after the morning is the state's.
+  that broke a tie, every winner holds its player after the morning (as `claim_priority` reads
+  it), and the order after the morning is the state's.
 
 A league under continuous waivers (PR Fc) is held to one rule more, after its waivers' rules
 (`audit.CLAIMS_ONLY`; the rule not named reads none):
