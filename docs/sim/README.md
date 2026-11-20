@@ -193,7 +193,9 @@ exports (**What was removed and when**).
 A **setup** is one league as a run starts it: the calendar and pairings, the rosters, the
 free agents, the shared projection, the schedule, the statuses and return dates on day one, the
 market's view and rate, and the bracket. A **state** is one arm's position on a day: rosters, pool,
-adds used this week, the moves queued to land tomorrow, every week's totals so far and each round
+adds used this week, the moves queued to land tomorrow (in a league whose adds play the same day,
+a free agent's land that day: **A league whose adds play the same day**, below), every week's
+totals so far and each round
 of the bracket as it was seeded on its first morning (**A bracket week**, below). Beliefs,
 lines, absences and news belong to the world and are shared by every arm; two arms whose states
 agree share one solve (a seat that reads the week, only where their view of the week agrees too:
@@ -203,7 +205,8 @@ The policy is the engine's own code on that state. `problem_of` builds the live 
 `MoveProblem` from the setup and the state, in memory, as `api.season_moves.build` builds it from a
 live league's recorded season: the week against the pairing's opponent (in a round of the
 bracket, the round's: **A bracket week**), three weeks against the
-field, the free agents landing tomorrow, the weekly add limit net of the adds made, the keep rule,
+field, the free agents landing tomorrow (today in a same-day league), the weekly add limit net of
+the adds made, the keep rule,
 the protection floor, the plan floor and the daily cap from the knobs (every one of the twelve is
 checked against the engine's own bounds; a missing knob is refused, below **The knobs**). Three
 tiers decide on it. **Exact** is the live route: single swaps on every candidate, the recommended
@@ -237,11 +240,13 @@ stays active and the move is refused (counted in `held_refused`); it frees no sp
 needed it meets the same check and is gone when no spot is open. The alternative, honouring the
 status of the day the move was decided and activating him the same morning (the add lands and the
 weakest active player is dropped), was not taken: it breaks the executor's one rule. Without
-waivers every add is a free agent landing the next day (`EXECUTIONS = "free_agents_next_day"`): no
+waivers every add is a free agent landing the next day (`EXECUTIONS = "free_agents_next_day"`; the
+same day in a same-day league, `free_agents_same_day`, **A league whose adds play the same day**): no
 clear dates, no bids, the caps the autopilot's; a waiver league's adds are "The waivers" (below),
 and under continuous waivers every add is a claim ("Continuous waivers", below). An add is charged to the week of the day it is made, as Yahoo
 charges a free agent, never the week it lands in: one made on Sunday spends the ending week's adds
-and plays from Monday, and Monday's count starts over only once it is in. Each day's starters are
+and plays from Monday (in a same-day league, from Sunday), and Monday's count starts over only once
+it is in. Each day's starters are
 the most valuable set the slots hold among the players whose team plays and whom the policy has not
 heard are out; their lines are the week's totals.
 
@@ -694,7 +699,8 @@ has been knocked out inside the bracket is not read (a limit, below).
 
 **What a stake moves, and its limit.** The set a seat queues is searched on `three`, the weeks
 after the running one: no day of the running week is in that key, and a move lands the day after
-it is decided. Of a queued set's score the season term is then the only part that counts the
+it is decided (under the default lineup rule; in a same-day league a free agent's add lands the
+day it is decided). Of a queued set's score the season term is then the only part that counts the
 rest of the running week (`ROS_w` runs from the day the move lands to the season's end). So the
 stake does not scale the term whole. A weight of `season_weight × (1 − stake × L)` on the whole
 figure would take away, in the week that is decisive, the one term that counts that week; and in
@@ -710,8 +716,11 @@ the week itself:
 - A player whose games are all after the running week has no season term at `stake` 1 in a week
   whose `L` is 1, and `1 − stake × L` of it otherwise.
 
-The limit that stays: `L` is the stake of the week the day is in, and a move lands the day after
-it is decided. A move decided on a week's last day lands in the next week, so it has no part in
+The limit that stays, a limit of the default lineup rule: `L` is the stake of the week the day is
+in, and a move lands the day after it is decided. (In a same-day league, **A league whose adds play
+the same day**, a free agent's add decided on a week's last day plays that day, in the running
+week, and this limit is a claim's alone.) A move decided on a week's last day lands in the next
+week, so it has no part in
 the running week and its whole figure is scaled by the ending week's `L`, not by the `L` of the
 week it plays in (the exact tier decides every day; the default surrogate, on Mondays and
 Thursdays, does not meet it). The same on any day for the games after the week: a move decided
@@ -1859,7 +1868,8 @@ What a replay with them does not model, each plainly:
 who leaves a roster on the morning of day `d` (a seat's drop, a churn's held drop, a drop the world
 forces) is on waivers until `d` plus the waiver days, his clear date, and nobody adds him as a free
 agent before it. The draft's leftovers and a player who enters the league are free agents at once: a
-free agent lands the next morning, a contested one by the day's rotation. An add of a player on
+free agent lands the next morning (the same day in a same-day league), a contested one by the day's
+rotation. An add of a player on
 waivers is a **claim**: it waits for his clear date, and its drop and its held-slot moves are made
 only if it is won, but for a churn on a claim: its held player leaves the next morning, won or not,
 as the autopilot drops him on his own before the claim (which is why the engine offers a churn on a
@@ -1894,7 +1904,9 @@ What the waivers do not model, each plainly:
 1. **A claim is charged to the week of the day before it lands.** Yahoo charges a claim to the
    week it clears in. They agree except on a Monday clear, which the simulator charges to the
    week before, as the engine's plan does: its add windows are shifted a day for a move that
-   lands the next morning, and it shares them with the claims.
+   lands the next morning, and it shares them with the claims. In a same-day league the windows
+   are the weeks' own days, as live's, and the engine's plan then weighs a Monday clear against
+   the new week (**A league whose adds play the same day**).
 2. **The first order is the draft's reverse**, and a league that sets its own (last season's
    standings, a continual list) is not read. A failed claim keeps its team's place.
 3. **A budget and bids** are FAAB's, below.
@@ -1996,7 +2008,8 @@ What FAAB does not model, each plainly:
 2. **Flags are not modelled**: live, a flagged player's bid is raised by its flag's factor; here
    no player is flagged.
 3. **Only a dropped player waiting his days is bid on**, with the rule not named. A free agent
-   lands the next morning at $0, contested by the day's rotation. Under continuous waivers every
+   lands the next morning (the same day in a same-day league) at $0, contested by the day's
+   rotation. Under continuous waivers every
    add is a claim and is bid on (below).
 4. **The order rolls only on a tie** (above), the first order the draft's reverse.
 5. **No pacing, cap or shading unless the arm names them.** An arm without a `bid` block bids by
@@ -2061,6 +2074,86 @@ What continuous waivers do not model, each plainly (the brief's working defaults
 2. **The draft's leftovers wait no days**: they are claimable from the first morning.
 3. **The order** rolls as above, the first order the draft's reverse.
 4. `validate` plays the fixed league without waivers.
+
+**A league whose adds play the same day** (`--lineup-from today`, `Setup.same_day`, PR today).
+Yahoo names a league's daily lineup rule "Daily - Tomorrow" or "Daily - Today", and the engine
+reads it as `lineup_from` (`season.state.SeasonSettings`). Until this PR every simulated league
+played the first: a free agent's add decided on a day landed the next morning, and the player's
+first line for his new team was that day's. That is the public leagues' rule, where every add is a
+claim that lands at the overnight run. A league of the other rule adds a free agent the same day,
+before his game, so a run may now name it: `--lineup-from today` (the default, `tomorrow`, is the
+rule above). It is a rule of the league, the same for every seat and every season of a run: the
+seat, the rivals of each kind (market, mirror; the ranking tier's swap and a static seat's
+nothing alike) and every path.
+
+- **A free agent's add** decided on day d lands on d, before the day's lineups: the player is on
+  the roster, may start, and his line of d is his new team's; his move's drop leaves at the same
+  moment, his held-slot moves are made then, and the drop's line of d is nobody's.
+- **A claim is as before**: a player on waivers is added on the morning his claim is decided, his
+  clear date. Under continuous waivers no add is a free agent's, so the rule moves nothing there:
+  the season is the default rule's, day for day, and the record says so (below). It is not
+  refused.
+- **The week's adds**: a move counts against the week its day falls in, with no shift. An add
+  made on a week's last day plays that day and spends that week's adds, and a seat at its week's
+  limit sends none.
+- **Two seats on one free agent the same day**: every seat decides on the morning's wire and
+  none sees another's add of the day; the day's adds land in the day's rotation (the morning's
+  order), so the first gets him, and the other's move is lost (counted in `gone`) and its drop is
+  kept.
+- **A plan's step dated today** (the streaming plan beside the set, the queue's rule's plan) is
+  sent and lands today; a later step on its day, as before.
+- **The tiers**: the surrogate's pool and the ranking tier count a candidate's games this week
+  from the day he would first play, today.
+
+The seat's problem is the live build's (`api.season_moves.build`). Live never reads the lineup
+rule when it builds a move problem: a free agent's `effective` day is the problem's first day
+(today, or tomorrow once the day's games began), a waiver player's the later of it and his clear
+date, and the weekly add windows are the weeks' own days. Under `today` the simulator's
+`problem_of` is that build: a free agent effective today, a claim on his clear date (or under
+continuous waivers the next morning, as before), each week's window its own days. Under the
+default rule a free agent is effective tomorrow and each window is its week's days shifted by one,
+which is that rule's version of the same charge. One difference stays and is said: the engine
+charges a move by its effective day, so a claim that clears on a week's first morning is weighed
+in the problem against that week's adds, while the executor charges it to the week before (the
+week of the day before it lands, as under the default rule). Live's engine does the same.
+
+**The day under the rule**, in order (the default rule's day is the same without step 3, its free
+agents landing at step 1 of the next day):
+
+1. The morning: yesterday's claims due are decided and the held players who cleared come back,
+   as before; no free agent's add waits from yesterday.
+2. The seats decide, each on the morning's wire, and queue: a free agent's add for today, a claim
+   placed as before.
+3. The day's free-agent adds land, team by team in the day's rotation, with the held-slot moves
+   they need and their drops (a drop goes on waivers in a waiver league); charged to this week.
+   An add that needs an active spot and finds none is lost, as at the morning's landing, so the
+   landing forces no drop.
+4. The lineups are set on the rosters after the landing (a split seat's on its table read on
+   them).
+5. The audit reads the day (below), then the day's lines are scored.
+
+**The record**: `league.rules.lineup_from` when it is `today` (a run of the default rule records
+the keys it did before); the label says "a free agent's add plays the same day"; `executions`
+has a name of its own for each kind, `free_agents_same_day`, `..._claims_by_priority` and
+`..._claims_by_sealed_bids` (under continuous waivers the claims' own names); the league block's
+`lineup_note` says what the rule does and does not model, or under continuous waivers that it
+moves nothing. The dry run and the no-peek check print the rule with the others. The screen and
+the tune take the flag as a world flag, and a same-day league is another league kind
+(`league_kind`): a screen played under one value is refused to a tune under the other. A
+screen's or a tune's world records the flag only when it is named. The decision's key and what a
+run shares hold nothing new: the rule is the setup's, the same in every season of a run.
+
+**The audit** holds a same-day league to `lands_same_day` in the place of `lands_next_day`
+(below). **The counts** gain no key: `landed`, `gone`, the claims' and the held stints' are true
+as before, a same-day add counted on the day it lands.
+
+What the rule does not model, each plainly (the brief's working defaults):
+
+1. **A game's tip-off time.** Every add of the day plays that day; on Yahoo a player whose game
+   has begun cannot be started, and an add made after it plays from the next day.
+2. **The hour a manager acts**: every seat decides in the morning.
+3. **News that arrives between the morning and the tip**: a seat decides on what it heard that
+   morning.
 
 **The bid policy** (`sim/bid_policy.py`, `policy.with_bid`, `policy.queue`, PR F2). The live rule
 reads one horizon, never paces, never looks at another team's dollars or at what claims have cost
@@ -2260,6 +2353,14 @@ setup, the day and the same variant's day before; a later rule is one more entry
 - `lands_next_day`: every player who joined a roster today is the add of a move the same team
   queued the day before, or of a claim it had open whose player clears today (the auditor keeps
   each variant's day before; on day one the setup's rosters stand for it, with nothing queued).
+  A same-day league (PR today, `Setup.same_day`) is held to `lands_same_day` in its place
+  (`audit.LANDS_SAME_DAY`): every player who joined a roster today is the add of a move the same
+  team queued today, or of a claim as above; each move queued today whose add is not on the
+  team's roster was lost at the day's landing (counted in `gone` there: an earlier team of the
+  rotation took him, his drop had gone, or no spot was open); and a player a move that landed
+  today dropped starts nowhere for that team today, so no line of his day is credited to the
+  team that let him go. The audit reads the day after the landing, and the state before it
+  (`audit.Day.decided`) for the day's queue.
 - `held_kind`: a player placed in a held slot today is one the slot's kind accepts
   (`moves.eligible`) under the status heard today.
 - `lineup`: each starter on his team's active roster and eligible for his slot, no more starters
@@ -2393,7 +2494,8 @@ screen reads ("The screen"). In a run where an arm executes
 `queue` only (PR E; a run that names none has no such keys, so its counts are as before), after
 every other count and in every seat's row, 0 for a seat that does not take the rule:
 `plan_days`, the days the queue took a week plan instead of the three weeks' set, and
-`plan_steps`, the steps of those plans queued (a free agent's add for the next morning, or a
+`plan_steps`, the steps of those plans queued (a free agent's add for the next morning, or the same
+day in a same-day league, or a
 claim placed; whether each landed is in `landed`, `gone` and the claim counts with every other
 move). A streaming plan executed beside a set is not counted there. A pair (`--arms`) adds the
 rivals'
