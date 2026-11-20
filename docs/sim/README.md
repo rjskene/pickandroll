@@ -402,7 +402,12 @@ finite is refused like any knob's (the engine's own check passes a NaN).
   `policy.due_by`'s rule); or, under the queue's rule on a day a plan leads, that plan's steps
   due and nothing of the set, which is not queued. It is one rule, written once where the queue
   is gathered: `policy.gathered` is the list the executor queues from, and `policy.named` makes
-  the names with it. The engine's charge leaves a dropped player out, so a named player is
+  the names with it. Of that list the part that can land together is made (`policy.distinct`):
+  each add and each drop taken once, by the first move of the list that takes it. A streaming
+  plan beside the set is drawn against the week's set, so a step due can take the add or the
+  drop of a move of the three weeks' set; the executor queues one move an add, and a second
+  move of one drop finds its drop gone, so such a step is left out of the names (the queue
+  itself is what it was). The engine's charge leaves a dropped player out, so a named player is
   never the drop of a move queued for the same morning. The list is what the seat means to
   queue, not what the day's cap, the week's adds or the claim rules then leave of it (limits,
   item 7, says what follows, and the one case the refit leaves).
@@ -552,9 +557,15 @@ list the executor queues from, by `policy.due_by`'s reading of the day a step is
 `policy.named` makes the names with that list by the engine's own charge (`moves.comebacks`; no
 rule of the engine is written again). A decision carries the names for an arm that queues its
 plan's steps and for one that does not, and the executor keeps the ones that match what it
-queues. So a named player is never the drop of a move queued for the same morning: the step
-lands on the roster it was planned on, where PR G's names, made with the set alone, could send a
-queued step's own drop. One case stays a limit (limits, item 7): when the engine's plan, with
+queues. The set and a streaming plan beside it are two plans queued together, the plan drawn
+against the week's set, so the list cannot always land whole: a step due can take the add or the
+drop of a move of the three weeks' set. The executor queues one move an add and skips such a
+step; of two moves of one drop the second to land finds its drop gone. The names are made with
+the part of the list that can land together, each add and each drop taken once by the first move
+that takes it (`policy.distinct`); the queue itself is what it was. So a named player is never
+the drop of a move queued for the same morning: a step that can land beside the set lands on the
+roster it was planned on, where PR G's names, made with the set alone, could send a queued
+step's own drop. One case stays a limit (limits, item 7): when the engine's plan, with
 the queue made, charges a queued move's own add, he has not arrived when the held player returns
 (the adds land after the returns), so the morning falls to the rule before, the least valuable
 active player. No rule of the seat's own is written for it. Rule 1 keeps PR G's exception and
@@ -1432,10 +1443,13 @@ What a replay with them does not model, each plainly:
      than the plan charged, and may be a queued move's drop (that move then finds its drop
      gone, counted in `gone`). No rule of the seat's own is written for it;
    - **the queue can land less than the seat meant.** The names are made with everything the
-     seat means to queue made; the queue keeps what the day's cap, the week's adds and the
-     claim rules allow. On a day they cut the list the name is the engine's charge on a roster
-     the morning does not find (it can be the returning player himself, where with the queued
-     moves alone another would go);
+     seat means to queue that can land together made (a step that takes the add or the drop of
+     an earlier move of the list is left out: the executor queues one move an add, and a second
+     move of one drop finds its drop gone); the queue then keeps what the day's cap, the week's
+     adds and the claim rules allow. On a day they cut the list the name is the engine's charge
+     on a roster the morning does not find (it can be the returning player himself, where with
+     the queued moves alone another would go; and where a claim rule cuts the set's move, a
+     plan step of the same drop can be the one queued, the names made with the set's);
    - **the season's last week**: no `O` is named there ("Whose date", above), so a held player
      told back in it comes back to the rule before.
 

@@ -99,7 +99,9 @@ leaves, as before. The world reads neither the knob nor the keep rule. The names
 what the seat queues that night made (PR E, :func:`named`): the set's moves, with the plan's
 steps due for an arm that executes its plan, or a leading plan's steps due under the queue's
 rule. What is queued is gathered in one place (:func:`gathered`), which the executor and the
-names both read, so a named player is never the drop of a move queued for the same morning. The
+names both read; the names are made with the part of it that can land together
+(:func:`distinct`: a plan step that takes the add or the drop of a move of the set is left
+out). So a named player is never the drop of a move queued for the same morning. The
 day's choice of an activation's drop (``moves.choose_activation``, #360) is not made here: no
 problem a seat decides on holds a cleared player.
 
@@ -421,9 +423,10 @@ class Decision:
     #: gain's, as live's). False everywhere else.
     plan_leads: bool = False
     #: ``sends`` for an arm that executes its plan beside the set (PR E, :func:`named`): the
-    #: names with the set's moves and the plan's steps due tonight made. None where no plan
-    #: stands beside the set (none drawn, or the plan leads and ``sends`` is its own). The
-    #: executor keeps the one that matches what it queues (:func:`queue`).
+    #: names with the set's moves and the plan's steps due tonight that can land beside them
+    #: (:func:`distinct`) made. None where no plan stands beside the set (none drawn, or the
+    #: plan leads and ``sends`` is its own). The executor keeps the one that matches what it
+    #: queues (:func:`queue`).
     plan_sends: tuple[tuple[int, int], ...] | None = None
 
 
@@ -456,10 +459,11 @@ def sends_of(problem: mv.MoveProblem, moves: Sequence[mv.Move] = ()) -> tuple[tu
     none, and only a held player the engine reads as back inside the week (a ``GTD`` in an
     ``IL+`` slot): an ``O`` is out for the rest of the week to the engine, so in the last week
     its plan charges nobody for him and he is not named (the README's limits). ``moves`` is
-    what the seat means to queue tonight, whole (:func:`named`: the set's moves and the plan's
-    steps due that go with them or instead of them), not what the queue then keeps of it within
-    the day's cap, the week's adds and the claim rules. A player those moves drop is never
-    charged; one of their adds can be (the README's limits)."""
+    what the seat means to queue tonight that can land together (:func:`named`: the set's moves
+    and the plan's steps due that go with them or instead of them, each add and each drop taken
+    once, :func:`distinct`), not what the queue then keeps of it within the day's cap, the
+    week's adds and the claim rules. A player those moves drop is never charged; one of their
+    adds can be (the README's limits)."""
     held = {k for k, _ in problem.held}
     if not held:
         return ()
@@ -481,7 +485,13 @@ def gathered(
     a step dated at or before ``due`` of its add, the latest day a step of that add may be dated
     to be queued today (:func:`due_by`). The one place the queue's moves are gathered: the
     executor queues from it (:func:`queue`), and the names of who leaves when a held player
-    comes back are made with it (:func:`named`), so both read one list."""
+    comes back are made with it (:func:`named`), so both read one list.
+
+    The list is not always one that can land whole. A streaming plan beside the set is drawn
+    against the week's set, so a step due can take the add or the drop of a move of the three
+    weeks' set. The executor queues one move an add and skips the step, and a second move of
+    one drop finds its drop gone at the landing; the names are made with the part that can
+    land together (:func:`distinct`)."""
     moves = [] if decision.plan_leads else list(decision.moves)
     steps: list[tuple[mv.Move, int]] = []
     if execute_plan or decision.plan_leads:
@@ -489,6 +499,30 @@ def gathered(
             (m, j) for j, m in enumerate(decision.plan) if m.day is None or m.day <= due(m.add)
         ]
     return moves, steps
+
+
+def distinct(listed: Iterable[mv.Move]) -> list[mv.Move]:
+    """The moves of ``listed`` that can land together (#172, PR E): each add and each drop
+    taken once, by the first move of the list that takes it; a later move that takes either
+    again is left out. What :func:`named` makes of the list gathered (:func:`gathered`) before
+    the engine charges anyone on it: the engine's plan counts every add of the list as arriving
+    and every drop as leaving once (``moves.comebacks``), and ``moves.feasible`` passes no set
+    with one add or one drop twice. The executor's own reading of the same list: it queues one
+    move an add (the later one is skipped, :func:`queue`), and of two moves of one drop the
+    second to land finds its drop gone (:func:`land`; a claim on a drop an earlier claim takes
+    is not placed, the autopilot's ``DROP_CLAIMED``). Nothing is taken out of the queue here:
+    the executor queues from the whole list, as it did before the names were made with it."""
+    adds: set[int] = set()
+    drops: set[int] = set()
+    out: list[mv.Move] = []
+    for m in listed:
+        if m.add in adds or (m.drop is not None and m.drop in drops):
+            continue
+        adds.add(m.add)
+        if m.drop is not None:
+            drops.add(m.drop)
+        out.append(m)
+    return out
 
 
 def due_on(problem: mv.MoveProblem) -> Callable[[int], date]:
@@ -512,18 +546,23 @@ def named(problem: mv.MoveProblem, decision: Decision) -> Decision:
     - ``plan_sends``: for an arm that executes its plan beside the set, with the set's moves
       and the plan's steps due made. None where no plan stands beside the set.
 
-    A step dated later is queued on a later day and named with then. So a named player is never
-    the drop of a move the seat queues for the same morning (the engine's charge leaves a
-    dropped player out). He can be one of those moves' own adds, who has not arrived when the
-    held player comes back: the morning then falls to the rule before (:func:`_activate`), and
-    no rule of the seat's own is written for it (the README's limits)."""
+    Of the list gathered, the part that can land together is made (:func:`distinct`): a step
+    that takes the add or the drop of an earlier move of the list is left out, since the
+    executor does not queue a second move of one add and a second move of one drop finds its
+    drop gone. A step dated later is queued on a later day and named with then. So a named
+    player is never the drop of a move the seat queues for the same morning (the engine's
+    charge leaves a dropped player out, and a step left out for its drop drops a player an
+    earlier move already does). He can be one of those moves' own adds, who has not arrived
+    when the held player comes back: the morning then falls to the rule before
+    (:func:`_activate`), and no rule of the seat's own is written for it (the README's
+    limits)."""
     if not problem.held:
         return decision
     due = due_on(problem)
 
     def of(execute_plan: bool) -> tuple[tuple[int, int], ...]:
         moves, steps = gathered(decision, execute_plan, due)
-        return sends_of(problem, [*moves, *(m for m, _ in steps)])
+        return sends_of(problem, distinct([*moves, *(m for m, _ in steps)]))
 
     beside = bool(decision.plan) and not decision.plan_leads
     return replace(decision, sends=of(False), plan_sends=of(True) if beside else None)
@@ -1672,8 +1711,8 @@ def queue(
     """The moves of ``decision`` that may land tomorrow, within the day's cap and the week's
     adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans
     (:func:`gathered`, the one place they are gathered; the names of who leaves when a held
-    player comes back were made with the same list, :func:`named`, and the ones that match
-    ``execute_plan`` are kept for the morning).
+    player comes back were made with the part of the same list that can land together,
+    :func:`named`, and the ones that match ``execute_plan`` are kept for the morning).
     Under the queue's rule (PR E) a plan that leads (``decision.plan_leads``) is queued instead
     of the set: its steps due tomorrow (:func:`due_by`), in the plan's order, and none of the
     set's moves, whatever ``execute_plan``; a later step is not queued early, and the seat draws

@@ -655,11 +655,19 @@ def queue_arm(name: str = "Q", **knobs) -> rn.Arm:
 def season(setup, seat: rn.Arm, path: tuple[int, int] = PATH):
     """A made-up season with ``seat`` in seat 1 among market rivals at 0.3 a day, on ``path``:
     the variant's result and its day records. A seat that names a stash threshold has the
-    run's count of it (``run.stash_named``)."""
+    run's count of it (``run.stash_named``), and an arm that executes its plan beside its set
+    has the run execute it (``Arm.execute_plan``)."""
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *path)
     days: list[rn.DayRecord] = []
     variant = {**{t: op.Market(0.3) for t in setup.teams}, 1: seat.seat()}
-    (result,) = rn.simulate(setup, w, [variant], on_day=days.append, stash=rn.stash_named([seat]))
+    (result,) = rn.simulate(
+        setup,
+        w,
+        [variant],
+        [seat.execute_plan],
+        on_day=days.append,
+        stash=rn.stash_named([seat]),
+    )
     return result, days
 
 
@@ -945,6 +953,25 @@ def test_the_queue_is_gathered_in_one_place_for_the_executor_and_for_the_names()
         assert policy.queue(state, 1, d, 3, None, execute_plan).pending[1] == want
 
 
+def test_the_part_of_a_list_that_can_land_together_takes_each_add_and_each_drop_once():
+    """``policy.distinct``, what the names are made with of the list gathered: the first move
+    of the list that takes an add or a drop keeps it, and a later move that takes either again
+    is left out. A move left out takes nothing; an add with no drop shares none; a step that
+    drops an earlier move's add (a streaming plan's chain) stays."""
+    a, b, c, x, y = 1, 2, 3, 11, 12
+    first = mv.Move(a, x)
+    assert policy.distinct([]) == []
+    assert policy.distinct([first, mv.Move(a, y)]) == [first]
+    assert policy.distinct([first, mv.Move(b, x)]) == [first]
+    assert policy.distinct([first, first, mv.Move(b, y)]) == [first, mv.Move(b, y)]
+    assert policy.distinct([first, mv.Move(a, y), mv.Move(b, y)]) == [first, mv.Move(b, y)]
+    assert policy.distinct([mv.Move(a), mv.Move(b), mv.Move(a)]) == [mv.Move(a), mv.Move(b)]
+    chain = [first, mv.Move(b, a), mv.Move(c, y)]
+    assert policy.distinct(chain) == chain
+    # A date is not read: a step is the move it makes.
+    assert policy.distinct([first, mv.Move(a, x, cats().start)]) == [first]
+
+
 def test_a_seat_that_holds_no_player_names_nobody_and_its_decision_is_untouched():
     """Rule 1's mechanism: ``policy.named`` is the identity on a problem that holds no player,
     in a league with an IL slot as in one without, whatever the decision carries. So no
@@ -1097,6 +1124,267 @@ def test_an_arm_that_executes_its_plan_names_with_the_set_and_the_step_due_made(
         lost = replace(morning(setup, lost, lands, cleared, value), day=lands)
     assert free not in lost.active(1) and nxt in lost.active(1)
     assert lost.gone_by == {1: 1} and not lost.executed_by
+
+
+def monday(lines, waivers: str = "none", way: str = "free_agent"):
+    """PR G's Monday (``test_sim_stash.return_day``: ``back`` in the IL slot and told back, the
+    six active spots full, ``low`` and ``nxt`` the two weakest; neither is kept), the wire's last
+    free agents given the rates ``lines`` in order, in a league where an add arrives ``way``
+    (a ``dropped_claim``: each of those free agents was dropped by another team and clears
+    tomorrow). The setup, the state, the seat's problem, ``back``, ``low``, ``nxt``, ``third``
+    (the least valuable of the other four) and those free agents."""
+    setup, state, status, returns, back, low, nxt = stash.return_day(0)
+    wire = sorted(state.pool, reverse=True)[: len(lines)]
+    projection = {**setup.projection, **{k: rates(x) for k, x in zip(wire, lines, strict=True)}}
+    setup = arriving(replace(setup, projection=projection), waivers, way)
+    # The day's state was made for a league without waivers: the priority order and the
+    # dollars are day one's of the league as it now is.
+    first = initial(setup)
+    state = replace(state, priority=first.priority, dollars=first.dollars)
+    if way == "dropped_claim":
+        state = replace(state, waivers={k: Waiting(state.day + DAY, 3) for k in wire})
+    built = policy.problem_of(setup, state, 1, dict(KNOBS), setup.projection, status, returns)
+    p = built.problem
+    third = min((k for k, _ in p.roster if k not in (low, nxt)), key=lambda k: (p.value[k], str(k)))
+    assert not {low, nxt, third} & p.kept and p.value[low] < p.value[nxt] < p.value[third]
+    return setup, state, p, back, low, nxt, third, wire
+
+
+def test_the_names_of_an_arm_that_executes_its_plan_take_the_set_s_move_and_no_later_step():
+    """The rule as it is written, each part held by a name that moves with it (the decision by
+    hand on PR G's Monday, so the seat weighs nothing and no format is named). The three weeks'
+    set swaps ``low`` for a free agent, a plan step due tomorrow swaps ``nxt`` for another, and
+    a step dated the day after swaps ``third`` for one more; each add is worth more than the
+    roster's bottom four. For ``back``'s return the engine's plan charges ``nxt`` with the set
+    alone made (``Decision.sends``, PR G's name), ``low`` with the step alone made, ``third``
+    with both made, and the next player up with the later step made too. The names an arm that
+    executes its plan keeps are the third: the set's move is in the list and the later step is
+    not. The morning sends ``third`` and both queued moves land; the later step was not queued.
+    With the set's own name, or the step's alone, the named player is a queued move's drop: he
+    leaves for the return and that move is gone."""
+    setup, state, p, back, low, nxt, third, (a, b, c) = monday((1.5, 2.0, 2.5))
+    tomorrow = state.day + DAY
+    in_set, step = mv.Move(a, low), mv.Move(b, nxt, tomorrow)
+    later = mv.Move(c, third, tomorrow + DAY)
+    assert mv.feasible(p, (in_set, step, later))
+    assert p.value[third] < min(p.value[k] for k in (a, b, c))
+    decision = policy.named(p, policy.Decision(moves=(in_set,), plan=(step, later), source="exact"))
+    alone, of_step = policy.sends_of(p, [in_set]), policy.sends_of(p, [step])
+    assert decision.sends == alone == ((back, nxt),) and of_step == ((back, low),)
+    assert decision.plan_sends == policy.sends_of(p, [in_set, step]) == ((back, third),)
+    with_later = policy.sends_of(p, [in_set, step, later])
+    assert with_later not in (decision.plan_sends, alone, of_step)
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    cleared = {low: "O"}
+    night, out = next_morning(setup, state, decision, 3, True, cleared, value)
+    assert night.sends == {1: ((back, third),)} and placed_on(night) == [(a, low), (b, nxt)]
+    assert set(out.active(1)) == set(state.active(1)) - {low, nxt, third} | {back, a, b}
+    assert out.forced_by == {1: 1} and out.executed_by == {1: 2} and not out.gone_by
+    assert found(setup, night, out, cleared) == []
+    # With the set's own name, or the step's alone: a queued move's drop leaves for the return.
+    for wrong in (alone, of_step):
+        wrongly = replace(decision, plan_sends=wrong)
+        _, lost = next_morning(setup, state, wrongly, 3, True, cleared, value)
+        assert lost.forced_by == {1: 1} == lost.executed_by == lost.gone_by
+
+
+#: A plan step due that cannot land beside a move of the set: it takes that move's add (the
+#: executor queues one move an add), or its drop (the second to land finds the drop gone).
+TWICE = ("one add twice", "one drop twice")
+
+
+@pytest.mark.parametrize(("waivers", "way"), ARRIVALS)
+@pytest.mark.parametrize("shape", TWICE)
+def test_a_step_that_takes_an_earlier_move_s_add_or_drop_is_left_out_of_the_names(
+    shape, waivers, way
+):
+    """The streaming plan is drawn against the week's set, so a step due can take the add or the
+    drop of a move of the three weeks' set. Both cannot land: the names are made with the
+    first move of the list that takes each add and each drop (``policy.distinct``), a list
+    ``moves.feasible`` can pass, and the step is left out. PR G's Monday, the decision by hand
+    (no format is named), every way an add arrives.
+
+    One add twice: the set swaps ``low`` for the star, the step ``nxt`` for the star. The
+    executor queues the set's move alone. With that move made the engine's plan charges
+    ``nxt``; with both made it counts the star twice and charged ``third``, who then left
+    while ``nxt`` stayed.
+
+    One drop twice: the set swaps ``low`` for ``strong``, the step ``low`` for ``weak``, who is
+    worth less than ``nxt``. With the set's move made the plan charges ``nxt``; with both made
+    it charged ``weak``, the add of a step that cannot land, so the name was of nobody on the
+    roster, the rule before sent ``low``, and the set's own move was lost with the step."""
+    if shape == "one add twice":
+        setup, state, p, back, low, nxt, third, (star,) = monday((3.0,), waivers, way)
+        tomorrow = state.day + DAY
+        in_set, step = mv.Move(star, low), mv.Move(star, nxt, tomorrow)
+    else:
+        setup, state, p, back, low, nxt, third, (strong, weak) = monday((0.5, 0.32), waivers, way)
+        tomorrow = state.day + DAY
+        in_set, step = mv.Move(strong, low), mv.Move(weak, low, tomorrow)
+        assert p.value[low] < p.value[weak] < p.value[nxt] < p.value[strong]
+    assert mv.feasible(p, (in_set,)) and mv.feasible(p, (step,))
+    assert not mv.feasible(p, (in_set, step))
+    decision = policy.named(p, policy.Decision(moves=(in_set,), plan=(step,), source="exact"))
+    assert policy.gathered(decision, True, policy.due_on(p)) == ([in_set], [(step, 0)])
+    whole = policy.sends_of(p, [in_set, step])
+    assert decision.plan_sends == decision.sends == ((back, nxt),) != whole
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    cleared = {low: "O"}
+    night, out = next_morning(setup, state, decision, 2, True, cleared, value)
+    both = shape == "one drop twice" and way == "free_agent"
+    queued = [(in_set.add, low), (step.add, low)] if both else [(in_set.add, in_set.drop)]
+    assert night.sends == {1: ((back, nxt),)} and placed_on(night) == queued
+    assert bool(night.claims.get(1)) == (way != "free_agent")
+    # ``nxt`` leaves for the return and the set's move lands; a step queued beside it is gone.
+    assert set(out.active(1)) == set(state.active(1)) - {low, nxt} | {back, in_set.add}
+    assert out.forced_by == {1: 1} == out.executed_by
+    assert out.gone_by == ({1: 1} if both else {})
+    if way != "free_agent":
+        assert [(r.team, r.add, r.outcome) for r in out.resolved] == [(1, in_set.add, WON)]
+    assert found(setup, night, out, cleared) == []
+    # With the names made on the whole list, the step that cannot land counted in.
+    _, lost = next_morning(
+        setup, state, replace(decision, plan_sends=whole), 2, True, cleared, value
+    )
+    assert nxt in lost.active(1) and lost.forced_by == {1: 1}
+    if shape == "one add twice":
+        assert whole == ((back, third),) and third in lost.pool
+    else:
+        assert whole == ((back, step.add),) and low in lost.pool
+        assert in_set.add not in lost.active(1) and not lost.executed_by
+
+
+def plan_arm(executes: str = policy.QUEUE_SET, **knobs) -> rn.Arm:
+    """An exact arm that executes ``executes`` with its streaming plan drawn and executed
+    beside the set, among market rivals, three moves a day. Its plan floors are below zero, so
+    it takes each plan the stream draws, as Rule 1's pair does (:func:`pair_digest`)."""
+    knobs = {**KNOBS, "daily_cap": 3, "plan_floor_cats": -1.0, "plan_floor_points": -1.0, **knobs}
+    return rn.Arm("P", "exact", knobs, {"kind": "market"}, executes, True, True)
+
+
+#: The exact tier's own decisions of an arm that executes its plan beside its set, on a day of
+#: :func:`held_back` in a three-week league that counts every category: the league's seed, the
+#: day, and what the arm executes (found by ``~/sim-notes/vm/scratch/e/fix2/b1_own_decisions.py``).
+OWN = {
+    "a step that can land": (2, 1, policy.QUEUE_SET),
+    "steps that repeat the set's adds": (3, 1, policy.QUEUE_SET),
+    "weighted, steps that repeat the set's adds": (3, 11, policy.WEIGHTED),
+}
+
+
+@pytest.mark.parametrize("case", OWN)
+def test_the_exact_tier_s_own_decision_carries_the_names_with_its_plan_s_steps_due(case):
+    """The seat's own decision, not one made by hand: an exact arm that executes its streaming
+    plan beside its set, on a day its held player is told back. ``policy.exact`` names with
+    its plan: ``Decision.plan_sends`` is the engine's charge with the set's moves and the
+    plan's steps due that can land together made, and the executor keeps it. One format, every
+    category: a one-win league's plan floor is the engine's own, and in the made-up one-win
+    seasons the stream draws no plan for the arm to execute.
+
+    A step that can land: the set swaps one player and the step due another. Three names:
+    with the set alone made, with the step alone made, and with both made, which charges the
+    step's own add (the limit that stays: he has not arrived, the morning falls to the rule
+    before, and a queued move finds its drop gone).
+
+    Steps that repeat the set's adds, under ``three`` and under ``weighted``: the plan was
+    drawn against the week's set and each of its steps due adds a player the three weeks' set
+    adds. The executor queues the set's two moves and no step; the names are the set's own, a
+    player on the roster; the morning sends him and both moves land. With the whole list made
+    the engine charged an add of the set, and a queued move was lost."""
+    seed, day, executes = OWN[case]
+    setup = every_category(make_setup(seed=seed, weeks=3, playoff_weeks=1, held_slots=("IL",)))
+    state, status, returns, back, value = held_back(setup, day)
+    seat = plan_arm(executes)
+    built = policy.problem_of(setup, state, 1, seat.knobs, setup.projection, status, returns)
+    p = built.problem
+    decision = policy.decide(built, "exact", executes, True)
+    moves, steps = policy.gathered(decision, True, policy.due_on(p))
+    assert moves and steps and decision.plan_sends is not None
+    listed = [*moves, *(m for m, _ in steps)]
+    together = policy.distinct(listed)
+    assert decision.sends == policy.sends_of(p, moves)
+    assert decision.plan_sends == policy.sends_of(p, together)
+    ((held, named),) = decision.plan_sends
+    assert held == back
+    night, out = next_morning(setup, state, decision, 3, True, {}, value)
+    assert night.sends == {1: decision.plan_sends}
+    assert named not in {drop for _, drop in placed_on(night)}
+    assert out.forced_by == {1: 1} and found(setup, night, out, {}) == []
+    if case == "a step that can land":
+        ((step, _),) = steps
+        assert together == listed and placed_on(night) == [(m.add, m.drop) for m in listed]
+        assert len({decision.sends, policy.sends_of(p, [step]), decision.plan_sends}) == 3
+        assert named == step.add and out.executed_by == {1: 1} == out.gone_by
+        return
+    assert together == moves and placed_on(night) == [(m.add, m.drop) for m in moves]
+    whole = policy.sends_of(p, listed)
+    assert decision.plan_sends == decision.sends != whole and named in dict(p.roster)
+    assert out.executed_by == {1: len(moves)} and len(moves) == 2 and not out.gone_by
+    left, came = {named, *(m.drop for m in moves)}, {back, *(m.add for m in moves)}
+    assert set(out.active(1)) == set(state.active(1)) - left | came
+    # With the names made on the whole list: an add of the set is charged, and a move is lost.
+    _, lost = next_morning(setup, state, replace(decision, plan_sends=whole), 3, True, {}, value)
+    assert lost.executed_by == {1: 1} == lost.gone_by
+
+
+def first_takers(listed) -> list:
+    """The test's own reading of the part of a list that can land together: a move stays when
+    no move kept before it takes its add or its drop."""
+    out: list = []
+    for m in listed:
+        if all(m.add != x.add and (m.drop is None or m.drop != x.drop) for x in out):
+            out.append(m)
+    return out
+
+
+#: The seasons of an arm that executes its plan beside its set, by what each is played for:
+#: the world's seed and path (found by ``~/sim-notes/vm/scratch/e/fix2/c1_seasons.py``).
+PLAN_PATHS = {
+    "a step due moves the name to another player of the roster": (1, 1),
+    "a step due repeats the set's drop": (1, 2),
+}
+
+
+@pytest.mark.parametrize("what", PLAN_PATHS)
+def test_an_arm_that_executes_its_plan_beside_its_set_plays_a_season_with_an_il_slot(what):
+    """The arm's own decisions over a season: ``three`` with its streaming plan drawn and
+    executed, six weeks with an IL slot and no waivers, every category (the one format in
+    which the made-up seasons' stream draws a plan for the arm to execute: a one-win league's
+    plan floor is the engine's own). The audit finds nothing. On every night the seat holds a
+    player, the names the executor kept are the engine's charge on the seat's problem of that
+    day with what it queues made: the set's moves and the plan's steps due, each add and each
+    drop taken once. No name is the drop of a move queued that day, and a morning takes a name.
+
+    On one path a night's step due moves the name off the set's own to another player of the
+    roster. On the other a night's step due takes the drop of a move of the set: both are
+    queued, the names are made with the set's move, and with the whole list made the engine
+    would have charged the add of the step that cannot land."""
+    setup = every_category(
+        make_setup(teams=4, pool=12, weeks=6, playoff_weeks=1, held_slots=("IL",))
+    )
+    seat = plan_arm()
+    result, days = season(setup, seat, PLAN_PATHS[what])
+    assert result.breaches == () and any(r.decisions[1].plan for r in days)
+    moved = repeated = 0
+    for r in days:
+        decision = r.decisions[1]
+        names = r.state.sends.get(1, ())
+        built = policy.problem_of(setup, r.state, 1, seat.knobs, r.beliefs, r.status, r.returns)
+        p = built.problem
+        if not p.held:
+            assert names == (), r.day
+            continue
+        tomorrow = r.day + DAY
+        moves, steps = policy.gathered(decision, True, lambda add, tomorrow=tomorrow: tomorrow)
+        listed = [*moves, *(m for m, _ in steps)]
+        together = first_takers(listed)
+        assert names == policy.sends_of(p, together), r.day
+        if steps and names != decision.sends and all(x in dict(p.roster) for _, x in names):
+            moved += 1
+        if len(together) < len(listed) and names != policy.sends_of(p, listed):
+            repeated += 1
+    assert names_on_a_queued_drop(days) == [] and stash.mornings_named(days)
+    assert (moved if "moves the name" in what else repeated) >= 1, (moved, repeated)
 
 
 def test_a_stash_threshold_and_a_leading_plan_s_step_both_reach_the_name():
