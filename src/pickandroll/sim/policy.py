@@ -507,18 +507,24 @@ def distinct(listed: Iterable[mv.Move]) -> list[mv.Move]:
     again is left out. What :func:`named` makes of the list gathered (:func:`gathered`) before
     the engine charges anyone on it: the engine's plan counts every add of the list as arriving
     and every drop as leaving once (``moves.comebacks``), and ``moves.feasible`` passes no set
-    with one add or one drop twice. The executor's own reading of the same list: it queues one
-    move an add (the later one is skipped, :func:`queue`), and of two moves of one drop the
-    second to land finds its drop gone (:func:`land`; a claim on a drop an earlier claim takes
-    is not placed, the autopilot's ``DROP_CLAIMED``). Nothing is taken out of the queue here:
-    the executor queues from the whole list, as it did before the names were made with it."""
+    with one add or one drop twice. It is the executor's own reading of the same list, in the
+    executor's order, where every add is a free agent's: it queues one move an add (the later
+    one is skipped, :func:`queue`), and of two moves of one drop the second to land finds its
+    drop gone (:func:`land`). So a move left out for its add takes nothing, and one left out
+    for its drop still holds its add: it is queued, and a later move of that add is skipped all
+    the same. A test holds the two readings together, list by list
+    (``tests/sim/test_sim_queue.py``). Nothing is taken out of the queue here: the executor
+    queues from the whole list, as it did before the names were made with it. In a waiver
+    league a claim rule can cut a move of the list first (README, limits, item 7)."""
     adds: set[int] = set()
     drops: set[int] = set()
     out: list[mv.Move] = []
     for m in listed:
-        if m.add in adds or (m.drop is not None and m.drop in drops):
-            continue
+        if m.add in adds:
+            continue  # the executor queues one move an add
         adds.add(m.add)
+        if m.drop is not None and m.drop in drops:
+            continue  # queued, and gone at the landing: an earlier move took its drop
         if m.drop is not None:
             drops.add(m.drop)
         out.append(m)

@@ -11,7 +11,9 @@ problems, not seasons; a season is played only where a season is the point.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
+from collections import Counter
 from dataclasses import replace
 from datetime import timedelta
 
@@ -956,8 +958,10 @@ def test_the_queue_is_gathered_in_one_place_for_the_executor_and_for_the_names()
 def test_the_part_of_a_list_that_can_land_together_takes_each_add_and_each_drop_once():
     """``policy.distinct``, what the names are made with of the list gathered: the first move
     of the list that takes an add or a drop keeps it, and a later move that takes either again
-    is left out. A move left out takes nothing; an add with no drop shares none; a step that
-    drops an earlier move's add (a streaming plan's chain) stays."""
+    is left out. A move left out for its add takes nothing (the executor never queues it); one
+    left out for its drop still holds its add (it is queued, and gone at the landing); an add
+    with no drop shares none; a step that drops an earlier move's add (a streaming plan's
+    chain) stays."""
     a, b, c, x, y = 1, 2, 3, 11, 12
     first = mv.Move(a, x)
     assert policy.distinct([]) == []
@@ -965,11 +969,57 @@ def test_the_part_of_a_list_that_can_land_together_takes_each_add_and_each_drop_
     assert policy.distinct([first, mv.Move(b, x)]) == [first]
     assert policy.distinct([first, first, mv.Move(b, y)]) == [first, mv.Move(b, y)]
     assert policy.distinct([first, mv.Move(a, y), mv.Move(b, y)]) == [first, mv.Move(b, y)]
+    assert policy.distinct([first, mv.Move(b, x), mv.Move(b, y)]) == [first]
     assert policy.distinct([mv.Move(a), mv.Move(b), mv.Move(a)]) == [mv.Move(a), mv.Move(b)]
     chain = [first, mv.Move(b, a), mv.Move(c, y)]
     assert policy.distinct(chain) == chain
     # A date is not read: a step is the move it makes.
     assert policy.distinct([first, mv.Move(a, x, cats().start)]) == [first]
+
+
+def test_the_moves_the_names_are_made_with_are_the_moves_the_morning_lands():
+    """``policy.distinct`` says in a few lines what the executor does in two places, so it is
+    held to the executor (the lead's hold on it, a-8). In a league without waivers, over every
+    list of a set of one or two moves and one or two plan steps due, the steps drawn from
+    three free agents and three of the seat's players: the moves ``distinct`` keeps are the
+    moves the night queues (``policy.queue``) and the morning lands (``policy.land``), in
+    order, and the moves it leaves out are the ones the queue skips (a second move of one add)
+    or the landing finds gone (a second move of one drop). The lists hold a step that repeats
+    the set's add, one that repeats its drop, both in one list, and steps that repeat each
+    other. If the executor's order ever changes, this fails before the names drift."""
+    setup = cats()
+    state = initial(setup)
+    spots, counts = spots_of(setup)
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    tomorrow = state.day + DAY
+    wire = sorted(state.pool)[:3]
+    mine = [k for k, _ in state.rosters[1]][:3]
+    every = [mv.Move(add, drop) for add in wire for drop in mine]
+    met: Counter[str] = Counter()
+    for moves in ([every[0]], [every[0], every[4]]):
+        for steps in (*itertools.product(every, repeat=1), *itertools.product(every, repeat=2)):
+            plan = tuple(mv.Move(s.add, s.drop, tomorrow) for s in steps)
+            decision = policy.Decision(tuple(moves), (), plan, 1, "x")
+            first, due = policy.gathered(decision, True, lambda add: tomorrow)
+            listed = [*first, *(s for s, _ in due)]
+            assert len(listed) == len(moves) + len(steps)
+            kept = [(m.add, m.drop) for m in policy.distinct(listed)]
+            night = policy.queue(state, 1, decision, 9, 9, True, spots, setup)
+            queued = [(m.add, m.drop) for m in night.pending.get(1, ())]
+            landed = policy.land(night, [1], spots, counts, {}, value)
+            roster = {k for k, _ in landed.rosters[1]}
+            assert [(add, drop) for add, drop in queued if add in roster] == kept
+            assert all(drop not in roster and drop in landed.pool for _, drop in kept)
+            assert len(landed.active(1)) == len(state.active(1))  # swaps only
+            skipped, gone = len(listed) - len(queued), landed.gone
+            assert landed.executed == len(kept) and gone == len(queued) - len(kept)
+            assert skipped + gone == len(listed) - len(kept)
+            met["a step skipped"] += skipped > 0
+            met["a step gone"] += gone > 0
+            met["both in one list"] += skipped > 0 and gone > 0
+            met["the whole list lands"] += len(kept) == len(listed)
+    assert all(met[k] > 0 for k in ("a step skipped", "a step gone", "both in one list"))
+    assert met["the whole list lands"] > 0
 
 
 def test_a_seat_that_holds_no_player_names_nobody_and_its_decision_is_untouched():

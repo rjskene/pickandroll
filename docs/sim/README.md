@@ -552,8 +552,8 @@ and the morning a held player comes back**), with what it queues that night made
 plan leads that is the plan's steps due and nothing of the set, which is not queued; on a day
 none leads, the set's moves. An arm that executes its streaming plan beside its set
 (`execute_plan` under `three` or `weighted`) names with the set's moves and the plan's steps due
-made. It is one rule for both, written once where the queue is gathered: `policy.gathered` is the
-list the executor queues from, by `policy.due_by`'s reading of the day a step is due, and
+made. It is one rule for both, written once where the queue is gathered: `policy.gathered` is
+the list the executor queues from, by `policy.due_by`'s reading of the day a step is due, and
 `policy.named` makes the names with that list by the engine's own charge (`moves.comebacks`; no
 rule of the engine is written again). A decision carries the names for an arm that queues its
 plan's steps and for one that does not, and the executor keeps the ones that match what it
@@ -562,23 +562,23 @@ against the week's set, so the list cannot always land whole: a step due can tak
 drop of a move of the three weeks' set. The executor queues one move an add and skips such a
 step; of two moves of one drop the second to land finds its drop gone. The names are made with
 the part of the list that can land together, each add and each drop taken once by the first move
-that takes it (`policy.distinct`); the queue itself is what it was. So a named player is never
-the drop of a move queued for the same morning: a step that can land beside the set lands on the
-roster it was planned on, where PR G's names, made with the set alone, could send a queued
-step's own drop. A third way the two plans meet is settled at the landing (`policy.land`): a
-step due can drop the player the set's held-slot move takes to a held slot that same morning.
-The step is then gone, as a claim whose drop is no longer an active player fails: no add lands
-in a held slot. Before this PR the step's add took the slot its drop sat in, a healthy player
-in a held slot, which the audit finds (met in made-up seasons of an arm that names a stash
-threshold and executes its plan). One case stays a limit (limits, item 7): when the engine's
-plan, with the queue made, charges a queued move's own add, he has not arrived when the held
-player returns (the adds land after the returns), so the morning falls to the rule before, the
-least valuable active player. No rule of the seat's own is written for it. Rule 1 keeps PR G's exception and
-no other: a seat that holds no player names nobody and its decision is the one before, so a
-league without held slots plays as before; in a league with held slots an arm that executes its
-streaming plan may play another season than before this PR, on the mornings a plan step due
-meets a return, and on a morning a step due drops a player its set moved to a held slot (a
-season the audit refused before).
+that takes it (`policy.distinct`, held to the executor's own queue and landing by a test, list
+by list); the queue itself is what it was. So a named player is never the drop of a move queued
+for the same morning: a step that can land beside the set lands on the roster it was planned on,
+where PR G's names, made with the set alone, could send a queued step's own drop. A third way
+the two plans meet is settled at the landing (`policy.land`): a step due can drop the player the
+set's held-slot move takes to a held slot that same morning. The step is then gone, as a claim
+whose drop is no longer an active player fails: no add lands in a held slot. Before the fix the
+step's add took the slot its drop sat in, a healthy player in a held slot, which the audit finds
+(met in made-up seasons of an arm that names a stash threshold and executes its plan). One case
+stays a limit (limits, item 7): when the engine's plan, with the queue made, charges a queued
+move's own add, he has not arrived when the held player returns (the adds land after the
+returns), so the morning falls to the rule before, the least valuable active player. No rule of
+the seat's own is written for it. Rule 1 keeps PR G's exception and no other: a seat that holds
+no player names nobody and its decision is the one before, so a league without held slots plays
+as before; in a league with held slots an arm that executes its streaming plan may play another
+season than before this PR, on the mornings a plan step due meets a return, and on a morning a
+step due drops a player its set moved to a held slot (a season the audit refused before).
 
 **The floor** is the engine's (`plans.gate_floor`): the knob of the league's kind
 (`plan_floor_cats` where every category counts, `plan_floor_points` in a points league), in a
