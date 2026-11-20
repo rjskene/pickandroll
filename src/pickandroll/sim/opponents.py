@@ -9,8 +9,9 @@ league it bids by an assumed form, ``policy.rival_bid``, or on the price book, `
 PR Fd). Its view is the draft day's all season, or the season's that morning (``view``), and it
 may pick among its best few (``among``), PR Fd.
 **Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
-whole: at the defaults nothing changes; in a FAAB league it bids by the live rule on them, or by
-the arm's ``bid`` policy when it names one, PR F2). **Seat** is the equal room's: a named arm in another
+whole but for the stash threshold, which a rival keeps at None, PR G: at the defaults nothing
+changes; in a FAAB league it bids by the live rule on them, or by the arm's ``bid`` policy when it
+names one, PR F2). **Seat** is the equal room's: a named arm in another
 seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
 draws (``run.World`` passes the day's generator), so two arms of a comparison see the same
 opponents while their states agree.
@@ -195,13 +196,19 @@ _SEASON_VIEW = _LastView()
 
 @dataclass(frozen=True)
 class Mirror:
-    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's), and
-    in a FAAB league bidding by the arm's ``bid`` block when it names one (PR F2)."""
+    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's), but for
+    the stash threshold, which a rival keeps at None (``policy.rival_knobs``, PR G): the knob
+    is the arm's own seat's. It is dropped when the rival is made, so two arms that differ only
+    in it face one rival and share its decisions. The arm's ``bid`` block the rival does take:
+    in a FAAB league it bids by it when the arm names one (PR F2)."""
 
     knobs: Mapping[str, Any]
     fields: policy.Fields = policy.DEFAULT_FIELDS
     kind: str = "mirror"
     bid: bp.BidPolicy | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "knobs", policy.rival_knobs(self.knobs))
 
     def decide(
         self,

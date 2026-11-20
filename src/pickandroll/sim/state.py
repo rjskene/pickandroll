@@ -294,6 +294,11 @@ class SimState:
     recent_by: Mapping[str, Mapping[int, tuple[tuple[date, float], ...]]] = field(
         default_factory=dict
     )
+    #: Whom each team's returning held players send (PR G), by team: (the held player, the
+    #: active player its seat's plan drops for him), as the seat's decision named them today
+    #: (``policy.sends_of``); tomorrow morning's alone (``policy.arrive`` spends them). Empty for
+    #: a seat that names none. No decision reads it, so it is no part of :meth:`key`.
+    sends: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
 
     @property
     def executed(self) -> int:
