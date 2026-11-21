@@ -1,8 +1,8 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type LeagueSummary, type ProgressPayload, type RoomSummary } from "../api";
 import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, ROW_CONTROLS, rowClickOpens, type Layout } from "../format";
-import { landingKeys, type SeasonViewId } from "../keys";
+import { LANDING_SHEET, landingKeys, type SeasonViewId } from "../keys";
 import { useHotkeys } from "../useKeys";
 import DraftSeason from "./DraftSeason";
 import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
@@ -10,8 +10,12 @@ import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
 import { useLandingOrder } from "./landingOrder";
 import AppBarLead from "./AppBarLead";
-import { ExplainIcon } from "./icons";
-import { OverviewStatus } from "./StatusLight";
+import { ExplainIcon, FloorIcon, ListIcon } from "./icons";
+import KeySheet from "./KeySheet";
+import { OverviewSheet, OverviewStatus, useSeasonStatus } from "./StatusLight";
+import { usePhone } from "../explain/usePhone";
+import FloorFace, { type FloorApi, type FloorControl } from "../floor/FloorFace";
+import { DEFAULT_FACE, faceShown, flipFace, flipLabel, hasFlip, type Face } from "../floor/face";
 import Wordmark from "./Wordmark";
 import { historyFoldLine } from "../history";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
@@ -72,14 +76,43 @@ export default function Landing({
     setDrawer("new");
   };
   const closeDrawer = useCallback(() => setDrawer(null), []);
-  useHotkeys(landingKeys(drawer ? null : onQueue, drawer ? null : onHistory));
   const ready = leagues.data !== undefined || leagues.isError;
   const page = pageFor(layout, leagues.data ?? [], rooms.data ?? [], now);
+  // The in-season page's two faces (#461): plain state, never saved; no flip on a phone.
+  const [shellRef, phone] = usePhone<HTMLElement>();
+  const [face, setFace] = useState<Face>(DEFAULT_FACE);
+  const flipOk = hasFlip(page, phone);
+  const shownFace = faceShown(face, page, phone);
+  const [floor, setFloor] = useState<FloorControl>({ demo: false, one: null, league: "" });
+  const floorApi = useRef<FloorApi | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const light = useSeasonStatus();
+  const queue = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: (query) => queuePoll(query.state.data), enabled: shownFace === "floor" });
+  const floorNow = useNow(shownFace === "floor" ? 1000 : 30_000);
+  const flip = () => setFace((f) => flipFace(f));
+  useHotkeys(
+    landingKeys(
+      drawer ? null : onQueue,
+      drawer ? null : onHistory,
+      flipOk && !drawer
+        ? {
+            onFloor: shownFace === "floor",
+            flip,
+            toggleView: () => floorApi.current?.toggleView(),
+            toggleDemo: () => floorApi.current?.toggleDemo(),
+            playPause: () => floorApi.current?.playPause(),
+            day: (d) => floorApi.current?.day(d),
+          }
+        : null,
+      page === "season" ? { open: sheetOpen, setOpen: setSheetOpen } : null,
+    ),
+  );
   const soon = draftsAhead(leagues.data ?? [], rooms.data ?? [], now).filter((l) => l.draft_time && Date.parse(l.draft_time) < now + DRAFT_SEASON_DAYS * 86_400_000);
   // The draft-season page's bar is as it was; in season the table carries the week (#270).
   const status = `draft season · ${soon.length || "no"} draft${soon.length === 1 ? "" : "s"} in the next ${DRAFT_SEASON_DAYS} days`;
   return (
-    <main className="shell">
+    <main className="shell" ref={shellRef}>
       <header className="topbar">
         {page === "draft" ? (
           <>
@@ -90,7 +123,19 @@ export default function Landing({
             </button>
           </>
         ) : (
-          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} onExplain={onExplain} />
+          <AppBarLead
+            onHome={closeDrawer}
+            lead={
+              flipOk && (
+                <button className="icon flip" onClick={flip} aria-label={flipLabel(face)} title={flipLabel(face)}>
+                  {face === "floor" ? <ListIcon /> : <FloorIcon />}
+                </button>
+              )
+            }
+            status={<OverviewStatus leagues={shown} now={now} />}
+            onProgress={onProgress}
+            onExplain={onExplain}
+          />
         )}
         <span className="grow" />
         <span className="modeswitch">
@@ -111,6 +156,26 @@ export default function Landing({
         </p>
       ) : page === "draft" ? (
         <DraftSeason now={now} setup={setup} onSetUp={(league) => setSetupState((x) => ({ key: x.key + 1, league }))} onOpenSession={onOpenSession} onOpenLeague={onOpenLeague} />
+      ) : shownFace === "floor" ? (
+        <FloorFace
+          seasons={shown}
+          queue={queue.data}
+          status={light.data}
+          now={floorNow}
+          control={floor}
+          setControl={setFloor}
+          onOpenLeague={(league) => onOpenLeague(league)}
+          onMoves={(league) => onOpenLeague(league, "waivers")}
+          onQueue={onQueue}
+          onHistory={onHistory}
+          onStatus={() => setStatusOpen(true)}
+          onExplainStep={(hash) => {
+            // Explain reads its place from the hash when it opens (App keeps the hash on Explain).
+            history.replaceState(null, "", hash);
+            onExplain();
+          }}
+          api={floorApi}
+        />
       ) : (
         <div className="landing-grid">
           <LeagueGrid landing={landing} onOpen={onOpenLeague} />
@@ -120,6 +185,8 @@ export default function Landing({
           <DraftsFold leagues={leagues.data ?? []} rooms={rooms.data ?? []} now={now} onDrafts={() => setDrawer("drafts")} onNew={() => setDrawer("new")} />
         </div>
       )}
+      {statusOpen && light.data && <OverviewSheet p={light.data} leagues={shown} now={now} onClose={() => setStatusOpen(false)} />}
+      {page === "season" && <KeySheet sheet={LANDING_SHEET} open={sheetOpen} onClose={() => setSheetOpen(false)} />}
       {drawer && page === "season" && (
         <DraftsDrawer view={drawer} setView={setDrawer} setup={setup} onSetUp={onSetUp} onClose={closeDrawer} onOpenSession={onOpenSession} now={now} />
       )}

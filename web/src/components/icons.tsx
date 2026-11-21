@@ -394,3 +394,25 @@ export function ExpandIcon({ out }: { out: boolean }) {
     </svg>
   );
 }
+
+/** The in-season page's floor face (#461): the floor's cart, a clam shell on two wheels. */
+export function FloorIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M3 13h17a1 1 0 0 1 1 1v.5a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3Z" />
+      <path d="M4 13V9.5A4.5 4.5 0 0 1 8.5 5H15a6 6 0 0 1 6 6v2" />
+      <circle cx="7.5" cy="19.5" r="1.5" />
+      <circle cx="16.5" cy="19.5" r="1.5" />
+    </svg>
+  );
+}
+
+/** The in-season page's list face (#461): today's leagues, a row each. */
+export function ListIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M8 6h12M8 12h12M8 18h12" />
+      <path d="M4 6h.01M4 12h.01M4 18h.01" />
+    </svg>
+  );
+}
