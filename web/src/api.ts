@@ -1687,6 +1687,35 @@ export interface RoutineRunLog {
 
 /** ``GET /routine/runs``: the run logs of a window of days, oldest day first; a file that does
  * not read is listed under its day's ``unread``. */
+/** A pre-tip attempt as the floor reads it (#472): its times and outcome, never its moves. */
+export interface RoutinePretipAttempt {
+  started_at: string;
+  outcome: "done" | "skipped" | "failed" | "missed";
+  reason: string | null;
+  solved_at: string | null;
+  pushed_at: string | null;
+  unchanged: boolean | null;
+  lineups_at: string | null;
+}
+
+/** A pre-tip slate (#472): planned from the day's tip-offs (null with no schedule copy), with the
+ * day file's attempts. */
+export interface RoutinePretipSlate {
+  slate: "first" | "late";
+  tip: string | null;
+  start_at: string | null;
+  until: string | null;
+  done: boolean;
+  missed: boolean;
+  attempts: RoutinePretipAttempt[];
+}
+
+export interface RoutinePretipDay {
+  enabled: boolean;
+  lead_min: number;
+  slates: RoutinePretipSlate[];
+}
+
 export interface RoutineRunsPayload {
   date: string;
   days: number;
@@ -1694,6 +1723,8 @@ export interface RoutineRunsPayload {
     date: string;
     runs: Record<string, RoutineRunLog>;
     unread: { routine: string; file: string; reason: string }[];
+    /** The pre-tip slates of the day (#472); absent from an API before it. */
+    pretip?: RoutinePretipDay;
   }[];
 }
 

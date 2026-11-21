@@ -1,6 +1,6 @@
 // The floor as the in-season page's second face (#461): its own row under the app's bar (all
 // leagues or one, the Live chip, the clock), the Demo's transport row while the Demo runs, the
-// stage, and the panel naming what runs now. Live plays the week from the run logs, the live
+// stage, the day's gates under it (#472), and the panel naming what runs now. Live plays the week from the run logs, the live
 // progress files and each day's queue (#462), polled every few seconds while a run or a pass is in
 // flight and once a minute at rest; the Demo plays the sample week on the bent clock. Nothing here
 // writes anything but the execute time, through the control the landing already has.
@@ -17,6 +17,8 @@ import { PRIVATE, sampleRoster, sampleWeek } from "./sample";
 import { formatHash, termHash } from "../explain/nav";
 import { TRACKS } from "../explain/tracks/index.ts";
 import FloorStage from "./FloorStage";
+import GateStrip from "./GateStrip";
+import { gatesOf } from "./gates";
 import { FLOW_EXPLAIN, W, clockText, dayLabel, sceneAt, sceneWidth, weekOf } from "./scene";
 import type { LeagueRow } from "./scene";
 
@@ -123,6 +125,8 @@ export default function FloorFace({
   const demoStart = sample.clock.toWall(still ? sample.w.liveAt : sample.w.demoAt);
   const clk = useWall(sample.clock.wallEnd, demoStart, control.demo);
   const [execOpen, setExecOpen] = useState(false);
+  // Live: the day picked on the week strip for the gates (#472); none is today's.
+  const [picked, setPicked] = useState<string | null>(null);
   // The frame time, for the chewing and the spin: the Demo's clock, else the second; none when still.
   const frame = still ? 0 : control.demo ? clk.wall : now / 1000;
 
@@ -180,7 +184,22 @@ export default function FloorFace({
     () => (!one ? null : control.demo ? sampleRoster(one) : (season.data?.roster.map((r) => ({ slot: r.slot, name: r.player.name })) ?? null)),
     [one, control.demo, season.data],
   );
-  const scene = sceneAt({ tl, t, age, now: frame, leagues, one, w: sceneW, executeTime: dayQueue?.settings.in_force ?? "--:--", roster, claims: control.demo });
+  // The gates' day: the picked one live (inside the week), else the moment's.
+  const gateDay = !control.demo && picked && picked !== today && weekOf(t).includes(picked) ? picked : centralDate(t);
+  const gates = useMemo(() => gatesOf(tl, gateDay, t), [tl, gateDay, t]);
+  const scene = sceneAt({
+    tl,
+    t,
+    age,
+    now: frame,
+    leagues,
+    one,
+    w: sceneW,
+    executeTime: dayQueue?.settings.in_force ?? "--:--",
+    roster,
+    claims: control.demo,
+    day: control.demo ? null : gateDay,
+  });
 
   const startDemo = (date?: string) => {
     const at = date ? sample.w.runs.by_day.find((d) => d.date === date)?.runs[still ? "morning" : "signin"]?.started_at : null;
@@ -188,7 +207,10 @@ export default function FloorFace({
     clk.setPlaying(true);
     setControl({ ...control, demo: true });
   };
-  const toLive = () => setControl({ ...control, demo: false });
+  const toLive = () => {
+    setPicked(null);
+    setControl({ ...control, demo: false });
+  };
   const pick = (league: string | null) => setControl({ ...control, one: league, league: league ?? control.league });
   const firstLeague = control.league && names.includes(control.league) ? control.league : (names[0] ?? null);
   const keysApi: FloorApi = {
@@ -308,7 +330,8 @@ export default function FloorFace({
           s={scene}
           one={one}
           h={{
-            onDay: (d) => startDemo(d),
+            // Live, a day picks the gates' day (#472); in the Demo it moves the bent clock there.
+            onDay: (d) => (control.demo ? startDemo(d) : setPicked(d === today ? null : d)),
             onDock: onOpenLeague,
             onLamp: onMoves,
             onHub: onQueue,
@@ -325,6 +348,7 @@ export default function FloorFace({
           }}
         />
       </div>
+      <GateStrip day={gates} onToday={!control.demo && gateDay !== today ? () => setPicked(null) : null} />
       <div className="fl-now">
         <div className="what">
           <b className={scene.now.agent ? `c-${scene.now.agent}` : "muted"}>{scene.now.title}</b> <span className="muted">{scene.now.when}</span>

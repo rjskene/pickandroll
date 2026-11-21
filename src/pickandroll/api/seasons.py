@@ -4040,9 +4040,13 @@ def register(
 
     @app.get("/routine/runs")
     def get_routine_runs(day: date | None = runs_day_q, days: int = runs_days_q) -> dict[str, Any]:
-        """The routines' run logs over the days (FLOOR, #458), as written; reads only."""
+        """The routines' run logs over the days (FLOOR, #458), as written, each day with its
+        pre-tip slates (#472); reads only."""
         today = service.clock().astimezone(routine_runs.CENTRAL).date()
-        return routine_runs.runs(data_dir, day or today, days)
+        schedule = data_dir / SCHEDULE_DIR
+        return routine_runs.runs(
+            data_dir, day or today, days, lambda d: nba_schedule.load_tips(d, schedule)
+        )
 
     @app.get("/routine/live")
     def get_routine_live() -> dict[str, Any]:

@@ -4,7 +4,18 @@
 // and the week follows the approved mock-up: its routines at their timers, its steps and their
 // lengths, its entries and their holds. The model reads it like the live payloads.
 
-import type { QueueEntry, QueueLeague, QueuePayload, QueueReason, RoutinePass, RoutineRunLog, RoutineRunsPayload, RoutineStepLog, SeasonSummary } from "../api.ts";
+import type {
+  QueueEntry,
+  QueueLeague,
+  QueuePayload,
+  QueueReason,
+  RoutinePass,
+  RoutinePretipDay,
+  RoutineRunLog,
+  RoutineRunsPayload,
+  RoutineStepLog,
+  SeasonSummary,
+} from "../api.ts";
 
 export const DATES = ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22"];
 
@@ -367,6 +378,36 @@ function season(league: string): SeasonSummary {
   };
 }
 
+/** A day's pre-tip slates as the route serves them (#472): the first slate an hour before its
+ * tip-off, done by the day's pass; on Friday a late slate too, done with nothing to push. */
+function pretipOf(day: number, log: RoutineRunLog | undefined): RoutinePretipDay {
+  const tip = day === 5 ? "18:00" : "19:00";
+  const end = (name: string) => log?.steps.find((s) => s.name === name)?.finished ?? null;
+  const slate = (name: "first" | "late", tipAt: string): RoutinePretipDay["slates"][number] => ({
+    slate: name,
+    tip: at(day, hm(tipAt)),
+    start_at: at(day, hm(tipAt) - 60),
+    until: at(day, hm(tipAt) - 15),
+    done: false,
+    missed: false,
+    attempts: [],
+  });
+  const first = slate("first", tip);
+  if (log) {
+    const started = log.steps.find((s) => s.name === "pretip_due")?.started ?? log.started_at;
+    first.done = true;
+    first.attempts = [{ started_at: started, outcome: "done", reason: null, solved_at: end("solve"), pushed_at: end("push"), unchanged: false, lineups_at: end("resolve") }];
+  }
+  const slates = [first];
+  if (day === 4) {
+    const late = slate("late", "21:30");
+    late.done = true;
+    late.attempts = [{ started_at: at(day, hm("20:30") + 0.2), outcome: "done", reason: null, solved_at: at(day, hm("20:36")), pushed_at: null, unchanged: true, lineups_at: at(day, hm("20:42")) }];
+    slates.push(late);
+  }
+  return { enabled: true, lead_min: 60, slates };
+}
+
 /** The sample week, built fresh on each call (the model never mutates it, a caller may). */
 export function sampleWeek(): SampleWeek {
   const byDay: RoutineRunsPayload["by_day"] = [];
@@ -430,7 +471,7 @@ export function sampleWeek(): SampleWeek {
       active: null,
       last_pass: lastPass,
     });
-    byDay.push({ date: DATES[day], runs: Object.fromEntries(built.map((b) => [b.log.routine, b.log])), unread: [] });
+    byDay.push({ date: DATES[day], runs: Object.fromEntries(built.map((b) => [b.log.routine, b.log])), unread: [], pretip: pretipOf(day, run("pretip")?.log) });
     if (day === 4) {
       // Halfway through its claim: each claim's unit is the half minute before its outcome.
       const live = entries.find((e) => e.league === L6 && e.queued);
