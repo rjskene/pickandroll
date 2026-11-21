@@ -244,6 +244,25 @@ test("pre-tip: planned slates still to come, a done slate's attempt drawn by its
   assert.equal(m2.note, "tip-off 21:30 · not run");
 });
 
+test("pre-tip: a slate that would start past the latest start is grey, not run by design, never missed", () => {
+  const block: RoutinePretipDay = {
+    enabled: true,
+    lead_min: 60,
+    latest_start: "20:40",
+    slates: [
+      { slate: "late", tip: `${FRI}T21:45:00-06:00`, start_at: `${FRI}T20:45:00-06:00`, until: `${FRI}T21:30:00-06:00`, past_latest: true, done: false, missed: false, attempts: [] },
+    ],
+  };
+  const tl = timeline({ runs: friday(block), now: ct(`${FRI}T21:30:00`) });
+  for (const at of ["21:30:00", "23:30:00"]) {
+    const [late] = gatesOf(tl, FRI, ct(`${FRI}T${at}`)).gates.filter((g) => g.kind === "slate");
+    assert.equal(late.state, "idle");
+    assert.equal(late.note, "tip-off 21:45 · starts past 20:40: not run by design");
+    assert.equal(gateTip(late, null)[1], "no run · tip-off 21:45 · starts past 20:40: not run by design");
+  }
+  assert.ok(gatesOf(tl, FRI, ct(`${FRI}T21:30:00`)).gates.every((g) => g.kind !== "slate" || g.state !== "missed"));
+});
+
 test("the execute times sit on the Mover's lane with their counts", () => {
   const e = (id: string, over: Partial<QueueEntry> = {}): QueueEntry => ({
     id,

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from pickandroll.api import routine_runs as rr
 from pickandroll.api import season_knobs, season_pretip
@@ -53,7 +53,7 @@ def test_the_runs_of_a_window_of_days_are_served_as_written_keyed_by_day_and_rou
         "date": (TODAY + timedelta(days=1)).isoformat(),
         "runs": {},
         "unread": [],
-        "pretip": {"enabled": False, "lead_min": 60, "slates": []},
+        "pretip": {"enabled": False, "lead_min": 60, "latest_start": "20:40", "slates": []},
     }
 
 
@@ -173,7 +173,7 @@ def test_each_day_carries_its_pretip_slates_planned_from_the_tips_with_their_att
     out = rr.runs(tmp_path, day, 2, tips_of)
     assert asked == [day - timedelta(days=1), day]
     before, block = (d["pretip"] for d in out["by_day"])
-    assert before == {"enabled": True, "lead_min": 60, "slates": []}
+    assert before == {"enabled": True, "lead_min": 60, "latest_start": "20:40", "slates": []}
     assert block["enabled"] and block["lead_min"] == 60
     first, late = block["slates"]
     # Planned from the tip-offs as the pass plans them: start an hour before, until 15 minutes before.
@@ -191,6 +191,7 @@ def test_each_day_carries_its_pretip_slates_planned_from_the_tips_with_their_att
         "tip": "2026-11-19T21:30:00-06:00",
         "start_at": "2026-11-19T20:30:00-06:00",
         "until": "2026-11-19T21:15:00-06:00",
+        "past_latest": False,
         "done": False,
         "missed": False,
         "attempts": [],
@@ -206,11 +207,28 @@ def test_a_kept_slate_without_a_schedule_copy_or_missed_is_served_from_the_day_f
     assert block["enabled"] is False  # the knob is off by default
     [late] = block["slates"]
     assert late["slate"] == "late" and late["tip"] is None and late["start_at"] is None
+    assert late["past_latest"] is False
     assert late["missed"] and not late["done"]
     assert [a["outcome"] for a in late["attempts"]] == ["missed"]
     # A day file that does not read is no slate.
     season_pretip.day_path(tmp_path, day).write_text("{oops")
     assert rr.runs(tmp_path, day)["by_day"][0]["pretip"]["slates"] == []
+
+
+def test_a_slate_that_would_start_past_latest_start_is_marked_so_never_due(tmp_path):
+    day = date(2026, 11, 19)
+    pretip_on(tmp_path)
+    # A 21:45 CT late tip-off: its start, 20:45, is past latest_start 20:40.
+    tips = {"BOS": "2026-11-20T00:00:00+00:00", "LAL": "2026-11-20T03:45:00+00:00"}
+    block = rr.runs(tmp_path, day, 1, lambda d: tips)["by_day"][0]["pretip"]
+    assert block["latest_start"] == "20:40"
+    first, late = block["slates"]
+    assert late["start_at"] == "2026-11-19T20:45:00-06:00"
+    assert late["past_latest"] is True and first["past_latest"] is False
+    # And due() agrees: at 20:50 the late slate is not made due.
+    now = datetime(2026, 11, 19, 20, 50, tzinfo=rr.CENTRAL)
+    out = season_pretip.due(tmp_path, now, day, tips, stopped=False)
+    assert not out["due"] and "would start past 20:40" in out["reason"]
 
 
 def test_the_route_plans_the_slates_from_the_schedule_copy(client):  # noqa: F811

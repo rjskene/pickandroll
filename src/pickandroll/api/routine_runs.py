@@ -9,7 +9,8 @@
     Each day also carries ``pretip`` (#472), the pre-tip pass's slates for the floor's gates:
     the knobs' ``enabled`` and ``lead_min``, and each slate's ``tip``, ``start_at`` and
     ``until`` (planned from the day's tip-offs in the schedule copy, as ``season_pretip``
-    plans them; null when the day has no copy), ``done``, ``missed`` and its attempts from the
+    plans them; null when the day has no copy), ``past_latest`` (it would start at or past the
+    knobs' ``latest_start``, also served, so no pass runs it), ``done``, ``missed`` and its attempts from the
     day file ``data/routine/pretip/<date>.json``: each attempt's ``started_at``, ``outcome``,
     ``reason``, ``solved_at``, ``pushed_at``, ``unchanged`` and ``lineups_at``, never its moves.
 ``GET /routine/live``
@@ -25,7 +26,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -77,6 +78,7 @@ def pretip_day(data_dir: Path, day: date, tips: Mapping[str, str] | None) -> dic
     """The pre-tip pass's slates on ``day``: those planned from its tip-offs, first and late,
     then any the day file kept that the plan does not name, each with its kept attempts."""
     knobs = season_pretip.settings(data_dir)
+    latest = time.fromisoformat(knobs["latest_start"])
     planned = {s["slate"]: s for s in (season_pretip.slates(tips, knobs) if tips else [])}
     kept = season_pretip.read_day(data_dir, day)["slates"]
     out = []
@@ -93,6 +95,10 @@ def pretip_day(data_dir: Path, day: date, tips: Mapping[str, str] | None) -> dic
                 "tip": plan.get("tip"),
                 "start_at": plan.get("start_at"),
                 "until": plan.get("until"),
+                # A slate that would start at or past ``latest_start`` is never made due: no
+                # pass runs it, by design (``season_pretip.due``).
+                "past_latest": bool(plan)
+                and datetime.fromisoformat(plan["start_at"]).astimezone(CENTRAL).time() >= latest,
                 "done": bool(slate.get("done")),
                 "missed": bool(slate.get("missed")),
                 "attempts": [
@@ -102,7 +108,12 @@ def pretip_day(data_dir: Path, day: date, tips: Mapping[str, str] | None) -> dic
                 ],
             }
         )
-    return {"enabled": knobs["enabled"], "lead_min": knobs["lead_min"], "slates": out}
+    return {
+        "enabled": knobs["enabled"],
+        "lead_min": knobs["lead_min"],
+        "latest_start": knobs["latest_start"],
+        "slates": out,
+    }
 
 
 def runs(data_dir: Path, day: date, days: int = 1, tips_of: TipsOf | None = None) -> dict[str, Any]:

@@ -1705,6 +1705,8 @@ export interface RoutinePretipSlate {
   tip: string | null;
   start_at: string | null;
   until: string | null;
+  /** It would start at or past ``latest_start``: no pass runs it, by design (absent before #473's fix). */
+  past_latest?: boolean;
   done: boolean;
   missed: boolean;
   attempts: RoutinePretipAttempt[];
@@ -1713,6 +1715,8 @@ export interface RoutinePretipSlate {
 export interface RoutinePretipDay {
   enabled: boolean;
   lead_min: number;
+  /** No slate starts at or past this, ``HH:MM`` Central. */
+  latest_start?: string;
   slates: RoutinePretipSlate[];
 }
 

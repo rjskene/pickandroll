@@ -132,7 +132,7 @@ const attemptEnd = (a: RoutinePretipAttempt, start: number) => ms(a.lineups_at) 
 /** One pre-tip slate's gate. Its attempts are the day file's; the one the day's run report holds
  * (the day's last pass: the report is rewritten) draws its steps, an earlier one spans the
  * pre-tip's lanes from its start to its last stamp. */
-function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t: number, enabled: boolean): Gate | null {
+function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t: number, enabled: boolean, latest: string | undefined): Gate | null {
   const attempts = slate.attempts.filter((a) => (ms(a.started_at) ?? Infinity) <= t);
   const at = ms(slate.start_at) ?? ms(attempts[0]?.started_at) ?? null;
   if (at === null) return null;
@@ -181,7 +181,11 @@ function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t:
     end = null;
   }
   const last = attempts[attempts.length - 1];
-  const state: GateState = running
+  // A slate starting past the latest start is never made due: grey, never missed.
+  const byDesign = !!slate.past_latest && !attempts.length && !running;
+  const state: GateState = byDesign
+    ? "idle"
+    : running
     ? "running"
     : attempts.some((a) => a.outcome === "done")
       ? "done"
@@ -206,7 +210,14 @@ function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t:
     bars,
     lines,
     count: null,
-    note: [tip !== null ? `tip-off ${hhmm(tip)}` : null, state === "missed" ? "not run" : null].filter(Boolean).join(" · ") || null,
+    note:
+      [
+        tip !== null ? `tip-off ${hhmm(tip)}` : null,
+        byDesign ? `starts past ${latest ?? "the latest start"}: not run by design` : null,
+        state === "missed" ? "not run" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || null,
   };
 }
 
@@ -254,7 +265,7 @@ export function gatesOf(tl: Timeline, date: string, t: number): DayGates {
   const pretip = tl.pretip[date];
   const pretipRuns = dayRuns.filter((r) => r.routine === "pretip");
   for (const slate of pretip?.slates ?? []) {
-    const g = slateGate(date, slate, pretipRuns, t, pretip.enabled);
+    const g = slateGate(date, slate, pretipRuns, t, pretip.enabled, pretip.latest_start);
     if (g && !(when === "future" && g.state !== "todo")) gates.push(g);
   }
   // An API before the block: each pre-tip run is a gate at its start.
@@ -339,7 +350,8 @@ export function gateTip(g: Gate, lane: Agent | null): string[] {
   };
   const out = [`${g.label} · ${hhmm(g.at)}`];
   if (g.start !== null) out.push(`ran ${hhmm(g.start)}${g.end !== null ? ` to ${hhmm(g.end)}` : ", under way"}`);
-  out.push(status[g.state] + (g.note && g.state !== "missed" ? ` · ${g.note}` : ""));
+  const said = g.state === "idle" && g.start === null ? "no run" : status[g.state];
+  out.push(said + (g.note && g.state !== "missed" ? ` · ${g.note}` : ""));
   const lines = g.lines.filter((l) => lane === null || l.agent === lane || g.kind === "slate" && l.name.startsWith("attempt"));
   for (const l of lines.slice(0, 12)) out.push(`${AGENTS[l.agent].label} · ${l.name}: ${l.detail || l.status}`);
   if (lines.length > 12) out.push(`… ${lines.length - 12} more`);
