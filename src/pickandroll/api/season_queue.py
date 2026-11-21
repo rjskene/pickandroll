@@ -50,9 +50,10 @@ from ..season import Season, Transaction
 from ..season import autopilot as qa
 from ..season import moves as mv
 from ..season import progress as pg
+from ..season import reserve as rs
 from ..season.state import roster_key
 from . import season_scorecard
-from .season_knobs import autopilot_dir
+from .season_knobs import autopilot_dir, for_league
 from .season_week import NBA_TZ
 
 QUEUE_DIR = "queue"
@@ -187,6 +188,30 @@ def settings(data_dir: Path, day: date | None = None) -> dict[str, Any]:
         out |= {"sunday_execute_time": None, "sunday_at": None, "sunday_by": None}
     if day is not None:
         out["in_force"] = in_force(out, day)
+    return out
+
+
+def rules(data_dir: Path, rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The values each league's queue gates read (FLOOR, #458), by league: the noise floor and
+    the day's cap copied from the league's own row of the build, so they never drift from it,
+    and the add reserve's and the re-cut rule's knobs through the solve's own reader
+    (``season.reserve.knobs_of`` over ``season_knobs.for_league``). A reserve price of None is
+    the typical gain at solve time (``reserve_price_from`` "typical"); the resolved price is on
+    each held entry's ``reserve.price``. Before a build, no rows: ``{}``."""
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        league = str(row["league"])
+        knobs = rs.knobs_of(for_league(data_dir, league))
+        price = knobs[rs.RESERVE_PRICE]
+        out[league] = {
+            "noise_floor": row.get("floor"),
+            "daily_cap": {"value": row.get("cap"), "from": row.get("cap_from")},
+            "reserve_adds": knobs[rs.RESERVE_ADDS],
+            "reserve_release": knobs[rs.RESERVE_RELEASE],
+            "reserve_price": price,
+            "reserve_price_from": "typical" if price is None else "the knob",
+            "recut_days": knobs[rs.RECUT_DAYS],
+        }
     return out
 
 

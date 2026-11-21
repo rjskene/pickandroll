@@ -159,6 +159,7 @@ from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
 from . import (
     leagues,
+    routine_runs,
     season_autopilot,
     season_cantcut,
     season_decisions,
@@ -1360,7 +1361,10 @@ class SeasonService:
             "leagues": [],
             "entries": [],
             **(body or {}),
-            "settings": season_queue.settings(self.data_dir, day),
+            "settings": {
+                **season_queue.settings(self.data_dir, day),
+                "rules": season_queue.rules(self.data_dir, (body or {}).get("leagues") or []),
+            },
             "stop": season_autopilot.stopped(self.data_dir),
             "now": self.clock().isoformat(),
         }
@@ -4025,6 +4029,25 @@ def register(
         """The freshness light (#153): the daily exports, every league's Yahoo reads and when
         its recommendations were built against their inputs; reads only."""
         return await asyncio.to_thread(service.status)
+
+    runs_day_q = Query(None, alias="date", description="the last day; today (Central) by default")
+    runs_days_q = Query(
+        1,
+        ge=routine_runs.MIN_DAYS,
+        le=routine_runs.MAX_DAYS,
+        description="how many days back from the last day, it included",
+    )
+
+    @app.get("/routine/runs")
+    def get_routine_runs(day: date | None = runs_day_q, days: int = runs_days_q) -> dict[str, Any]:
+        """The routines' run logs over the days (FLOOR, #458), as written; reads only."""
+        today = service.clock().astimezone(routine_runs.CENTRAL).date()
+        return routine_runs.runs(data_dir, day or today, days)
+
+    @app.get("/routine/live")
+    def get_routine_live() -> dict[str, Any]:
+        """The routines' live progress files (FLOOR, #458), stale after an hour; reads only."""
+        return routine_runs.live(data_dir, service.clock().astimezone(routine_runs.CENTRAL))
 
     @app.get("/progress")
     async def get_progress(system: str | None = scorecard_system_q) -> dict[str, Any]:
