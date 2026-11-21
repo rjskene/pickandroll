@@ -382,6 +382,14 @@ page, from PR 2:
     (`superseded_at`, the first rebuild that dropped it). It holds no place, is never due and
     has nothing to strike. If a later solve recommends it again, it is queued again with a new
     hour. The Monday re-solve's rebuild does the same. `struck` is set by the user alone.
+- **The rules in the settings (FLOOR, #458).** `GET /autopilot/queue`'s `settings` carries
+  `rules`, by league, for each league row of the day's build (`{}` before one): the values that
+  league's gates read. `noise_floor` and `daily_cap` (`value`, `from`) are copied from the
+  league's own row, so they never drift from it; `reserve_adds`, `reserve_release`,
+  `reserve_price` and `recut_days` are read through the solve's own reader
+  (`reserve.knobs_of` over `season_knobs.for_league`). A `reserve_price` of null is the typical
+  gain at solve time (`reserve_price_from` "typical", else "the knob"); the resolved price is on
+  each held entry's `reserve.price`. The floor reads it for its belt.
 - **The History screen (#334).** `/history`, from the landing's History row or `h` there, Esc to go
   back. Every move and trade in every league, the private one too, newest first, filtered by league,
   kind and result; a row opens to why it was made. `GET /history` reads only and writes nothing: it

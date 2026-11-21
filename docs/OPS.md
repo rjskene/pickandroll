@@ -348,6 +348,22 @@ droplet keeps its profile for the next attempt.
 The alert comment carries the runner's own lines (step names, statuses, counts, URLs with
 league and player ids), never a page's content.
 
+## 7a. The run reports on the API (FLOOR, #458)
+
+The app reads the routines' work through two read-only routes; neither writes, reads Yahoo or
+changes a routine, and the watchdog, `alert.sh` and every other reader of the run logs stay as
+they are.
+
+- `GET /routine/runs?date=YYYY-MM-DD&days=N` serves the run logs in `data/routine/runs/` for
+  the day and the `N - 1` days before it (`N` from 1 to 7, 1 by default; the day today on the
+  Central clock by default), oldest day first, each log as written and keyed by routine. A file
+  that does not read is listed under its day's `unread` with the reason, never dropped.
+  `<day>-pretip.json` holds the day's last slate only, as written today, and is served as it is.
+- `GET /routine/live` serves each file in `data/routine/live/` (one a routine, rewritten after
+  each step by FLOOR PR 2, #459) with when it was last written, `stale` when that is over an
+  hour ago (a run that died leaves its file behind), and the reason when it does not read. No
+  folder or no file is an empty list.
+
 ## 8. Checks by hand
 
 ```bash
