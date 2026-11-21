@@ -138,8 +138,14 @@ export default function FloorFace({
         budget: s.league === PRIVATE ? null : 80,
       }));
     }
+    // /seasons can take a while to answer: until it does, the day's queue names the leagues, the
+    // private league first as the landing pins it.
+    if (!seasons.length) {
+      const rows = (queue?.leagues ?? []).map((l) => ({ league: l.league, mine: l.status === "private", adds: null, budget: l.budget ?? null }));
+      return [...rows.filter((l) => l.mine), ...rows.filter((l) => !l.mine)];
+    }
     return seasons.map((s) => ({ league: s.league, mine: !s.public, adds: s.adds ? { used: s.adds.used, limit: s.adds.limit } : null, budget: s.funds?.dollars ?? null }));
-  }, [control.demo, sample, seasons, t]);
+  }, [control.demo, sample, seasons, queue, t]);
   const names = leagues.map((l) => l.league);
   const one = control.one && names.includes(control.one) ? control.one : null;
   const dayQueue = control.demo ? sample.w.queues.find((q) => q.date === centralDate(t)) : queue;
