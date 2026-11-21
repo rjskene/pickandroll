@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api, type LeagueSummary, type ProgressPayload, type RoomSummary } from "../api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { livePoll } from "../floor/live";
+import { api, type LeagueSummary, type ProgressPayload, type RoomSummary, type RoutineLivePayload } from "../api";
 import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, ROW_CONTROLS, rowClickOpens, type Layout } from "../format";
 import { LANDING_SHEET, landingKeys, type SeasonViewId } from "../keys";
 import { useHotkeys } from "../useKeys";
@@ -88,7 +89,14 @@ export default function Landing({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const light = useSeasonStatus();
-  const queue = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: (query) => queuePoll(query.state.data), enabled: shownFace === "floor" });
+  // On the floor today's queue keeps the floor's pace: every few seconds while a run is in flight.
+  const qc = useQueryClient();
+  const queue = useQuery({
+    queryKey: ["queue"],
+    queryFn: () => api.queue(),
+    refetchInterval: (query) => livePoll(qc.getQueryData<RoutineLivePayload>(["routine-live"]), query.state.data),
+    enabled: shownFace === "floor",
+  });
   const floorNow = useNow(shownFace === "floor" ? 1000 : 30_000);
   const flip = () => setFace((f) => flipFace(f));
   useHotkeys(

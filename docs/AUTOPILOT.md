@@ -28,6 +28,35 @@ Every public league folder today (twelve) has the same waiver rules, read from Y
 settings: continuous waivers, a two-day waiver period, FAAB, four adds a week, the trade deadline
 2027-03-04. The rules are read, never assumed, since a league can differ.
 
+### Watching it run: the floor (#457)
+
+The in-season page opens on the floor, a drawing of the routines at work over the week. The
+flip icon or `f` switches to the leagues list. A phone shows the list only. The floor reads only;
+the one thing it can change is the execute time, through the same control the landing has.
+
+| on the floor | what it shows | where it comes from |
+|---|---|---|
+| the week strip | each day's runs as pips; the claims landed, held, failed or skipped | `GET /routine/runs?days=7`, and each day's `GET /autopilot/queue?date=` |
+| the "now" panel and the agent at work | the run under way, its steps and the step in progress; at rest, the next timer | `GET /routine/live` (the progress file `data/routine/live/<routine>.json`, rewritten after each step and removed when the run ends); the timers are in `web/src/floor/model.ts` |
+| the engine's lamps | outlined once a league is read, tinted once it is solved, filled while it solves | the run's steps and their per-league lines |
+| the belt and the Solver's two signs | each held entry in the bay of the rule that held it; the keep rule and the season guard on the Solver | the queue's entries and reasons; each rule's knob from the queue's `settings.rules` |
+| the execute-time gate | the time it opens and the entries waiting at it | the queue's `settings.in_force` and `executes_at` |
+| the Mover's trips and the docks | a claim under way rides out to its league's dock; the result flies back | the queue's `active` pass while it runs, else `last_pass`; each entry's outcome |
+| the ledger | the seven latest results and holds | the entries' outcomes, and their solve times (the decision stamp) |
+| the Sources room | the Scout at Basketball Monster, ESPN or Yahoo | the run's export, refresh and read steps |
+
+An entry stands on the floor from its own solve: its queue time when queued, else its decision
+stamp, else the day's first build.
+
+The floor polls every three seconds while a run or a pass is in flight, once a minute at rest, and
+never while the page is hidden.
+
+The Live chip turns on the **Demo**: a sample week on a bent clock that skips the idle hours. Its
+leagues, players and numbers are made up (`web/src/floor/sample.ts`).
+
+Each name and stage title on the floor opens its term in Explain's glossary, and each stage's
+number opens its step.
+
 ## 2. The rule change, and the guardrails that come with it
 
 The standing rule that nothing clicks Add, Drop or Trade in Yahoo is lifted for Add, Drop and the

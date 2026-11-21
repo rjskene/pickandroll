@@ -33,6 +33,20 @@ export const GLOSSARY: Term[] = [
   { id: "strike", term: "Strike", def: "The user's veto on an entry or its bid alone, until it executes; a struck bid is a $0 claim." },
   { id: "dry-run", term: "Dry run", def: "The executor logs what it would click, with the page it saw, and clicks nothing." },
   { id: "live-guard", term: "Live guard", def: "Enough dry-run days in the log (lineups: seven, two fully checked), no stop file, the user's click; read again on every live run." },
+  // The floor (#462): the in-season page's second face, its cast and the ribbon's stages.
+  { id: "the-floor", term: "The floor", def: "The in-season page's second face: the agents at work over the week, from the run logs, the live progress files and each day's queue." },
+  { id: "demo", term: "Demo", def: "The floor's sample week on a bent clock: made-up leagues and players, the idle hours skipped; never the user's leagues." },
+  { id: "orchestrator", term: "Orchestrator", def: "The routine itself, the floor's hub: starts each run on its timer, checks the API, builds the queue and posts the digest." },
+  { id: "scout", term: "Scout", def: "Reads and clicks nothing: saves the projection exports, reads each league's Yahoo pages, and reads the claim pages before a pass." },
+  { id: "solver", term: "Solver", def: "Solves each league's recommended moves and lineups; the keep rule and the season guard are its two signs." },
+  { id: "setter", term: "Setter", def: "Sets the day's lineups on each league's team page." },
+  { id: "starter", term: "Starter", def: "Presses Start Active Players on a league's team page." },
+  { id: "mover", term: "Mover", def: "Places claims, adds and drops: opens the add page, re-checks it, places the claim; the result goes to the ledger." },
+  { id: "reads", term: "Reads", def: "Stage 1: the Scout saves the exports and reads each league's pages; a read league's lamp is outlined." },
+  { id: "solve", term: "Solve", def: "Stage 2: each league is solved, the keep rule and the season guard carried into each; a solved league's lamp is tinted." },
+  { id: "queue-build", term: "Queue build", def: "Stage 3: the orchestrator reads the logged sets, never solves, and sizes each claim's bid." },
+  { id: "rules", term: "Rules", def: "Stage 4: each entry meets the queue's seven rules in order; the first to hold it keeps it in its bay on the belt." },
+  { id: "out-and-back", term: "Out and back", def: "Stage 7: the Mover opens the add page, re-checks it and places the claim; the result flies back to its dock and the ledger." },
 ];
 
 export const termById = (id: string): Term | undefined => GLOSSARY.find((t) => t.id === id);

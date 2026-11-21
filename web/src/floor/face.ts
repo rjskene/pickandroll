@@ -1,11 +1,11 @@
 // The in-season page's two faces (#461): the floor or today's leagues list, under the same bar.
-// Plain state, never saved: the page opens on the list in this PR (PR 5 flips the default), and
-// coming back from a league page or a screen opens it again on the default face.
+// Plain state, never saved: the page opens on the floor (#462), and coming back from a league page
+// or a screen opens it on the floor again. A phone and the draft-season page show the list.
 
 export type Face = "floor" | "list";
 
 /** The face the in-season page opens on. */
-export const DEFAULT_FACE: Face = "list";
+export const DEFAULT_FACE: Face = "floor";
 
 /** The other face. */
 export const flipFace = (f: Face): Face => (f === "floor" ? "list" : "floor");

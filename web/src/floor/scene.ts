@@ -52,6 +52,9 @@ export const FLOW_EXPLAIN: { track: "moves" | "daily"; step: string }[] = [
   { track: "daily", step: "morning" },
 ];
 
+/** The glossary term each stage's title opens (Explain, #462). */
+export const FLOW_TERMS = ["reads", "solve", "queue-build", "rules", "veto-window", "execute-time", "out-and-back"] as const;
+
 /** The rack's agents, top down: the Scout lives in the Sources room, the Solver on its rail. */
 export const RACK: Agent[] = ["setter", "starter", "mover"];
 export const rackY = (i: number) => 326 + i * 33;

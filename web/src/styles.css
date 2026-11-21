@@ -1385,3 +1385,5 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .fl-tile rect { fill: var(--panel-2); stroke: var(--line-2); }
 .fl-tile.new rect { stroke: var(--good); fill: rgba(61, 220, 132, 0.14); } .fl-tile.target rect { stroke: var(--accent); stroke-width: 1.6; }
 .fl-svg .fl-slot { font-size: 8.5px; fill: var(--dim); } .fl-svg .fl-nm { font-size: 10.5px; fill: var(--text); } .fl-svg .fl-tile.open .fl-nm { fill: var(--dim); font-style: italic; }
+.fl-legend .fl-term { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.fl-legend .fl-term:hover, .fl-legend .fl-term:focus-visible { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-2); }
