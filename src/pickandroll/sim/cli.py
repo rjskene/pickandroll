@@ -11,6 +11,7 @@
     python -m pickandroll.sim replay --seasons 2024 --seats A.json B.json --no-peek 2023-12-04
     python -m pickandroll.sim validate --season 2024 --forecaster prior
     python -m pickandroll.sim screen --arm BASE.json --seasons 2024 [--levers pool min_gain]
+    python -m pickandroll.sim tune --arm BASE.json --screen NAME --seasons 2023,2024
 
 ESPN's season id is the year the season ends in: 2025 is 2024-25, the hold-out. ``fetch-logs``
 makes one request a season through the same player view the draft-edge audit read, caches each
@@ -32,7 +33,12 @@ the hold-out, the spec files verbatim and the execution model. ``screen`` nudges
 fixed list once against a baseline arm (``sim/screen.py``), plays every pair as ``replay --arms``
 plays one, never on the hold-out or the confirmation season, and writes a folder under
 ``data/sim/screens/``: a record a pair and the screen's own, so a screen stopped between two
-pairs is taken up again by the same command.
+pairs is taken up again by the same command. ``tune`` searches the levers a screen left standing,
+one lever at a time (``sim/tune.py``), each value a pair against the current arm on every season
+and forecaster named, never the hold-out and never the confirmation season, then plays the final
+set against the baseline once on the season the search never played, counts that look on the
+confirmation season's ledger, and writes a folder under ``data/sim/tunes/``; it recommends and
+promotes nothing.
 
 Every command runs through :func:`guard`: at low priority (``nice``), never when its span would
 touch 04:45-06:45 in the machine's local time (the routines' window), never while a draft room is
@@ -67,6 +73,7 @@ from . import forecast as fc
 from . import readers as reader
 from . import run as rn
 from . import screen as sc
+from . import tune as tn
 from . import validate as vg
 from .engine import EACH_CATEGORY, ONE_WIN, mv, wk
 
@@ -340,7 +347,7 @@ def world_inputs(data: Path) -> tuple[rn.WorldInputs, dict[str, Any], str, Path]
 
 #: The commands whose outcome runs through the engine's evaluator (an exact tie there can fall
 #: either way with the process's hash seed).
-SIMULATING = ("replay", "validate", "screen")
+SIMULATING = ("replay", "validate", "screen", "tune")
 HASH_SEED_NOTE = (
     "PYTHONHASHSEED is unset: at an exact tie the outcome may differ between processes (an "
     "order-dependent sum in the engine's evaluator); a run to be reproduced sets PYTHONHASHSEED=0"
@@ -3663,6 +3670,86 @@ def screen_scale(
     }
 
 
+def baseline_arm(path: Path) -> dict[str, Any] | None:
+    """The baseline arm's spec from ``--arm``'s file (a screen's and a tune's), parsed as every
+    arm is; None, the refusal printed by name, when the file cannot be read or is no arm's."""
+    try:
+        base = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        print(f"refused: --arm: {e}")
+        return None
+    if not isinstance(base, dict):
+        print(f"refused: --arm: {path} is not an arm's spec")
+        return None
+    try:
+        rn.arm_of(base)
+    except (ValueError, KeyError) as e:
+        print(f"refused: --arm: {e.args[0] if e.args else e}")
+        return None
+    return base
+
+
+def scale_in_force(
+    args: argparse.Namespace,
+    base: Mapping[str, Any],
+    kept: Mapping[str, Any] | None,
+    read: Callable[..., SeasonRead],
+    said: set[str],
+    workers: int,
+    whose: str,
+) -> dict[str, Any] | int:
+    """The season scale a screen or a tune sizes its nudges on: the one its folder was started
+    with (``kept``), said again, else measured now (:func:`screen_scale`; the exit code when
+    that cannot be planned). ``whose``: "screen" or "tune", for the line."""
+    if kept is None:
+        return screen_scale(args, base, read, said, workers)
+    figure = "none" if kept["ratio"] is None else f"{kept['ratio']:.4g}"
+    print(
+        f"season scale: {figure}, on {kept['paths']} of {kept['of']} paths of the first "
+        f"cell, as the {whose} measured it when it was started"
+    )
+    return dict(kept)
+
+
+def new_piece(workers: int) -> dict[str, Any]:
+    """One run of a screen or a tune that plays a pair, as its record's ``timing`` keeps it:
+    when and where it ran, on what commit, the pairs it played and why it stopped."""
+    return {
+        "started_at": datetime.now(UTC).isoformat(),
+        "finished_at": None,
+        "host": platform.node(),
+        "workers": workers,
+        "nice": NICE,
+        "hash_seed": hash_seed(),
+        "code_sha": reader.code_sha(ROOT),
+        "played": [],
+        "stopped": None,
+    }
+
+
+def play_pair(
+    plan: ReplayPlan,
+    made: ReplayTasks,
+    args: argparse.Namespace,
+    workers: int,
+    run_name: str,
+    first: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], list[Any]]:
+    """One planned pair played to its record, as ``replay`` plays it: every task, then
+    :func:`replay_payload`. ``first``: the result of the pair's timed task when this run timed
+    it, so it is not played twice. The record, its audit block and every task's result."""
+    plan = replace(plan, started=datetime.now(UTC))
+    if first is not None:
+        rest = rn.run_tasks(
+            made.task, made.tasks[: made.slow] + made.tasks[made.slow + 1 :], workers
+        )
+        ran = [*rest[: made.slow], first, *rest[made.slow :]]
+    else:
+        ran = rn.run_tasks(made.task, made.tasks, workers)
+    payload, note = replay_payload(plan, args, made, ran, workers, run_name)
+    return payload, note, ran
+
+
 def screen_spec(
     args: argparse.Namespace, base: Mapping[str, Any], names: Sequence[str], plan: ReplayPlan
 ) -> dict[str, Any]:
@@ -3772,18 +3859,8 @@ def cmd_screen(args: argparse.Namespace) -> int:
             "plays it"
         )
         return 2
-    try:
-        base = json.loads(Path(args.arm).read_text())
-    except (OSError, ValueError) as e:
-        print(f"refused: --arm: {e}")
-        return 2
-    if not isinstance(base, dict):
-        print(f"refused: --arm: {args.arm} is not an arm's spec")
-        return 2
-    try:
-        rn.arm_of(base)
-    except (ValueError, KeyError) as e:
-        print(f"refused: --arm: {e.args[0] if e.args else e}")
+    base = baseline_arm(args.arm)
+    if base is None:
         return 2
     wa = pair_args(args, seasons_text)
     said: set[str] = set()
@@ -3815,17 +3892,9 @@ def cmd_screen(args: argparse.Namespace) -> int:
             return 2
     scale = (state or {}).get("scale")
     if any(r.scale for r in rows):
-        if scale is None:
-            measured = screen_scale(wa, base, read, said, workers)
-            if isinstance(measured, int):
-                return measured
-            scale = measured
-        else:
-            kept = "none" if scale["ratio"] is None else f"{scale['ratio']:.4g}"
-            print(
-                f"season scale: {kept}, on {scale['paths']} of {scale['of']} paths of the first "
-                "cell, as the screen measured it when it was started"
-            )
+        scale = scale_in_force(wa, base, scale, read, said, workers, "screen")
+        if isinstance(scale, int):
+            return scale
         ctx = replace(ctx, scale=scale["ratio"], no_scale=sc.NO_RATIO)
         rows = sc.rows_of(base, names, plan.shapes_read, ctx)
     refused = [r for r in rows if r.status == sc.REFUSED]
@@ -3933,17 +4002,7 @@ def cmd_screen(args: argparse.Namespace) -> int:
         if not ok:
             print(f"refused: {why}")
             return 2
-    piece: dict[str, Any] = {
-        "started_at": datetime.now(UTC).isoformat(),
-        "finished_at": None,
-        "host": platform.node(),
-        "workers": workers,
-        "nice": NICE,
-        "hash_seed": hash_seed(),
-        "code_sha": reader.code_sha(ROOT),
-        "played": [],
-        "stopped": None,
-    }
+    piece = new_piece(workers)
     # A run with nothing left to play of a screen on file is no piece: it writes the record
     # again from the pairs' files (the same record, unless a piece died between a pair's file and
     # the record) and prints the table.
@@ -3977,16 +4036,10 @@ def cmd_screen(args: argparse.Namespace) -> int:
             print(f"stopped: {piece['stopped']}")
             break
         pair_plan, made = plans[r.key]
-        pair_plan = replace(pair_plan, started=datetime.now(UTC))
         t0 = clock.perf_counter()
-        if r.key in firsts:
-            rest = rn.run_tasks(
-                made.task, made.tasks[: made.slow] + made.tasks[made.slow + 1 :], workers
-            )
-            ran = [*rest[: made.slow], firsts.pop(r.key), *rest[made.slow :]]
-        else:
-            ran = rn.run_tasks(made.task, made.tasks, workers)
-        payload, note = replay_payload(pair_plan, wa, made, ran, workers, f"{name}-{r.key}")
+        payload, note, ran = play_pair(
+            pair_plan, made, wa, workers, f"{name}-{r.key}", firsts.pop(r.key, None)
+        )
         standing = [x for x in ran if not x.get("breaches")]
         result = sc.result_of(payload, standing, measure)
         payload["screen"] = {
@@ -4023,6 +4076,1054 @@ def cmd_screen(args: argparse.Namespace) -> int:
     print(f"written: {path}")
     # A pair of an earlier piece whose audit voided a path keeps the screen's exit code.
     return AUDIT_EXIT if any(x.get("voided") for x in results.values()) else code
+
+
+# --------------------------------------------------------------------------- tune
+#: What a tune is, in its record.
+TUNE_NOTE = (
+    "a tune searches the levers named one at a time, each value a pair against the current arm "
+    "on the same paths, played by the code replay plays a pair with, then plays the final set "
+    "against the baseline once on a season the search never played; it recommends, promotes "
+    "nothing, writes no knob file and reads no live league"
+)
+#: The league's rules that are the rivals' and not the league's kind: how its market rivals bid.
+TUNE_RIVALS = ("rival_scale", "rival_bids")
+#: What a tune's look at the confirmation season is, in its record.
+TUNE_LOOK_NOTE = (
+    "a tune reads the confirmation season once, at the end: one line in the ledger (the tune's "
+    "name, its spec's hash, the code's commit, the date, the league kind), appended before its "
+    "first confirmation pair is played and never again for the same tune's folder; the same "
+    "tune started again in a new folder reads the season again and is another look; look n "
+    "counts the tunes of this league kind in the ledger, and the line's own number every run "
+    "that named the season; a dry run and a tune with --confirm none add none"
+)
+#: Why a tune confirmed on another season counts no look.
+TUNE_OTHER_SEASON = (
+    "the final set was played on a season the search withheld that is not the confirmation "
+    "season ({season}): no look is counted, since other runs play that season freely"
+)
+#: What a finished tune says when the ledger no longer holds the line it wrote.
+TUNE_LOOK_LOST = (
+    "the ledger no longer holds this tune's line (the ledger was removed, or the folder copied "
+    "without it): the look is the one the confirmation's pair recorded when it was played"
+)
+#: What a confirmed tune says when neither the ledger nor its pairs name a look.
+TUNE_NO_LOOK = "no look is on record for this tune, in the ledger or in its confirmation's pairs"
+#: The world's flags that name the league kind (its shapes and its rules): a screen's and a
+#: tune's are held equal by the kind in force, not by the flag as typed.
+KIND_FLAGS = (
+    "grid",
+    "league",
+    "scoring",
+    "points",
+    "held",
+    "waivers",
+    "waiver_days",
+    "waiver_rule",
+    "budget",
+    "h2h",
+)
+#: What a tune says of a screen played under another code, fit or world than its own.
+SCREEN_DIFFERS_NOTE = (
+    "the screen was played under what is listed here and this tune is not; its survivors and "
+    "their order are taken as they stand, and the tune's own pairs are what its steps rest on"
+)
+
+
+def league_kind(plan: ReplayPlan) -> dict[str, Any]:
+    """The league kind a tune searches and confirms in, and counts its looks by: the league
+    shapes as they are played (each shape's teams, slots, adds and playoff format, in the
+    grid's order; not the grid's name, so one shape named two ways is one kind) and the league's
+    rules, less what is the rivals' (how they bid and the scale of their bids,
+    :data:`TUNE_RIVALS`). Nothing is pooled across kinds."""
+    return {
+        "shapes": [s.payload() for s in plan.grid.shapes],
+        "rules": {k: v for k, v in plan.league_rules.payload().items() if k not in TUNE_RIVALS},
+    }
+
+
+def shapes_in_force(world: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """The league shapes a screen's or a tune's world names (``--league``, else ``--grid``), as
+    :func:`league_kind` keeps them; None when the flags cannot be read as shapes."""
+    try:
+        grid = (
+            shapes.one("league", shapes.parse_league(str(world["league"])))
+            if world.get("league") is not None
+            else GRIDS[str(world.get("grid"))]
+        )
+    except (ValueError, KeyError):
+        return None
+    return [s.payload() for s in grid.shapes]
+
+
+def screen_unfit(
+    screen: Mapping[str, Any],
+    base: Mapping[str, Any],
+    kind: Mapping[str, Any],
+    confirm: int | None,
+) -> str | None:
+    """Why a tune may not take its levers from ``screen``'s record; None when it may: the screen
+    has pairs left to play (its survivors are not all known), it screened another baseline arm,
+    it played the season this tune confirms on (``confirm``: the levers and their order would be
+    chosen on the season called withheld), or it was played in another league kind (the
+    league's rules, less the rivals', and the league shapes in force, read from the screen's
+    world as the flags name them, whatever order they were typed in)."""
+    if screen.get("left"):
+        return (
+            f"it has pairs left to play ({', '.join(screen['left'])}), so its survivors are "
+            "not all known: finish the screen first"
+        )
+    spec = screen.get("spec") or {}
+    if spec.get("arm") != dict(base):
+        return (
+            "it screened another baseline arm than --arm, and its survivors are that arm's; "
+            "to tune levers from this arm name them with --levers and no --screen"
+        )
+    theirs_world = spec.get("world") or {}
+    if confirm is not None and confirm in (theirs_world.get("seasons") or ()):
+        return (
+            f"it was played on season {confirm}, the season this tune confirms on (--confirm): "
+            "its survivors and their order were chosen there, so the season would not be "
+            "withheld from what chose the levers; confirm on a season the screen did not play, "
+            "or name the levers with --levers and no --screen"
+        )
+    theirs = {
+        k: v
+        for k, v in ((screen.get("league") or {}).get("rules") or {}).items()
+        if k not in TUNE_RIVALS
+    }
+    differs = next(
+        (
+            f"{k}: the screen's {theirs.get(k)!r}, this tune's {kind['rules'].get(k)!r}"
+            for k in sorted({*theirs, *kind["rules"]})
+            if theirs.get(k) != kind["rules"].get(k)
+        ),
+        None,
+    )
+    if differs is None and shapes_in_force(theirs_world) != kind["shapes"]:
+        differs = (
+            f"the league shapes: the screen's --grid {theirs_world.get('grid')!r} --league "
+            f"{theirs_world.get('league')!r} name other shapes than this tune's"
+        )
+    if differs is not None:
+        return (
+            f"it was played in another league kind ({differs}), and a tune is one league "
+            "kind's; to tune levers here name them with --levers and no --screen"
+        )
+    return None
+
+
+def screen_differs(screen: Mapping[str, Any], spec: Mapping[str, Any]) -> dict[str, Any]:
+    """What a screen a tune takes its order from was played under that this tune is not, by
+    name, each with the screen's value and the tune's: the code's two versions, the fit's and
+    the book's hashes, and every flag of the world that is not the league kind's (the kind is
+    held equal by :func:`screen_unfit`). A screen of an earlier simulator is not refused: it is
+    said."""
+    theirs = screen.get("spec") or {}
+    out: dict[str, Any] = {}
+    for key in ("screen_version", "replay_version", "fit_sha", "book_sha"):
+        if theirs.get(key) != spec.get(key):
+            out[key] = {"screen": theirs.get(key), "tune": spec.get(key)}
+    a, b = theirs.get("world") or {}, spec.get("world") or {}
+    for key in sorted({*a, *b}):
+        if key not in KIND_FLAGS and a.get(key) != b.get(key):
+            out[key] = {"screen": a.get(key), "tune": b.get(key)}
+    return out
+
+
+def confirm_unfit(args: argparse.Namespace, confirm: int, plan: ReplayPlan) -> str | None:
+    """Why the season a tune confirms on cannot be played in the tune's world, found before the
+    first pair of the search and in the dry run; None when nothing stands in the way. It reads
+    what is on file of the season before it begins and plays no path, so no outcome of the
+    season is read and no look is counted: the ledger's own lines (on the confirmation season),
+    the season's draft table under ``--adp``, the stand-ins' figures and each forecaster's. A
+    forecaster the search reads (one that serves a season of the search) must serve the season
+    confirmed on, since the verdict is stated for every forecaster the search read. What only a
+    whole plan finds (a draft a named league shape cannot fill) is still met at the end, and is
+    then recorded with the final set."""
+    if confirm == CONFIRMATION:
+        try:
+            reader.read_looks(args.data)
+        except reader.SimReadError as e:
+            return f"the ledger its look is counted on cannot be read: {e}"
+    if plan.spread is not None:
+        try:
+            reader.adp_table(args.data, confirm, HOLD_OUT)
+        except reader.SimReadError as e:
+            return (
+                f"--adp {args.adp}: {e}; a tune under a draft table confirms on a season that "
+                "has one"
+            )
+    if plan.sources is not None:
+        try:
+            fixed_of(args.data, confirm, list(plan.sources))
+        except reader.SimReadError as e:
+            why = str(e).removeprefix(f"season {confirm}: ")
+            return f"a stand-in cannot serve season {confirm}: {why}"
+    _, served, skipped = cells_of(args.data, confirm, plan.named)
+    if not served:
+        return (
+            f"no forecaster named serves season {confirm} ("
+            + "; ".join(f"{label}: {why}" for label, why in skipped.items())
+            + ")"
+        )
+    searched = {f.label for r in plan.reads for f in r.served}
+    missing = {label: why for label, why in skipped.items() if label in searched}
+    if missing:
+        return (
+            "the search reads "
+            + ", ".join(
+                f"{label}, which cannot serve season {confirm} ({why})"
+                for label, why in missing.items()
+            )
+            + ": the verdict is stated for every forecaster the search read; name the "
+            "forecasters that serve it (--forecasters)"
+        )
+    return None
+
+
+def pair_one_seat(plan: ReplayPlan, a: Mapping[str, Any], b: Mapping[str, Any]) -> list[str] | None:
+    """Whether a pair of specs is one seat in the run's league, as ``replay`` would refuse it
+    (:func:`same_seats` on the arms as the run believes them): each name the two differ in with
+    why neither reads it; None when they are two seats."""
+    arms = believing(dict(zip(PAIR, (rn.arm_of(a), rn.arm_of(b)), strict=True)), plan.sources)
+    return rn.same_seat(arms["a"], arms["b"], plan.shapes_read, True)
+
+
+def tune_spec(
+    args: argparse.Namespace,
+    base: Mapping[str, Any],
+    order: Sequence[Mapping[str, Any]],
+    plan: ReplayPlan,
+    confirm: int | None,
+    screen: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """What a tune's folder is started with and every later piece is held to: a screen's spec
+    for the same arm and world (:func:`screen_spec`: the two versions, the baseline arm's spec
+    verbatim, the world's flags, the fit's hash and the book's), its ``levers`` the tune's in the
+    order they are searched, and the tune's own: ``tune_version``, the passes, the season it
+    confirms on (None for none) and the screen its order came from (its name and its spec's
+    hash). Every choice is here before the first pair."""
+    return {
+        "tune_version": tn.TUNE_VERSION,
+        **screen_spec(args, base, [o["lever"] for o in order], plan),
+        "passes": args.passes,
+        "confirm": confirm,
+        "screen": None
+        if screen is None
+        else {"name": screen.get("name"), "spec_sha": spec_hash(screen.get("spec") or {})},
+    }
+
+
+def tune_record(
+    name: str,
+    spec: Mapping[str, Any],
+    plan: ReplayPlan,
+    scale: Mapping[str, Any] | None,
+    measure: str,
+    order: Sequence[Mapping[str, Any]],
+    steps: Sequence[Mapping[str, Any]],
+    final: Mapping[str, Any] | None,
+    confirmation: Mapping[str, Any] | None,
+    left: Mapping[str, Any] | None,
+    timing: Mapping[str, Any],
+    screen: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A tune's record: its spec, the code's commit and the fit's hash, the league and its kind,
+    the measure and the search's rule, the order with where each place comes from and what the
+    screen it came from was played under that this tune is not (``screen``), the season scale
+    used, every finished step (each value's pair with its result and its file, the choice and
+    why), the final set, the confirmation (its cells with the final pair's mechanism counts,
+    the ledger's look, the verdict), what is left, and under ``timing`` everything that is a
+    time. Apart from ``timing`` a tune played in pieces records what one played unbroken does."""
+    rules = plan.league_rules
+    return {
+        "kind": "tune",
+        "name": name,
+        "tune_version": tn.TUNE_VERSION,
+        "note": TUNE_NOTE,
+        "spec": dict(spec),
+        "code_sha": reader.code_sha(ROOT),
+        "fit_sha": plan.sha,
+        "fit_file": str(plan.fit_path),
+        **({} if plan.book is None else {"book_sha": plan.book[1], "book_file": str(plan.book[2])}),
+        "hold_out": plan.fit.get("hold_out", HOLD_OUT),
+        "league": {"rules": rules.payload(), "label": rules.label(), "kind": league_kind(plan)},
+        "measure": measure,
+        "rule": tn.SEARCH_RULE,
+        "carry": tn.CARRY_NOTE,
+        "order": [dict(o) for o in order],
+        "screen": None if screen is None else dict(screen),
+        "scale": None if scale is None else dict(scale),
+        "steps": [dict(s) for s in steps],
+        "final": None if final is None else dict(final),
+        "confirmation": None if confirmation is None else dict(confirmation),
+        "left": None if left is None else dict(left),
+        "timing": dict(timing),
+    }
+
+
+def look_block(
+    line: Mapping[str, Any], lines: Sequence[Mapping[str, Any]], ledger: Path
+) -> dict[str, Any]:
+    """A tune's look in its record, from its own ledger ``line`` and the ledger's ``lines``: the
+    look's number for its league kind, the line's number among every run's, how many earlier
+    lines are other runs' (a replay's, another kind's tune), and the ledger's file."""
+    earlier = [x for x in lines if int(x.get("look", 0)) < int(line["look"])]
+    mine = [
+        x
+        for x in earlier
+        if x.get("design") == "tune" and x.get("league_kind_sha") == line["league_kind_sha"]
+    ]
+    return {
+        "season": CONFIRMATION,
+        "look": int(line["look_of_kind"]),
+        "line": int(line["look"]),
+        "others": len(earlier) - len(mine),
+        "ledger": str(ledger),
+        "note": TUNE_LOOK_NOTE,
+    }
+
+
+def look_words(look: Mapping[str, Any]) -> str:
+    """A tune's look as it is printed: "look n" for the league kind, and where it stands in the
+    ledger."""
+    return (
+        f"confirmation season {look['season']}: look {look['look']} for this league kind (line "
+        f"{look['line']} of {look['ledger']}; {look['others']} earlier line(s) are other runs')"
+    )
+
+
+def cmd_tune(args: argparse.Namespace) -> int:
+    began = clock.perf_counter()
+    ok, why = guard(0.0, rooms=args.rooms)
+    if not ok:
+        print(f"refused: {why}")
+        return 2
+    if args.max_minutes is not None and not args.max_minutes > 0:
+        print("refused: --max-minutes is a span in minutes, above 0")
+        return 2
+    if args.passes < 1:
+        print("refused: --passes is a count of passes over the levers, 1 or more")
+        return 2
+    unknown = [n for n in args.levers or () if n not in sc.NAMES]
+    if unknown:
+        print(
+            f"refused: lever {unknown[0]!r} is not in the screen's list: one of "
+            f"{', '.join(sc.NAMES)}"
+        )
+        return 2
+    if args.screen is None and not args.levers:
+        print(
+            "refused: a tune names its levers: --screen NAME (that screen's survivors) or "
+            "--levers by name"
+        )
+        return 2
+    # The season the final set is confirmed on: never the hold-out, never one of the search's.
+    confirm: int | None = None
+    if args.confirm != "none":
+        try:
+            confirm = int(args.confirm)
+        except ValueError:
+            print(f"refused: --confirm {args.confirm!r}: an ESPN season id, or none")
+            return 2
+    if confirm == HOLD_OUT:
+        print(f"refused: --confirm {HOLD_OUT}: {HOLD_OUT} is the hold-out; no run plays it")
+        return 2
+    seasons_text = args.seasons
+    if seasons_text is None:
+        on_file = reader.seasons_on_file(args.data, max(reader.PERIOD_ONE) + 1)
+        free = [t for t in on_file if t not in (HOLD_OUT, CONFIRMATION, confirm)]
+        if not free:
+            print(
+                "refused: no season a tune's search may play has a log on file under "
+                f"{args.data / LOGS_DIR}"
+            )
+            return 2
+        seasons_text = ",".join(str(t) for t in free)
+    try:
+        looked = parse_seasons(seasons_text)
+    except ValueError:
+        looked = []  # refused by name below, as replay refuses it
+    if HOLD_OUT in looked:
+        print(f"refused: {HOLD_OUT} is the hold-out; no run plays it")
+        return 2
+    if CONFIRMATION in looked:
+        print(
+            f"refused: {CONFIRMATION} is the confirmation season; a tune's search never plays "
+            "it: it is read once, at the end (--confirm)"
+        )
+        return 2
+    if confirm is not None and confirm in looked:
+        print(
+            f"refused: --confirm {confirm} is one of the search's seasons (--seasons): the "
+            "season a tune confirms on is withheld from its search"
+        )
+        return 2
+    if confirm is not None and (
+        confirm not in reader.PERIOD_ONE or not (args.data / LOGS_DIR / f"{confirm}.json").is_file()
+    ):
+        print(
+            f"refused: --confirm {confirm}: season {confirm} has no log on file under "
+            f"{args.data / LOGS_DIR}"
+        )
+        return 2
+    base = baseline_arm(args.arm)
+    if base is None:
+        return 2
+    screen = None
+    if args.screen is not None:
+        try:
+            screen = reader.read_screen(args.data, args.screen)
+        except reader.SimReadError as e:
+            print(f"refused: {e}")
+            return 2
+        if screen is None:
+            print(
+                f"refused: --screen {args.screen}: no screen of that name has a record under "
+                f"{args.data / reader.SCREENS_DIR}"
+            )
+            return 2
+    wa = pair_args(args, seasons_text)
+    said: set[str] = set()
+    read = remembering()
+    got = screen_pair(wa, [base, base], read, said, "the baseline arm's world")
+    if isinstance(got, int):
+        return got
+    plan, world = got
+    rules = plan.league_rules
+    measure = sc.measure_of(rules.scoring, rules.h2h)
+    kind = league_kind(plan)
+    if screen is not None:
+        unfit = screen_unfit(screen, base, kind, confirm)
+        if unfit is not None:
+            print(f"refused: --screen {args.screen}: {unfit}")
+            return 2
+    if confirm is not None:
+        # Whether the season confirmed on can be played at all in this world is asked now, not
+        # after the search: no path of it is planned, and none of its outcomes is read.
+        unfit = confirm_unfit(args, confirm, plan)
+        if unfit is not None:
+            print(
+                f"refused: --confirm {confirm}: {unfit}; nothing of the search is played for a "
+                "confirmation that cannot be: name another season with --confirm, or --confirm "
+                "none (no confirmation, not a verdict)"
+            )
+            return 2
+    try:
+        order = tn.order_of(screen, args.levers)
+    except (ValueError, KeyError) as e:
+        print(f"refused: {e.args[0] if e.args else e}")
+        return 2
+    names = [o["lever"] for o in order]
+    workers = args.workers or rn.workers_default()
+    name = args.name or "tune-" + "-".join(str(t) for t in plan.seasons)
+    spec = tune_spec(args, base, order, plan, confirm, screen)
+    try:
+        state = reader.read_tune(args.data, name)
+    except reader.SimReadError as e:
+        print(f"refused: {e}")
+        return 2
+    if state is not None:
+        differs = sc.spec_differs(state.get("spec") or {}, spec)
+        if differs is not None:
+            print(
+                f"refused: the tune {name!r} was started with another spec ({differs}); a tune "
+                "is resumed on the spec it was started with: name this one another (--name)"
+            )
+            return 2
+    else:
+        folder = reader.tune_dir(args.data, name)
+        if folder.is_dir() and any(folder.glob("*.json")):
+            print(
+                f"refused: the tune {name!r} has pairs on file under {folder} and no record "
+                f"({reader.TUNE_FILE}): the record says when the tune was started, which is how "
+                "its look at the confirmation season is found again; remove the folder to start "
+                "the tune again (its confirmation is then another look), or name this one "
+                "another (--name)"
+            )
+            return 2
+    screened = None
+    if screen is not None:
+        screened = {
+            "name": screen.get("name"),
+            "differs": screen_differs(screen, spec),
+            "note": SCREEN_DIFFERS_NOTE,
+        }
+        if screened["differs"]:
+            print(
+                f"note: the screen {args.screen} was played under another "
+                + "; ".join(
+                    f"{k} ({d['screen']!r} there, {d['tune']!r} here)"
+                    for k, d in screened["differs"].items()
+                )
+                + ": its survivors and their order are taken as they stand"
+            )
+    # The season scale is the baseline's, measured once before any pair, whatever moves later.
+    ctx = sc.Context(rules.scoring, rules.waivers)
+    scale = (state or {}).get("scale")
+    if any(r.scale for r in sc.rows_of(base, names, plan.shapes_read, ctx)):
+        scale = scale_in_force(wa, base, scale, read, said, workers, "tune")
+        if isinstance(scale, int):
+            return scale
+        ctx = replace(ctx, scale=scale["ratio"], no_scale=sc.NO_RATIO)
+    plans: dict[str, tuple[ReplayPlan, ReplayTasks]] = {}
+
+    def ident(wargs: argparse.Namespace, a: Mapping[str, Any], b: Mapping[str, Any]) -> str:
+        return json.dumps([wargs.seasons, a, b], sort_keys=True, default=str)
+
+    def planned(
+        wargs: argparse.Namespace, a: Mapping[str, Any], b: Mapping[str, Any], whose: str
+    ) -> tuple[ReplayPlan, ReplayTasks] | int:
+        key = ident(wargs, a, b)
+        if key not in plans:
+            got = screen_pair(wargs, [a, b], read, said, whose)
+            if isinstance(got, int):
+                return got
+            plans[key] = got
+        return plans[key]
+
+    # The plan: each lever's values as the baseline gives them, one task of each lever's first
+    # pair timed (a lever timed by an earlier piece is not timed again).
+    listed = {n: tn.values_of(n, base, plan.shapes_read, ctx) for n in names}
+    before = dict((state or {}).get("timing") or {})
+    estimates: dict[str, dict[str, Any]] = dict(before.get("estimates") or {})
+    firsts: dict[str, Any] = {}
+    timed_keys: dict[str, Mapping[str, Any]] = {}
+    untimed = []
+    for n in names:
+        row = next((r for r in listed[n] if r.status == sc.PLAY), None)
+        if row is None or n in estimates:
+            continue
+        got = planned(wa, row.a or {}, row.b or {}, f"the pair of {row.key}")
+        if isinstance(got, int):
+            return got
+        untimed.append((n, row, got[1]))
+    if untimed:
+        t0 = clock.perf_counter()
+        timed = rn.run_tasks(
+            timed_task, [(made.task, *made.tasks[made.slow]) for _, _, made in untimed], workers
+        )
+        for (n, row, made), (seconds, first) in zip(untimed, timed, strict=True):
+            estimates[n] = {"seconds_one": seconds, "tasks": len(made.tasks)}
+            firsts[ident(wa, row.a or {}, row.b or {})] = first
+            timed_keys[row.key] = made.keys[made.slow]
+        print(
+            f"one task of each of {len(untimed)} lever(s) timed in "
+            f"{clock.perf_counter() - t0:.0f}s on {workers} workers"
+        )
+
+    def pair_hours(lever: str) -> float:
+        e = estimates.get(lever)
+        if e is None:
+            return 0.0
+        return estimate_hours(float(e["seconds_one"]), int(e["tasks"]), workers)
+
+    static_rivals = str(rn.arm_of(base).opponents.get("kind", "static")) == "static"
+    kinds = [tn.RUN] if static_rivals else [tn.RUN, tn.STATIC]
+    confirm_tasks = len(plan.named) * world.paths
+
+    def confirm_hours() -> float:
+        """One confirmation pair's estimate: its tasks at the slowest lever's timed task (a
+        lever timed inside the search counts from then on)."""
+        slowest = max((float(e["seconds_one"]) for e in estimates.values()), default=0.0)
+        return estimate_hours(slowest, confirm_tasks, workers)
+
+    pairs = sum(1 for n in names for r in listed[n] if r.status == sc.PLAY)
+    search_hours = args.passes * sum(
+        pair_hours(n) for n in names for r in listed[n] if r.status == sc.PLAY
+    )
+    confirm_all = 0.0 if confirm is None else len(kinds) * confirm_hours()
+    whole_hours = (
+        args.expected_hours if args.expected_hours is not None else search_hours + confirm_all
+    )
+    rows = [r for n in names for r in listed[n]]
+    texts = []
+    for r in rows:
+        if r.status != sc.PLAY:
+            texts.append(sc.status_words(r.payload()))
+            continue
+        e = estimates[r.lever]
+        texts.append(
+            f"a pair of {e['tasks']} tasks, one of the lever's took {e['seconds_one']:.1f}s, "
+            f"about {pair_hours(r.lever):.2f} h"
+        )
+    print(
+        f"the tune {name}, its plan: {args.passes} pass(es) over {len(names)} lever(s) in this "
+        f"order, fixed before any pair: {tn.order_words(order)}"
+    )
+    print(
+        f"the search's cells: season(s) {', '.join(str(t) for t in plan.seasons)} by "
+        f"{', '.join(f.label for f in plan.named)}, {world.paths} paths a cell; never the "
+        f"hold-out ({HOLD_OUT}), never the confirmation season ({CONFIRMATION})"
+    )
+    print(f"each lever's values from the baseline, on {tn.measure_words(measure)}:")
+    for line_ in sc.listing([r.payload() for r in rows], texts):
+        print(line_)
+    if confirm is None:
+        print(f"the confirmation: none ({tn.NO_CONFIRMATION})")
+    else:
+        print(
+            f"the confirmation: the final set against the baseline on {confirm}, once, against "
+            + " and against ".join(tn.RIVALS_WORDS[k] for k in kinds)
+            + f": up to {len(kinds)} pair(s) of {confirm_tasks} tasks, about {confirm_all:.2f} h, "
+            "both arms on the cheapest tier that reads every value that moved"
+        )
+    print(
+        f"the whole tune: about {args.passes * pairs} pair(s) of the search, as the baseline "
+        f"lists them, and the confirmation, about {whole_hours:.2f} h on {workers} workers (a "
+        "pass that moves no lever ends the search; a lever that moved is tried from its new "
+        "value in a later pass, and a lever first read after another moved is timed then: the "
+        "search may play pairs this plan does not list, and the hour's rule is read again "
+        "before each pair)"
+    )
+    held_to = audit_rules(rules, plan.grid)
+    if args.dry_run:
+        code = 0
+        for _, row, made in untimed:
+            key = ident(wa, row.a or {}, row.b or {})
+            _, note = audited([timed_keys[row.key]], [firsts[key]], held_to)
+            if note["paths_voided"]:
+                print(f"the pair of {row.key}, its timed task:")
+                code = max(code, audit_exit(note))
+        print("dry run, nothing written")
+        return code
+    piece = new_piece(workers)
+    pieces = list(before.get("pieces") or [])
+    if pieces and pieces[0].get("code_sha") != piece["code_sha"]:
+        print(
+            f"note: the tune was started on commit {pieces[0].get('code_sha')} and this run is "
+            f"on {piece['code_sha']}; each piece records its own"
+        )
+    timing = {"estimates": estimates, "pieces": pieces}
+    steps: list[dict[str, Any]] = []
+    final: dict[str, Any] | None = None
+    conf: dict[str, Any] | None = None
+    left: dict[str, Any] | None = None
+    started = False
+    met_hours = 0.0
+
+    def save() -> Path:
+        return reader.write_tune(
+            args.data,
+            name,
+            tune_record(
+                name, spec, plan, scale, measure, order, steps, final, conf, left, timing, screened
+            ),
+        )
+
+    def start() -> str | None:
+        """Before the first pair this run would play: the hour's rule on the whole tune's
+        estimate, the routines' window against what is left of it (under ``--max-minutes``, the
+        piece); then the piece is opened and the record written. Why the run may not start,
+        else None."""
+        nonlocal started
+        if started:
+            return None
+        if whole_hours > ANNOUNCE_HOURS and not args.announced:
+            return (
+                f"a tune of about {whole_hours:g} h is announced on the tracker and starts on "
+                "the user's word, whatever a piece of it takes; --announced says that has "
+                "happened"
+            )
+        left_hours = max(0.0, whole_hours - met_hours)
+        piece_hours = (
+            left_hours if args.max_minutes is None else min(left_hours, args.max_minutes / 60.0)
+        )
+        ok, why = guard(piece_hours, rooms=args.rooms, announced=True)
+        if not ok:
+            return why
+        started = True
+        pieces.append(piece)
+        save()
+        return None
+
+    def past_the_hour(hours: float, ahead: float, key: str) -> str | None:
+        """The hour's rule read again before the pair ``key``: the plan's estimate lists the
+        search as the baseline gives it, and a search can come to more (a later pass from a
+        moved value, a lever timed late). ``hours``: the pair's own; ``ahead``: the
+        confirmation's still to play. Why the pair is not started, else None. A tune that was
+        announced, or whose estimate the caller gave (``--expected-hours``), is not asked again."""
+        if args.announced or args.expected_hours is not None:
+            return None
+        so_far = met_hours + hours + ahead
+        if so_far <= ANNOUNCE_HOURS + 1e-9:
+            return None
+        return (
+            f"with the pair of {key} the tune comes to about {so_far:g} h, more than its plan "
+            f"listed (about {whole_hours:g} h) and past the hour: a tune of over an hour is "
+            "announced on the tracker and starts on the user's word; --announced says that has "
+            "happened"
+        )
+
+    def over(minutes: float, key: str) -> str | None:
+        """Why the pair ``key`` is not started under ``--max-minutes``; None when it fits."""
+        spent = (clock.perf_counter() - began) / 60.0
+        if args.max_minutes is None or spent + minutes <= args.max_minutes:
+            return None
+        return (
+            f"--max-minutes {args.max_minutes:g}: the pair of {key}, about {minutes:.1f} min, "
+            f"would pass it {spent:.1f} min from the start"
+        )
+
+    def on_file(
+        key: str, a: Mapping[str, Any], b: Mapping[str, Any]
+    ) -> dict[str, Any] | str | None:
+        """The pair ``key`` as the folder holds it; None when it has none; the refusal's words
+        when the file cannot be read or holds other arms than this tune's."""
+        try:
+            pair = reader.read_tune_pair(args.data, name, key)
+        except reader.SimReadError as e:
+            return str(e)
+        if pair is not None and pair.get("specs") != {"a": dict(a), "b": dict(b)}:
+            return (
+                f"the tune {name!r} holds a pair {key} of other arms than this tune's: name "
+                "this one another (--name)"
+            )
+        return pair
+
+    code = 0
+    voided = 0
+    stopped: str | None = None
+    # A stop that is a refusal: the hour's rule met inside the tune, or a confirmation's pair
+    # that cannot be planned. The record is written with what stands, and the exit code says so.
+    halted = False
+    current: dict[str, Any] = dict(base)
+    moved: list[str] = []
+    # The pairs met so far, by their two arms: a later pass that comes to the same two arms (a
+    # lever whose current arm no step has changed since) takes that result and plays nothing.
+    met: dict[str, tuple[str, dict[str, Any]]] = {}
+    for turn in range(1, args.passes + 1):
+        moved_now = False
+        for lever in names:
+            values_ = tn.values_of(lever, current, plan.shapes_read, ctx)
+            values: list[dict[str, Any]] = []
+            for r in values_:
+                d = r.payload()
+                if r.status != sc.PLAY:
+                    values.append(d)
+                    continue
+                key = tn.pair_key(turn, r.key)
+                a, b = r.a or {}, r.b or {}
+                pair = on_file(key, a, b)
+                if isinstance(pair, str):
+                    print(f"refused: {pair}")
+                    return 2
+                two = ident(wa, a, b)
+                earlier = met.get(two)
+                file = key
+                if pair is not None:
+                    result = pair["tune"]["result"]
+                    met_hours += pair_hours(lever)
+                    print(f"pass {turn}, {r.key}: played before: {tn.value_words(result)}")
+                elif earlier is not None:
+                    file, result = earlier
+                    d["same_as"] = file
+                    print(
+                        f"pass {turn}, {r.key}: the same two arms as {file} on the same paths, "
+                        f"not played again: {tn.value_words(result)}"
+                    )
+                else:
+                    got = planned(wa, a, b, f"the pair of {key}")
+                    if isinstance(got, int):
+                        return got
+                    pair_plan, made = got
+                    if lever not in estimates:
+                        # A lever with no pair from the baseline: timed when it first has one.
+                        seconds, first = timed_task(made.task, *made.tasks[made.slow])
+                        estimates[lever] = {"seconds_one": seconds, "tasks": len(made.tasks)}
+                        firsts[two] = first
+                        print(
+                            f"pass {turn}, {r.key}: lever {lever} has its first pair here, none "
+                            f"from the baseline: one task timed, {seconds:.1f}s, about "
+                            f"{pair_hours(lever):.2f} h a pair"
+                        )
+                    refusal = start()
+                    if refusal is not None:
+                        print(f"refused: {refusal}")
+                        return 2
+                    ahead = 0.0 if confirm is None else len(kinds) * confirm_hours()
+                    stopped = past_the_hour(pair_hours(lever), ahead, key)
+                    if stopped is not None:
+                        halted = True
+                        left = {"stopped": stopped, "next": key}
+                        break
+                    stopped = over(60.0 * pair_hours(lever), key)
+                    if stopped is not None:
+                        left = {"stopped": stopped, "next": key}
+                        break
+                    t0 = clock.perf_counter()
+                    payload, note, ran = play_pair(
+                        pair_plan, made, wa, workers, f"{name}-{key}", firsts.pop(two, None)
+                    )
+                    result = tn.value_result(payload, made.keys, ran, measure)
+                    payload["tune"] = {
+                        "name": name,
+                        "tune_version": tn.TUNE_VERSION,
+                        "pass": turn,
+                        **d,
+                        "status": sc.PLAYED,
+                        "result": result,
+                    }
+                    payload["finished_at"] = datetime.now(UTC).isoformat()
+                    path = reader.write_tune_pair(args.data, name, key, payload)
+                    piece["played"].append(key)
+                    met_hours += pair_hours(lever)
+                    print(
+                        f"pass {turn}, {r.key}: {tn.value_words(result)} "
+                        f"({clock.perf_counter() - t0:.0f}s); written: {path}"
+                    )
+                    code = max(code, audit_exit(note))
+                if earlier is None:
+                    voided += int(result["voided"])
+                    met[two] = (key, result)
+                values.append(d | {"status": sc.PLAYED, "result": result, "file": f"{file}.json"})
+            if stopped is not None:
+                break
+            step: dict[str, Any] = {
+                "pass": turn,
+                "lever": lever,
+                "from": sc.value_of(rn.arm_of(current), lever),
+                "values": values,
+                "choice": tn.choose([v for v in values if v.get("result") is not None]),
+                "change": None,
+            }
+            taken = step["choice"]["key"]
+            if taken is not None:
+                row = next(r for r in values_ if r.key == taken)
+                step["change"] = tn.change_of(row.a or {}, row.b or {})
+                current = sc.applied(current, step["change"])
+                moved_now = True
+                if lever not in moved:
+                    moved.append(lever)
+            step["why"] = tn.step_words(step)
+            steps.append(step)
+            print(f"pass {turn}: {step['why']}")
+            if started:
+                save()
+        if stopped is not None or not moved_now:
+            break
+    if stopped is None:
+        # The final set: what the current arm holds that the baseline does not.
+        first_arm, last_arm = rn.arm_of(base), rn.arm_of(current)
+        levers = [n for n in moved if sc.value_of(last_arm, n) != sc.value_of(first_arm, n)]
+        tier = tn.tier_of(levers)
+        arms = {k: tn.confirm_arms(base, current, tier, k == tn.STATIC) for k in kinds}
+        final = {
+            "set": tn.change_of(base, current),
+            "arm": dict(current),
+            "levers": levers,
+            "tier": tier,
+            "unread": tn.unread_of(levers, arms[tn.RUN][1], plan.shapes_read),
+        }
+        # A kind of rivals against which the final arm is the baseline's seat (the two differ
+        # only in what neither reads there) is known before the season is read: replay would
+        # refuse that pair, so it is not planned.
+        one_seat: dict[str, list[str]] = {}
+        for k in kinds:
+            same = pair_one_seat(plan, *arms[k])
+            if same:
+                one_seat[k] = same
+        conf = {"season": confirm, "status": tn.NOT_YET, "look": None}
+        if confirm is None:
+            conf["status"] = tn.NO_CONFIRMATION
+        elif not final["set"]:
+            conf["status"] = tn.NOTHING_TO_CONFIRM
+        elif len(final["unread"]) == len(levers) or tn.RUN in one_seat:
+            conf["status"] = tn.SAME_SEAT
+        else:
+            ca = pair_args(args, str(confirm))
+            playing = [k for k in kinds if k not in one_seat]
+            conf |= {
+                "tier": tier,
+                "arms": {k: {"a": arms[k][0], "b": arms[k][1]} for k in kinds},
+                "files": {k: f"confirm-{k}.json" for k in playing},
+                "one_seat": one_seat,
+            }
+            ledger = args.data / reader.LEDGER
+            spec_sha = spec_hash(spec)
+            # A tune is its folder: the look it has is the one its first piece's start names.
+            first_start = (pieces[0] if pieces else piece)["started_at"]
+            if confirm == CONFIRMATION:
+                try:
+                    lines = reader.read_looks(args.data)
+                except reader.SimReadError as e:
+                    print(f"refused: {e}")
+                    return 2
+                own = tn.own_look(lines, name, spec_sha, first_start)
+                if own is not None:
+                    conf["look"] = look_block(own, lines, ledger)
+            else:
+                conf["look_note"] = TUNE_OTHER_SEASON.format(season=CONFIRMATION)
+            payloads: dict[str, Mapping[str, Any]] = {}
+            for i, k in enumerate(playing):
+                key = f"confirm-{k}"
+                a, b = arms[k]
+                pair = on_file(key, a, b)
+                if isinstance(pair, str):
+                    print(f"refused: {pair}")
+                    return 2
+                if pair is not None:
+                    payloads[k] = pair
+                    met_hours += confirm_hours()
+                    kept = (pair.get("tune") or {}).get("look")
+                    if confirm == CONFIRMATION and conf["look"] is None and kept:
+                        # The pair was played on a look the ledger no longer holds.
+                        conf |= {"look": dict(kept), "look_lost": TUNE_LOOK_LOST}
+                    continue
+                # Whether this piece may play the pair is settled before the season is read:
+                # the hour's rule and the window, the hour's rule again, the cap in minutes.
+                refusal = start()
+                if refusal is not None:
+                    print(f"refused: {refusal}")
+                    return 2
+                ahead = (len(playing) - i - 1) * confirm_hours()
+                stopped = past_the_hour(confirm_hours(), ahead, key)
+                if stopped is not None:
+                    halted = True
+                    left = {"stopped": stopped, "next": key}
+                    break
+                stopped = over(60.0 * confirm_hours(), key)
+                if stopped is not None:
+                    left = {"stopped": stopped, "next": key}
+                    break
+                # The season the search never played is read here, for the first time.
+                said_now = io.StringIO()
+                with contextlib.redirect_stdout(said_now):
+                    got = planned(ca, a, b, f"the confirmation's pair against {tn.RIVALS_WORDS[k]}")
+                print(said_now.getvalue(), end="")
+                if isinstance(got, int):
+                    # What only a whole plan finds (the early check asks the rest): the final
+                    # set stands in the record with why its confirmation was not played.
+                    whys = [
+                        x.removeprefix("refused: ")
+                        for x in said_now.getvalue().splitlines()
+                        if x.startswith("refused: ")
+                    ]
+                    conf |= {"status": tn.UNPLANNED, "why": whys[0] if whys else None}
+                    halted = True
+                    break
+                pair_plan, made = got
+                if confirm == CONFIRMATION and conf["look"] is None:
+                    # The look is counted before the season is played, so a tune that dies in its
+                    # confirmation is on the ledger all the same.
+                    lines = reader.read_looks(args.data)
+                    n, ledger = reader.append_look(
+                        args.data,
+                        {
+                            "started_at": datetime.now(UTC).isoformat(),
+                            "name": name,
+                            "design": "tune",
+                            "tune_started_at": first_start,
+                            "seasons": [confirm],
+                            "search_seasons": list(plan.seasons),
+                            "forecasters": [f.label for f in plan.named],
+                            "spec_sha": spec_sha,
+                            "specs": {
+                                side: spec_hash(x)
+                                for side, x in zip(PAIR, arms[tn.RUN], strict=True)
+                            },
+                            "fit_sha": plan.sha,
+                            "code_sha": piece["code_sha"],
+                            "league_kind": kind,
+                            "league_kind_sha": spec_hash(kind),
+                            "look_of_kind": tn.look_of_kind(lines, spec_hash(kind)),
+                        },
+                    )
+                    lines = reader.read_looks(args.data)
+                    conf["look"] = look_block(lines[n - 1], lines, ledger)
+                    print(look_words(conf["look"]) + ": appended")
+                    save()
+                t0 = clock.perf_counter()
+                payload, note, _ = play_pair(pair_plan, made, ca, workers, f"{name}-{key}")
+                if confirm == CONFIRMATION:
+                    payload["confirmation"] = {
+                        "season": CONFIRMATION,
+                        "look": conf["look"]["line"],
+                        "ledger": conf["look"]["ledger"],
+                        "note": TUNE_LOOK_NOTE,
+                    }
+                payload["tune"] = {
+                    "name": name,
+                    "tune_version": tn.TUNE_VERSION,
+                    "confirmation": k,
+                    "tier": tier,
+                    "look": conf["look"],
+                }
+                payload["finished_at"] = datetime.now(UTC).isoformat()
+                path = reader.write_tune_pair(args.data, name, key, payload)
+                piece["played"].append(key)
+                met_hours += confirm_hours()
+                payloads[k] = payload
+                print(
+                    f"the confirmation against {tn.RIVALS_WORDS[k]}: played "
+                    f"({clock.perf_counter() - t0:.0f}s); written: {path}"
+                )
+                code = max(code, audit_exit(note))
+                save()
+            if stopped is None and conf["status"] == tn.NOT_YET:
+                cells = {k: tn.confirmation_of(payloads[k], confirm) for k in playing}
+                lost = sum(int(payloads[k]["audit"]["paths_voided"]) for k in playing)
+                voided += lost
+                # Each named forecaster with no cell on the season, by replay's reason; one the
+                # search read is no verdict. One the search read whose cell is there and not
+                # read leaves a verdict on the others, and the verdict's line names it.
+                skipped = tn.skipped_of(payloads[tn.RUN], confirm)
+                searched = tn.searched_of(steps)
+                missing = {label: why_ for label, why_ in skipped.items() if label in searched}
+                conf |= {
+                    "status": tn.CONFIRMED,
+                    "cells": cells,
+                    "skipped": skipped,
+                    "verdict": tn.verdict_of(cells, lost, missing, list(one_seat), searched),
+                }
+    if stopped is not None:
+        piece["stopped"] = stopped
+        print(("refused: " if halted else "stopped: ") + stopped)
+    piece["finished_at"] = datetime.now(UTC).isoformat()
+    if final is not None:
+        chosen = ", ".join(f"{k} {sc.shown(v)}" for k, v in final["set"].items()) or "none"
+        print(f"the tune {name}, the final set (what the search changed in the baseline): {chosen}")
+        for lever, why_ in final["unread"].items():
+            print(f"  not read by the final arm on the {final['tier']} tier: {lever} ({why_})")
+    if conf is not None and conf["status"] == tn.CONFIRMED:
+        if conf["look"] is not None:
+            where = look_words(conf["look"])
+            where += f"; {conf['look_lost']}" if "look_lost" in conf else ""
+        else:
+            where = f"season {confirm}: " + conf.get("look_note", TUNE_NO_LOOK)
+        own_tier = rn.arm_of(base).tier
+        on = f"both arms on the {conf['tier']} tier"
+        if own_tier != conf["tier"]:
+            on += (
+                f" (the cheapest that reads every value that moved; the baseline's own is the "
+                f"{own_tier} tier)"
+            )
+        print(f"the confirmation, the final set against the baseline, {on}: {where}")
+        for line_ in tn.confirmation_lines(conf, measure):
+            print(line_)
+    elif conf is not None:
+        print(
+            f"the confirmation: {conf['status']}" + (f" ({conf['why']})" if conf.get("why") else "")
+        )
+        if final is not None and final["set"] and confirm is None:
+            print(
+                "the search's set is no recommendation by itself: it was chosen on the seasons "
+                "it was searched on"
+            )
+    # A run with nothing left to play of a tune on file is no piece: it writes the record again
+    # from the pairs' files and prints the choices.
+    if not started and state is None:
+        pieces.append(piece)
+    path = save()
+    if left is not None and halted:
+        print(f"left, from {left['next']} on; the same command with --announced plays it")
+    elif left is not None:
+        print(f"left for the next piece, from {left['next']} on; the same command plays it")
+    print(f"written: {path}")
+    if halted:
+        return 2
+    return AUDIT_EXIT if voided else code
 
 
 # --------------------------------------------------------------------------- validate
@@ -4266,7 +5367,12 @@ def _run_args(p: argparse.ArgumentParser, paths: int) -> None:
     p.add_argument("--workers", type=int, default=None, help="processes (default cores less two)")
     p.add_argument("--name", default=None, help="the run's name in its payload and file")
     p.add_argument("--expected-hours", type=float, default=None, help="override the estimate")
-    p.add_argument("--announced", action="store_true", help="the run over an hour was announced")
+    p.add_argument(
+        "--announced",
+        action="store_true",
+        help="the run over an hour was announced on the tracker and the user said to start it: "
+        "passed only on the user's word",
+    )
     p.add_argument("--dry-run", action="store_true", help="estimate and write nothing")
 
 
@@ -4515,6 +5621,69 @@ def main(argv: list[str] | None = None) -> int:
     )
     _run_args(sn, paths=SCREEN_PATHS)
     sn.set_defaults(func=cmd_screen)
+    tu = sub.add_parser(
+        "tune",
+        help="the levers' values searched one lever at a time, then the final set played once "
+        "on a season the search never played",
+    )
+    tu.add_argument(
+        "--arm",
+        type=Path,
+        required=True,
+        metavar="SPEC",
+        help="the baseline arm's spec file: the search starts from it and the final set is "
+        "played against it",
+    )
+    tu.add_argument(
+        "--screen",
+        default=None,
+        metavar="NAME",
+        help="the screen whose survivors are tuned, strongest first by difference over SE; "
+        "its baseline arm and league kind must be this tune's, and it must not have played "
+        "the season --confirm names",
+    )
+    tu.add_argument(
+        "--levers",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        help="the levers to tune, by name: in the screen's order with --screen, else the "
+        "list's (default the screen's survivors)",
+    )
+    tu.add_argument(
+        "--passes",
+        type=int,
+        default=tn.PASSES,
+        metavar="N",
+        help=f"the passes over the levers; a pass that moves none ends the search (default "
+        f"{tn.PASSES})",
+    )
+    tu.add_argument(
+        "--confirm",
+        default=str(CONFIRMATION),
+        metavar="SEASON",
+        help="the season the final set is played on against the baseline, once, withheld from "
+        f"the search and from the screen named; never {HOLD_OUT}; it must be one the tune's "
+        "world can play (its draft table under --adp, a forecaster the search reads); none "
+        "plays no confirmation, a look at the machinery and not a verdict (default "
+        f"{CONFIRMATION})",
+    )
+    _cell_args(
+        tu,
+        "every season on file that is neither the hold-out, the confirmation season nor "
+        "--confirm's",
+    )
+    _world_args(tu)
+    tu.add_argument(
+        "--max-minutes",
+        type=float,
+        default=None,
+        metavar="N",
+        help="start no pair whose estimate would pass N minutes from the start: stop cleanly, "
+        "and the same command takes the tune up again",
+    )
+    _run_args(tu, paths=SCREEN_PATHS)
+    tu.set_defaults(func=cmd_tune)
     va = sub.add_parser(
         "validate", help="gate 5: the gain the surrogate keeps of the exact search's, on a replay"
     )

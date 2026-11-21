@@ -38,6 +38,10 @@ RUNS_DIR = SIM_DIR / "runs"
 SCREENS_DIR = SIM_DIR / "screens"
 #: A screen's record in its folder.
 SCREEN_FILE = "screen.json"
+#: The tunes' folders (#172, PR H2): one a tune, a file a played pair and the tune's record.
+TUNES_DIR = SIM_DIR / "tunes"
+#: A tune's record in its folder.
+TUNE_FILE = "tune.json"
 #: The confirmation season's ledger (#172, PR D2): one JSON line a written run that names it.
 LEDGER = SIM_DIR / "confirmation-looks.jsonl"
 LOGS_DIR = Path("external") / "espn" / "gamelogs"
@@ -430,10 +434,30 @@ def write_run(data_dir: Path, payload: Mapping[str, Any]) -> Path:
     return path
 
 
+def _folder(data_dir: Path, root: Path, name: str, unnamed: str) -> Path:
+    """A named folder under ``root`` (a screen's, a tune's), its name made safe as a run's is."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name)[:60] or unnamed
+    return data_dir / root / safe
+
+
+def _pair_path(folder: Path, key: str, record: str, whose: str) -> Path:
+    """Where a folder keeps the pair ``key``'s record; never the folder's own ``record``."""
+    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in key)
+    if safe + ".json" == record:
+        raise ValueError(f"a pair named {key!r} would be the {whose}'s own record")
+    return folder / f"{safe}.json"
+
+
+def _named(payload: Mapping[str, Any], what: str) -> None:
+    """The fit's hash and the hold-out must be in what is written, as in every run's."""
+    for key in ("fit_sha", "hold_out"):
+        if key not in payload:
+            raise ValueError(f"{what} names {key}")
+
+
 def screen_dir(data_dir: Path, name: str) -> Path:
     """A screen's folder under ``data/sim/screens/``, its name made safe as a run's is."""
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name)[:60] or "screen"
-    return data_dir / SCREENS_DIR / safe
+    return _folder(data_dir, SCREENS_DIR, name, "screen")
 
 
 def _write_whole(path: Path, payload: Mapping[str, Any]) -> Path:
@@ -466,18 +490,13 @@ def read_screen(data_dir: Path, name: str) -> dict[str, Any] | None:
 def write_screen(data_dir: Path, name: str, record: Mapping[str, Any]) -> Path:
     """A screen's record in its folder, replacing the one before; the fit's hash and the hold-out
     must be in it, as in every run's."""
-    for key in ("fit_sha", "hold_out"):
-        if key not in record:
-            raise ValueError(f"a screen's record names {key}")
+    _named(record, "a screen's record")
     return _write_whole(screen_dir(data_dir, name) / SCREEN_FILE, record)
 
 
 def screen_pair_path(data_dir: Path, name: str, key: str) -> Path:
     """Where a screen keeps the pair ``key``'s record (a lever's name and its nudge's)."""
-    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in key)
-    if safe + ".json" == SCREEN_FILE:
-        raise ValueError(f"a pair named {key!r} would be the screen's own record")
-    return screen_dir(data_dir, name) / f"{safe}.json"
+    return _pair_path(screen_dir(data_dir, name), key, SCREEN_FILE, "screen")
 
 
 def read_screen_pair(data_dir: Path, name: str, key: str) -> dict[str, Any] | None:
@@ -488,10 +507,65 @@ def read_screen_pair(data_dir: Path, name: str, key: str) -> dict[str, Any] | No
 def write_screen_pair(data_dir: Path, name: str, key: str, payload: Mapping[str, Any]) -> Path:
     """A played pair's record, as ``replay`` would write it (:func:`write_run`'s conditions), in
     the screen's folder."""
-    for k in ("fit_sha", "hold_out"):
-        if k not in payload:
-            raise ValueError(f"a run payload names {k}")
+    _named(payload, "a run payload")
     return _write_whole(screen_pair_path(data_dir, name, key), payload)
+
+
+# --------------------------------------------------------------------------- a tune's folder (PR H2)
+def tune_dir(data_dir: Path, name: str) -> Path:
+    """A tune's folder under ``data/sim/tunes/``, its name made safe as a run's is."""
+    return _folder(data_dir, TUNES_DIR, name, "tune")
+
+
+def read_tune(data_dir: Path, name: str) -> dict[str, Any] | None:
+    """A tune's record (:data:`TUNE_FILE` in its folder); None when the tune has none yet."""
+    return _read_whole(tune_dir(data_dir, name) / TUNE_FILE)
+
+
+def write_tune(data_dir: Path, name: str, record: Mapping[str, Any]) -> Path:
+    """A tune's record in its folder, replacing the one before; the fit's hash and the hold-out
+    must be in it, as in every run's."""
+    _named(record, "a tune's record")
+    return _write_whole(tune_dir(data_dir, name) / TUNE_FILE, record)
+
+
+def tune_pair_path(data_dir: Path, name: str, key: str) -> Path:
+    """Where a tune keeps the pair ``key``'s record (its pass, the lever's name and the value's,
+    or one of the confirmation's two)."""
+    return _pair_path(tune_dir(data_dir, name), key, TUNE_FILE, "tune")
+
+
+def read_tune_pair(data_dir: Path, name: str, key: str) -> dict[str, Any] | None:
+    """A played pair's record in a tune's folder; None when the pair has none (not played)."""
+    return _read_whole(tune_pair_path(data_dir, name, key))
+
+
+def write_tune_pair(data_dir: Path, name: str, key: str, payload: Mapping[str, Any]) -> Path:
+    """A played pair's record, as ``replay`` would write it (:func:`write_run`'s conditions), in
+    the tune's folder."""
+    _named(payload, "a run payload")
+    return _write_whole(tune_pair_path(data_dir, name, key), payload)
+
+
+# --------------------------------------------------------------------------- the ledger
+def read_looks(data_dir: Path) -> list[dict[str, Any]]:
+    """The ledger's lines (:data:`LEDGER`), in order: every written run that named the
+    confirmation season. No ledger is no look."""
+    path = data_dir / LEDGER
+    if not path.exists():
+        return []
+    out = []
+    for n, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            got = json.loads(line)
+        except ValueError as e:
+            raise SimReadError(f"{path}, line {n}, is not JSON: {e}") from None
+        if not isinstance(got, dict):
+            raise SimReadError(f"{path}, line {n}, is not a record")
+        out.append(got)
+    return out
 
 
 def append_look(data_dir: Path, record: Mapping[str, Any]) -> tuple[int, Path]:
@@ -516,6 +590,8 @@ __all__ = [
     "RUNS_DIR",
     "SCREENS_DIR",
     "SCREEN_FILE",
+    "TUNES_DIR",
+    "TUNE_FILE",
     "SimReadError",
     "belief_weights",
     "code_sha",
@@ -526,14 +602,21 @@ __all__ = [
     "newest_fit",
     "period_date",
     "prior_rates",
+    "read_looks",
     "read_screen",
     "read_screen_pair",
+    "read_tune",
+    "read_tune_pair",
     "replay_lines",
     "run_path",
     "screen_dir",
     "screen_pair_path",
     "seasons_on_file",
+    "tune_dir",
+    "tune_pair_path",
     "write_run",
     "write_screen",
     "write_screen_pair",
+    "write_tune",
+    "write_tune_pair",
 ]
