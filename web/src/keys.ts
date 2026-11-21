@@ -739,7 +739,7 @@ export const LANDING_SHEET: Sheet = {
         [["v"], "all the leagues, or one: the league picked beside the switch"],
         [["d"], "the Demo, a simulated week on sample data, or back to live"],
         [["Space"], "in the Demo, pause or play; live, it starts the Demo"],
-        [["←", "→"], "in the Demo, the day before or after"],
+        [["←", "→"], "live, the gates' day before or after (back to Monday, up to today); in the Demo, the bent clock's day"],
         [["?"], "this sheet"],
       ],
     },

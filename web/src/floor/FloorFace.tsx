@@ -18,7 +18,7 @@ import { formatHash, termHash } from "../explain/nav";
 import { TRACKS } from "../explain/tracks/index.ts";
 import FloorStage from "./FloorStage";
 import GateStrip from "./GateStrip";
-import { gatesOf } from "./gates";
+import { gatesOf, stepGateDay } from "./gates";
 import { FLOW_EXPLAIN, W, clockText, dayLabel, sceneAt, sceneWidth, weekOf } from "./scene";
 import type { LeagueRow } from "./scene";
 
@@ -218,7 +218,13 @@ export default function FloorFace({
     toggleView: () => pick(one ? null : firstLeague),
     toggleDemo: () => (control.demo ? toLive() : startDemo()),
     playPause: () => (control.demo ? clk.setPlaying(!clk.playing) : startDemo()),
+    // Live, the gates' day back or forward in the week, stopping at the Monday and at today (#472);
+    // in the Demo, the bent clock to the day before or after.
     day: (delta) => {
+      if (!control.demo) {
+        setPicked(stepGateDay(weekOf(t), today, gateDay, delta));
+        return;
+      }
       const week = weekOf(t);
       const k = week.indexOf(centralDate(t));
       startDemo(week[(k + delta + 7) % 7]);
@@ -324,7 +330,7 @@ export default function FloorFace({
           <i className="sw hold" />
           held by a rule
         </span>
-        <span className="dim">{control.demo ? "a day moves the Demo's clock there" : "a day picks the gates' day, today clears it"} · a dock opens its league · the hub the Queue · the ledger History · a stage's number its step in Explain, its title or a name the glossary</span>
+        <span className="dim">{control.demo ? "a day or ← → moves the Demo's clock there" : "a day or ← → picks the gates' day, today clears it"} · a dock opens its league · the hub the Queue · the ledger History · a stage's number its step in Explain, its title or a name the glossary</span>
       </div>
       <div className="fl-stage" ref={stageRef}>
         <FloorStage

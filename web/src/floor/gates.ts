@@ -314,6 +314,17 @@ export function gatesOf(tl: Timeline, date: string, t: number): DayGates {
   return { date, from, to, now: t >= from && t <= to ? t : null, when, gates, bands };
 }
 
+/** Live, ← or → on the floor (#472): the gates' day ``delta`` days on inside ``week``, stopping at
+ * its first day and at today; null when that is today (no day picked). */
+export function stepGateDay(week: readonly string[], today: string, current: string, delta: number): string | null {
+  const days = week.filter((d) => d <= today);
+  if (!days.length) return null;
+  // A future day (picked by a click) stands one past today, so ← comes back to today.
+  const k = current > today ? days.length : Math.max(0, days.indexOf(current));
+  const d = days[Math.max(0, Math.min(days.length - 1, k + delta))];
+  return d === today ? null : d;
+}
+
 /** The hover's lines: the label, the scheduled time, the actual start and finish, the status,
  * and the lane's steps (all its steps off a lane) with their detail lines. */
 export function gateTip(g: Gate, lane: Agent | null): string[] {

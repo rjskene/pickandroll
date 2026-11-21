@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { QueueEntry, QueuePayload, RoutineLivePayload, RoutinePretipDay, RoutineRunLog, RoutineRunsPayload, RoutineStepLog } from "../api.ts";
-import { FROM_MIN, GRACE_MS, LANES, gateTip, gatesOf } from "./gates.ts";
+import { FROM_MIN, GRACE_MS, LANES, gateTip, gatesOf, stepGateDay } from "./gates.ts";
 import type { Gate } from "./gates.ts";
 import { CAST, DESK_STEPS, ROUTINES, ROUTINE_AGENTS, bentClock, centralAt, centralDate, timeline } from "./model.ts";
 import { sampleWeek } from "./sample.ts";
@@ -325,4 +325,16 @@ test("a Demo frame: the sample week's Friday mid-claim, its gates on the bent cl
   const evening = gatesOf(tl, "2026-11-20", ct("2026-11-20T23:59:00"));
   assert.deepEqual(evening.gates.filter((g) => g.kind === "slate").map((g) => g.state), ["done", "done"]);
   assert.ok(evening.gates.filter((g) => g.kind !== "watchdog").every((g) => g.state !== "todo"));
+});
+
+test("live, the arrows move the gates' day through the week, stopping at Monday and at today", () => {
+  const week = ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22"];
+  const today = "2026-11-20";
+  assert.equal(stepGateDay(week, today, today, -1), "2026-11-19");
+  assert.equal(stepGateDay(week, today, "2026-11-19", 1), null); // back to today: nothing picked
+  assert.equal(stepGateDay(week, today, today, 1), null); // never past today
+  assert.equal(stepGateDay(week, today, "2026-11-16", -1), "2026-11-16"); // stops at Monday
+  // A future day picked by a click: ← comes back to today, → stays at today.
+  assert.equal(stepGateDay(week, today, "2026-11-22", -1), null);
+  assert.equal(stepGateDay(week, today, "2026-11-22", 1), null);
 });
