@@ -57,6 +57,15 @@ export interface Gate {
   note: string | null;
 }
 
+/** A faint band on lanes: the pre-tip check's window on a future day, its slates not yet known. */
+export interface GateBand {
+  key: string;
+  start: number;
+  end: number;
+  lanes: Agent[];
+  label: string;
+}
+
 export interface DayGates {
   date: string;
   from: number;
@@ -66,6 +75,7 @@ export interface DayGates {
   /** Before, on or after the day of ``t``. */
   when: "past" | "today" | "future";
   gates: Gate[];
+  bands: GateBand[];
 }
 
 const ms = (iso: string | null | undefined): number | null => (iso ? Date.parse(iso) : null);
@@ -138,6 +148,7 @@ function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t:
   for (const a of attempts) {
     const s = ms(a.started_at) as number;
     const run = runs.find((r) => r.start <= s + 5_000 && s <= (r.end ?? t));
+    const from = run ? null : "from the day file";
     start = start ?? s;
     if (run) {
       const b = barsOf(run, t);
@@ -156,7 +167,7 @@ function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t:
       agent: "orchestrator",
       name: `attempt ${hhmm(s)}`,
       status: a.outcome === "failed" ? "failed" : a.outcome === "done" ? "ok" : "idle",
-      detail: [a.outcome, ...stamps.filter(Boolean), a.reason].filter(Boolean).join(" · "),
+      detail: [a.outcome, ...stamps.filter(Boolean), a.reason, from].filter(Boolean).join(" · "),
     });
   }
   // A pass in flight in the slate's window that has not logged an attempt yet.
@@ -288,7 +299,19 @@ export function gatesOf(tl: Timeline, date: string, t: number): DayGates {
     });
   }
   gates.sort((a, b) => a.at - b.at);
-  return { date, from, to, now: t >= from && t <= to ? t : null, when, gates };
+  // A future day: the pre-tip check's window as one faint band, its slates set from that day's tip-offs.
+  const bands: GateBand[] = [];
+  const pt = ROUTINES.pretip;
+  if (when === "future" && "every" in pt) {
+    bands.push({
+      key: `${date}-pretip-window`,
+      start: centralAt(date, minutesOf(pt.from)),
+      end: centralAt(date, minutesOf(pt.to)),
+      lanes: lanesOf(ROUTINE_AGENTS.pretip),
+      label: `pre-tip window ${pt.from}-${pt.to}: its slates are set from the day's tip-offs on the day`,
+    });
+  }
+  return { date, from, to, now: t >= from && t <= to ? t : null, when, gates, bands };
 }
 
 /** The hover's lines: the label, the scheduled time, the actual start and finish, the status,

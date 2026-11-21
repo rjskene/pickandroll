@@ -162,6 +162,13 @@ test("still to come and missed after the 20-minute grace; a past day keeps no ga
   assert.equal(future.when, "future");
   assert.ok(future.gates.every((g) => g.state === "todo" || g.state === "plain"));
   assert.ok(future.gates.every((g) => !g.bars.length));
+  // The pre-tip window as one faint band, no slates; on no other day.
+  assert.deepEqual(
+    future.bands.map((b) => [b.start, b.end, b.lanes]),
+    [[ct("2026-11-22T09:00:00"), ct("2026-11-22T20:55:00"), ["scout", "solver", "orchestrator", "setter"]]],
+  );
+  assert.deepEqual(past.bands, []);
+  assert.deepEqual(gatesOf(tl, FRI, ct(`${FRI}T15:10:00`)).bands, []);
 });
 
 test("Monday's gate only on a Monday; the watchdog a plain tick with no state", () => {
@@ -221,7 +228,9 @@ test("pre-tip: planned slates still to come, a done slate's attempt drawn by its
   assert.equal(d1.start, ct(`${FRI}T17:00:00`));
   assert.equal(d1.end, ct(`${FRI}T17:11:00`));
   assert.deepEqual(d1.bars.map((b) => b.agent), ["scout", "solver", "orchestrator", "setter"]);
-  assert.ok(gateTip(d1, "solver").includes("Orchestrator · attempt 17:00: done · solved 17:05 · pushed 17:05 · lineups 17:11"));
+  assert.ok(gateTip(d1, "solver").includes("Orchestrator · attempt 17:00: done · solved 17:05 · pushed 17:05 · lineups 17:11 · from the day file"));
+  // The slate the run report holds says no such thing.
+  assert.ok(gateTip(d2, null).includes("Orchestrator · attempt 20:30: done · nothing to push"));
   assert.equal(d2.state, "done");
   assert.deepEqual(
     d2.bars.map((b) => [b.agent, b.state]),

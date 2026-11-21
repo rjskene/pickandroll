@@ -1385,6 +1385,8 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 /* ---------------------------------------------------------------- the day's gates (#472) */
 .gates { position: relative; padding: 6px 24px 8px; border-top: 1px solid var(--line); background: var(--bg); }
 .gs-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; font-size: 11.5px; }
+.gs-title { background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; }
+.gs-title:hover b, .gs-title:focus-visible b { text-decoration: underline; text-decoration-color: var(--line-2); }
 .gs-head b { font-family: var(--display); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }
 .gs-key { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
 .gs-key i { display: inline-block; width: 12px; height: 7px; border-radius: 2px; margin-left: 8px; }
@@ -1400,6 +1402,7 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .gs-tracks { position: relative; flex: 1; min-width: 0; }
 .gs-hour { position: absolute; top: 0; bottom: 14px; width: 1px; background: var(--line); }
 .gs-lane { position: relative; height: 13px; border-bottom: 1px solid rgba(31, 41, 51, 0.6); }
+.gs-band { position: absolute; top: 3px; height: 7px; border-radius: 2px; background: var(--c); opacity: 0.12; }
 .gs-hit { position: absolute; top: 0; height: 13px; min-width: 14px; transform: translateX(-7px); padding: 0 7px; box-sizing: content-box; }
 .gs-bar { position: absolute; top: 2px; height: 9px; min-width: 3px; border-radius: 2px; background: var(--c); box-shadow: 0 0 0 1px var(--bg); }
 .gs-bar.failed { background: var(--bad); } .gs-bar.idle { background: var(--dim); }

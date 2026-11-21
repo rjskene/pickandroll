@@ -100,7 +100,7 @@ test("a run in flight plays on the floor: the panel names the run and its step, 
 
 test("the floor's names and stage titles each open a glossary term by its hash (#462)", () => {
   assert.equal(FLOW_TERMS.length, FLOW.length);
-  for (const id of [...FLOW_TERMS, ...Object.keys(AGENTS), "the-floor", "demo"]) assert.ok(termById(id), id);
+  for (const id of [...FLOW_TERMS, ...Object.keys(AGENTS), "the-floor", "demo", "gates"]) assert.ok(termById(id), id);
   assert.equal(new Set(GLOSSARY.map((t) => t.id)).size, GLOSSARY.length);
   assert.equal(termOfHash(termHash("out-and-back")), "out-and-back");
   assert.equal(termOfHash("#moves/2"), null);

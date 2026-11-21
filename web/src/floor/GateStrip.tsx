@@ -14,7 +14,7 @@ const HOURS = Array.from({ length: 19 }, (_, k) => 5 + k);
 const hhmm = (t: number) =>
   new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(t));
 
-export default function GateStrip({ day, onToday }: { day: DayGates; onToday: (() => void) | null }) {
+export default function GateStrip({ day, onToday, onTerm }: { day: DayGates; onToday: (() => void) | null; onTerm: () => void }) {
   const [tip, setTip] = useState<{ g: Gate; lane: Agent | null; x: number; y: number } | null>(null);
   const span = day.to - day.from;
   const pct = (t: number) => `${(Math.max(0, Math.min(1, (t - day.from) / span)) * 100).toFixed(3)}%`;
@@ -37,7 +37,9 @@ export default function GateStrip({ day, onToday }: { day: DayGates; onToday: ((
   return (
     <div className="gates" onMouseLeave={leave}>
       <div className="gs-head">
-        <b>{dayLabel(day.date)}</b>
+        <button type="button" className="fl-term gs-title" onClick={onTerm} title="The day's gates in Explain's glossary">
+          <b>{dayLabel(day.date)}</b>
+        </button>
         <span className="muted">{when}</span>
         {onToday && (
           <button type="button" className="small" onClick={onToday}>
@@ -79,6 +81,11 @@ export default function GateStrip({ day, onToday }: { day: DayGates; onToday: ((
           ))}
           {LANES.map((a) => (
             <div key={a} className={`gs-lane c-${a}`}>
+              {day.bands
+                .filter((b) => b.lanes.includes(a))
+                .map((b) => (
+                  <i key={b.key} className="gs-band" style={{ left: pct(b.start), width: wpct(b.start, b.end) }} title={b.label} />
+                ))}
               {day.gates.map((g) =>
                 !g.lanes.includes(a) ? null : (
                   <span key={g.key} className="gs-gate" onMouseMove={hover(g, a)}>

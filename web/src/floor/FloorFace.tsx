@@ -202,6 +202,7 @@ export default function FloorFace({
   });
 
   const startDemo = (date?: string) => {
+    setPicked(null);
     const at = date ? sample.w.runs.by_day.find((d) => d.date === date)?.runs[still ? "morning" : "signin"]?.started_at : null;
     clk.set(at ? sample.clock.toWall(Date.parse(at)) - 0.5 : demoStart);
     clk.setPlaying(true);
@@ -323,7 +324,7 @@ export default function FloorFace({
           <i className="sw hold" />
           held by a rule
         </span>
-        <span className="dim">a dock opens its league · the hub the Queue · the ledger History · a stage's number its step in Explain, its title or a name the glossary</span>
+        <span className="dim">{control.demo ? "a day moves the Demo's clock there" : "a day picks the gates' day, today clears it"} · a dock opens its league · the hub the Queue · the ledger History · a stage's number its step in Explain, its title or a name the glossary</span>
       </div>
       <div className="fl-stage" ref={stageRef}>
         <FloorStage
@@ -348,7 +349,7 @@ export default function FloorFace({
           }}
         />
       </div>
-      <GateStrip day={gates} onToday={!control.demo && gateDay !== today ? () => setPicked(null) : null} />
+      <GateStrip day={gates} onToday={!control.demo && gateDay !== today ? () => setPicked(null) : null} onTerm={() => onExplainStep(termHash("gates"))} />
       <div className="fl-now">
         <div className="what">
           <b className={scene.now.agent ? `c-${scene.now.agent}` : "muted"}>{scene.now.title}</b> <span className="muted">{scene.now.when}</span>
