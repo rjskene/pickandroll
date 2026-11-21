@@ -18,7 +18,9 @@ off (the soak); ``--no-marker`` keeps the daily from writing data/routine/daily.
 prints the report as JSON after the summary. ``--skip-solve LEAGUE`` (repeatable) leaves that
 league's solve out and says so: the private league's search outruns the daily's window on a
 slow host, and a solve the client gives up on keeps computing in the API. Every run writes
-data/routine/runs/<day>-<name>.json unless it was a dry run.
+data/routine/runs/<day>-<name>.json unless it was a dry run. While it runs past its window check,
+it keeps data/routine/live/<name>.json (FLOOR, #459): rewritten after each step, removed however
+the run ends, none on a dry run; a write that fails is logged on stderr and the run goes on.
 
 The browser (``routine/chromium.py``) is Playwright's Chromium with the extension from
 ``PICKANDROLL_EXTENSION`` (the checkout's ``extension/``) and the profile at
@@ -50,7 +52,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from pickandroll.routine import CENTRAL, Context, Report, Unreachable, http, now, run
 from pickandroll.routine.push import ntfy_pusher
-from pickandroll.routine.report import marker, write_json
+from pickandroll.routine.report import Live, live_path, marker, write_json
 from pickandroll.routine.routines import ROUTINES, lock_wait_s
 from pickandroll.routine.steps import gh_comment, script_runner
 
@@ -101,6 +103,19 @@ def main(argv: list[str] | None = None) -> int:
         clock = now
 
     report = Report(args.routine, clock(), clock=clock)
+    if not args.dry_run:
+        # The live progress file (FLOOR, #459), as a dry run writes no run log, none for it.
+        report.live = Live(live_path(args.data, args.routine))
+    try:
+        return _run(args, report, clock)
+    finally:
+        # Removed on every path: done, failed, refused, unreachable, stopped or an exception.
+        if report.live is not None:
+            report.live.remove()
+
+
+def _run(args: argparse.Namespace, report: Report, clock) -> int:
+    """The run itself, its report written as today; the progress file is the caller's."""
     downloads = args.data / "routine" / "downloads"
     browser = None
     if not args.no_browser:

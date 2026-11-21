@@ -348,6 +348,14 @@ droplet keeps its profile for the next attempt.
 The alert comment carries the runner's own lines (step names, statuses, counts, URLs with
 league and player ids), never a page's content.
 
+While a routine runs past its window check it keeps `data/routine/live/<routine>.json` (FLOOR,
+#459): the run's start, the step under way and its start, and the steps so far in the run log's
+shape. It is rewritten after each step, and when one of the long steps begins (the exports, the
+refresh, the solves, a browser pass, the queue build, the digest's post and the comebacks'
+re-solve), and removed however the run ends. A dry run keeps none. A write that fails is a line
+on stderr in the journal, never a failed step. The watchdog and `alert.sh` read the run logs
+and the marker only, so they are unchanged.
+
 ## 8. Checks by hand
 
 ```bash
