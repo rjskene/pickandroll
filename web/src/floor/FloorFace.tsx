@@ -11,7 +11,7 @@ import { reducedMotion } from "../explain/useClock";
 import { AGENTS, bentClock, centralDate, timeline } from "./model";
 import type { Agent, Timeline } from "./model";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { livePoll, pastDays } from "./live";
+import { livePoll, weekQueueDays } from "./live";
 import { api as client } from "../api";
 import { PRIVATE, sampleRoster, sampleWeek } from "./sample";
 import { formatHash, termHash } from "../explain/nav";
@@ -111,13 +111,21 @@ export default function FloorFace({
   // The frame time, for the chewing and the spin: the Demo's clock, else the second; none when still.
   const frame = still ? 0 : control.demo ? clk.wall : now / 1000;
 
-  // Live: the week's run logs, the run in flight, and the queues of the week's days before today
-  // (read once each; today's is the page's own, polled with these).
+  // Live: the week's run logs, the run in flight, and the queue of every day of the Central week to
+  // today that the page's own queue (the NBA day, polled with these) does not cover.
   const today = centralDate(now);
   const live = useQuery({ queryKey: ["routine-live"], queryFn: client.routineLive, enabled: !control.demo, refetchInterval: (q) => livePoll(q.state.data, queue) });
   const runs = useQuery({ queryKey: ["routine-runs", today], queryFn: () => client.routineRuns(today, 7), enabled: !control.demo, refetchInterval: livePoll(live.data, queue) });
   const past = useQueries({
-    queries: pastDays(today).map((d) => ({ queryKey: ["queue-day", d], queryFn: () => client.queue(d), enabled: !control.demo, staleTime: 30 * 60_000, retry: false })),
+    // The Central today read here (23:00 to midnight, #468) keeps the floor's pace; earlier days once.
+    queries: weekQueueDays(today, queue?.date ?? null).map((d) => ({
+      queryKey: ["queue-day", d],
+      queryFn: () => client.queue(d),
+      enabled: !control.demo,
+      staleTime: d === today ? 0 : 30 * 60_000,
+      refetchInterval: d === today ? livePoll(live.data, queue) : false,
+      retry: false,
+    })),
     combine: (rs) => rs.map((r) => r.data),
   });
   const liveTl: Timeline = useMemo(
@@ -141,11 +149,13 @@ export default function FloorFace({
     // /seasons can take a while to answer: until it does, the day's queue names the leagues, the
     // private league first as the landing pins it.
     if (!seasons.length) {
-      const rows = (queue?.leagues ?? []).map((l) => ({ league: l.league, mine: l.status === "private", adds: null, budget: l.budget ?? null }));
+      // (the newest queue that names any: from 23:00 Central the page's is tomorrow's, still empty)
+      const named = [queue, ...[...past].reverse()].find((q) => q?.leagues.length);
+      const rows = (named?.leagues ?? []).map((l) => ({ league: l.league, mine: l.status === "private", adds: null, budget: l.budget ?? null }));
       return [...rows.filter((l) => l.mine), ...rows.filter((l) => !l.mine)];
     }
     return seasons.map((s) => ({ league: s.league, mine: !s.public, adds: s.adds ? { used: s.adds.used, limit: s.adds.limit } : null, budget: s.funds?.dollars ?? null }));
-  }, [control.demo, sample, seasons, queue, t]);
+  }, [control.demo, sample, seasons, queue, past, t]);
   const names = leagues.map((l) => l.league);
   const one = control.one && names.includes(control.one) ? control.one : null;
   const dayQueue = control.demo ? sample.w.queues.find((q) => q.date === centralDate(t)) : queue;
