@@ -10,18 +10,13 @@ import { AGENTS, BELT, SIGNS, centralDate, entryState, floorAt } from "./model.t
 import type { Agent, EntryState, FloorEntry, FloorRun, FloorStep, FloorUnit, Timeline } from "./model.ts";
 
 // ---------------------------------------------------------------- the geometry
+/** The narrowest scene, the mock-up's width; the scene widens with its box up to ``W_MAX`` (#470). */
 export const W = 1280;
+export const W_MAX = 2048;
 export const H = 612;
 export const HUB = { x: 262, y: 250 };
-/** The execute-time gate, where the belt ends and the lanes fan out. */
-export const GATE = { x: 850, y: 250 };
 export const BELT_Y = 250;
-export const DOCK_X = 1046;
-export const RACK_X = 888;
 export const RAIL_Y = 374;
-export const ROOM = { rest: 36, y: 526, line: 556, up: 540, over: 424, gx: 868, ledger: 552 };
-/** The x of the belt's rule ``k``. */
-export const gateX = (k: number) => 344 + k * 66;
 /** The stations of the Sources room: a pellet a report, a league or a read. */
 export const SITES = [
   { key: "bbm", name: "Basketball Monster", sub: "projections: five exports a day", x0: 56, px: (i: number) => 76 + i * 26 },
@@ -30,15 +25,85 @@ export const SITES = [
 ] as const;
 export type SiteKey = (typeof SITES)[number]["key"];
 
+/** The scene's width for a stage box: as wide as the box's shape at the scene's height, never
+ * under ``W`` (a narrower box scales the 1280 scene to its width) nor over ``W_MAX`` (a wider one
+ * centres it). Text keeps its size: the scene widens, it does not scale up. */
+export function sceneWidth(boxW: number, boxH: number): number {
+  if (!(boxW > 0 && boxH > 0)) return W;
+  return Math.min(W_MAX, Math.max(W, Math.round((H * boxW) / boxH)));
+}
+
+/** The geometry of a scene ``w`` wide (#470). The left column (the engine, the Solver's rail, the
+ * hub, the Sources room) keeps its x; the belt takes two thirds of the extra width, so its rules
+ * spread and the gate, the rack, the ledger and the road to the gate move right with it; the docks
+ * stay pinned to the right edge, so the lanes take the rest; the week strip and the stage captions
+ * span the width. At ``W`` it is the mock-up's geometry exactly. */
+export interface Layout {
+  w: number;
+  /** The execute-time gate, where the belt ends and the lanes fan out. */
+  gate: { x: number; y: number };
+  dockX: number;
+  rackX: number;
+  room: { rest: number; y: number; line: number; up: number; over: number; gx: number; ledger: number };
+  /** The x of the belt's rule ``k``. */
+  ruleX: (k: number) => number;
+  /** The week strip: day ``k``'s x and every day's width. */
+  dayX: (k: number) => number;
+  dayW: number;
+  /** The stage captions' x. */
+  flowX: (i: number) => number;
+  /** Where each stage's number sits on the floor. */
+  pins: [number, number][];
+  /** One league's card, the lane's end on it, the Mover's caption's right limit, the chips' bend. */
+  courtX: number;
+  laneOne: number;
+  subMax: number;
+  chipX: number;
+}
+
+export function layout(width: number = W): Layout {
+  const w = Math.min(W_MAX, Math.max(W, Math.round(width)));
+  const d = w - W;
+  const s = Math.round((d * 2) / 3);
+  const gate = { x: 850 + s, y: BELT_Y };
+  const step = (gate.x - 454) / 6;
+  const ruleX = (k: number) => 344 + k * step;
+  return {
+    w,
+    gate,
+    dockX: 1046 + d,
+    rackX: 888 + s,
+    room: { rest: 36, y: 526, line: 556, up: 540, over: 424, gx: 868 + s, ledger: 552 + s },
+    ruleX,
+    dayX: (k) => 14 + k * (179.3 + d / 7),
+    dayW: 172 + d / 7,
+    flowX: (i) => 20 + i * (141 + d / 7),
+    pins: [
+      [94, 445],
+      [192, RAIL_Y],
+      [HUB.x - 31, HUB.y - 29],
+      [ruleX(0) - 27, BELT_Y + 22],
+      [gate.x - 42, BELT_Y - 19],
+      [gate.x + 30, BELT_Y - 50],
+      [gate.x + 52, BELT_Y + 18],
+    ],
+    courtX: 1000 + d,
+    laneOne: 994 + d,
+    subMax: 1180 + d,
+    chipX: 650 + s,
+  };
+}
+
 /** The flow from the reads to the leagues: a caption a stage and where its number sits on the floor. */
-export const FLOW: { title: string; lines: [string, string, string]; at: [number, number] }[] = [
-  { title: "Reads", lines: ["Scout saves the exports and", "reads each league's pages. A", "read league's lamp is outlined."], at: [94, 445] },
-  { title: "Solve", lines: ["Each league is solved. The", "Solver carries the keep rule", "and season guard into each."], at: [192, RAIL_Y] },
-  { title: "Queue build", lines: ["The orchestrator reads the", "logged sets, never solves,", "and sizes each claim's bid."], at: [HUB.x - 31, HUB.y - 29] },
-  { title: "Rules", lines: ["Each entry meets the queue's", "rules in order. The first to", "fail holds it in the bay below."], at: [gateX(0) - 27, BELT_Y + 22] },
-  { title: "Veto window", lines: ["What passes is queued and", "waits. You can strike it or", "its bid until execute time."], at: [GATE.x - 42, BELT_Y - 19] },
-  { title: "Execute time", lines: ["A gate, not a trigger: the", "next pass after it (09:15,", "15:00, 22:40) takes it."], at: [GATE.x + 30, BELT_Y - 50] },
-  { title: "Out and back", lines: ["The Mover opens the add", "page, re-checks it, places", "the claim. Results fly back."], at: [GATE.x + 52, BELT_Y + 18] },
+/** (Where each number sits is the layout's ``pins``.) */
+export const FLOW: { title: string; lines: [string, string, string] }[] = [
+  { title: "Reads", lines: ["Scout saves the exports and", "reads each league's pages. A", "read league's lamp is outlined."] },
+  { title: "Solve", lines: ["Each league is solved. The", "Solver carries the keep rule", "and season guard into each."] },
+  { title: "Queue build", lines: ["The orchestrator reads the", "logged sets, never solves,", "and sizes each claim's bid."] },
+  { title: "Rules", lines: ["Each entry meets the queue's", "rules in order. The first to", "fail holds it in the bay below."] },
+  { title: "Veto window", lines: ["What passes is queued and", "waits. You can strike it or", "its bid until execute time."] },
+  { title: "Execute time", lines: ["A gate, not a trigger: the", "next pass after it (09:15,", "15:00, 22:40) takes it."] },
+  { title: "Out and back", lines: ["The Mover opens the add", "page, re-checks it, places", "the claim. Results fly back."] },
 ];
 
 /** The Explain step each stage's number opens (the hash Explain reads). */
@@ -77,10 +142,11 @@ const last = (name: string) => {
 };
 
 /** A lane out of the gate to a dock: a bezier from the gate to ``(x1, y)``. */
-export function lanePath(y: number, x1: number): string {
-  return `M${GATE.x},${GATE.y} C${GATE.x + 112},${GATE.y} ${x1 - 112},${y} ${x1},${y}`;
+export function lanePath(L: Layout, y: number, x1: number): string {
+  const g = L.gate;
+  return `M${g.x},${g.y} C${g.x + 112},${g.y} ${x1 - 112},${y} ${x1},${y}`;
 }
-const lanePoint = (y: number, x1: number, t: number) => ({ x: bez(GATE.x, GATE.x + 112, x1 - 112, x1, t), y: bez(GATE.y, GATE.y, y, y, t) });
+const lanePoint = (L: Layout, y: number, x1: number, t: number) => ({ x: bez(L.gate.x, L.gate.x + 112, x1 - 112, x1, t), y: bez(L.gate.y, L.gate.y, y, y, t) });
 
 // ---------------------------------------------------------------- the inputs
 export interface LeagueRow {
@@ -93,6 +159,8 @@ export interface LeagueRow {
 
 export interface SceneInput {
   tl: Timeline;
+  /** The scene's width (``sceneWidth`` of the stage's box); ``W`` when not given. */
+  w?: number;
   /** The moment, epoch milliseconds. */
   t: number;
   /** Seconds of play since an instant (the Demo's bent clock), or real seconds when live. */
@@ -157,6 +225,8 @@ export interface TokenView {
 }
 
 export interface Scene {
+  /** The geometry the scene was laid out on (#470). */
+  L: Layout;
   days: { date: string; label: string; on: boolean; tally: { claimed: number; held: number; failed: number; skipped: number }; pips: { title: string; state: PelletState }[] }[];
   lamps: { league: string; x: number; y: number; state: LampState; off: boolean }[];
   rail: PelletState[];
@@ -279,6 +349,7 @@ const RULE_TITLE: Record<string, string> = {
 /** The floor at ``t``. */
 export function sceneAt(i: SceneInput): Scene {
   const { tl, t, age, now, one } = i;
+  const L = layout(i.w ?? W);
   const f = floorAt(tl, t);
   const today = centralDate(t);
   const week = weekOf(t);
@@ -338,7 +409,7 @@ export function sceneAt(i: SceneInput): Scene {
     tag: r.tag as string,
     knob: "",
     title: RULE_TITLE[r.key],
-    x: gateX(k),
+    x: L.ruleX(k),
     up: k % 2 ? 60 : 34,
     open: 0,
     hot: false,
@@ -347,7 +418,7 @@ export function sceneAt(i: SceneInput): Scene {
   const knob = knobs(tl.rules, one, shownLeague?.adds ?? null);
   for (const g of gates) g.knob = knob[g.key] ?? "";
   const yOfLeague = (league: string) => (one ? (league === one ? BELT_Y : 578) : dockY(order.indexOf(league), n));
-  const laneX1 = one ? 994 : DOCK_X - 8;
+  const laneX1 = one ? L.laneOne : L.dockX - 8;
   const tokens: TokenView[] = [];
   const chips: Scene["chips"] = [];
   let waiting = 0;
@@ -363,7 +434,7 @@ export function sceneAt(i: SceneInput): Scene {
     .filter((e) => e.queued && entryState(e, t, pass, f.unit) === "queued")
     .sort((a, b) => (a.executesAt ?? 0) - (b.executesAt ?? 0) || order.indexOf(a.league) - order.indexOf(b.league))
     .forEach((e, k) => queuedAhead.set(e.id, k));
-  const mover = { x: RACK_X, y: rackY(RACK.indexOf("mover")) };
+  const mover = { x: L.rackX, y: rackY(RACK.indexOf("mover")) };
   for (const e of visible) {
     const s = entryState(e, t, pass, f.unit);
     const a = age(e.builtAt);
@@ -396,7 +467,7 @@ export function sceneAt(i: SceneInput): Scene {
       const key = `${e.date}|${h.rule}`;
       const j = (bays.get(key) ?? 0) + 1;
       bays.set(key, j);
-      const gxk = gateX(gk) - 10;
+      const gxk = L.ruleX(gk) - 10;
       const t1 = 0.3 + (gxk - HUB.x) / 620;
       const bayY = BELT_Y + 40 + (j - 1) * 36 + (gk % 2) * 16;
       x = lerp(HUB.x + 30, gxk, ease(a / t1));
@@ -407,7 +478,7 @@ export function sceneAt(i: SceneInput): Scene {
       label = a > t1 + 0.3 ? { x: x + 10, y: bayY + 17, anchor: "middle", text: last(e.addName), sub: one ? `gain +${(e.gain ?? 0).toFixed(2)}` : e.league, hot: false } : null;
     } else if (s === "queued" || s === "struck") {
       const ahead = queuedAhead.get(e.id) ?? 0;
-      x = lerp(HUB.x + 30, GATE.x - 20 - Math.min(ahead, 30) * 15, ease(a / 1.1));
+      x = lerp(HUB.x + 30, L.gate.x - 20 - Math.min(ahead, 30) * 15, ease(a / 1.1));
       waiting++;
       firstQueued = firstQueued ?? e;
       if (a < 1.1) {
@@ -421,7 +492,7 @@ export function sceneAt(i: SceneInput): Scene {
       y = mover.y - 21;
       k = 0.85;
       if (u && p < 0.12) {
-        x = lerp(GATE.x - 20, mover.x + 1, p / 0.12);
+        x = lerp(L.gate.x - 20, mover.x + 1, p / 0.12);
         y = lerp(BELT_Y, mover.y - 21, p / 0.12);
       }
     } else show = false;
@@ -435,7 +506,7 @@ export function sceneAt(i: SceneInput): Scene {
         const u = 1 - q;
         const x0 = laneX1 + 6;
         const y0 = yOfLeague(e.league);
-        chips.push({ x: u * u * x0 + 2 * u * q * 650 + q * q * HUB.x, y: u * u * y0 + 2 * u * q * 132 + q * q * (HUB.y - 30), outcome: outcomeCls(e.outcome) });
+        chips.push({ x: u * u * x0 + 2 * u * q * L.chipX + q * q * HUB.x, y: u * u * y0 + 2 * u * q * 132 + q * q * (HUB.y - 30), outcome: outcomeCls(e.outcome) });
       }
     }
   }
@@ -489,14 +560,14 @@ export function sceneAt(i: SceneInput): Scene {
   // The rack: an agent at work rides the lane of the league it works on.
   let moving: { u: FloorUnit; p: number; y: number } | null = null;
   const agents = RACK.map((r, k) => {
-    let x = RACK_X;
+    let x = L.rackX;
     let y = rackY(k);
     const on = role === r && !!working;
     if (on && f.unit) {
       const u = f.unit;
       const ly = yOfLeague(u.league ?? "");
       const p = clamp((t - u.start) / (u.end - u.start || 1));
-      const q = st?.name === "moves" ? lanePoint(ly, laneX1, ease(clamp((p - 0.12) / 0.66))) : lanePoint(ly, laneX1, ease(Math.min(1, p * 1.3)));
+      const q = st?.name === "moves" ? lanePoint(L, ly, laneX1, ease(clamp((p - 0.12) / 0.66))) : lanePoint(L, ly, laneX1, ease(Math.min(1, p * 1.3)));
       x = q.x;
       y = q.y;
       if (st?.name === "moves") moving = { u, p, y: ly };
@@ -509,12 +580,12 @@ export function sceneAt(i: SceneInput): Scene {
   const mv = moving as { u: FloorUnit; p: number; y: number } | null;
   const steps3 = mv
     ? [0.3, 0.56, 0.82].map((q) => {
-        const pt = lanePoint(mv.y, laneX1, q);
+        const pt = lanePoint(L, mv.y, laneX1, q);
         return { x: pt.x, y: pt.y, done: ease(clamp((mv.p - 0.12) / 0.66)) > q - 0.03 };
       })
     : [];
   const moverNow = agents.find((a) => a.role === "mover");
-  const sub = mv && moverNow ? { x: clamp(moverNow.x, GATE.x + 40, 1180), y: moverNow.y + 28, text: `${SUBS[Math.min(2, Math.floor(mv.p * 3))]}…` } : null;
+  const sub = mv && moverNow ? { x: clamp(moverNow.x, L.gate.x + 40, L.subMax), y: moverNow.y + 28, text: `${SUBS[Math.min(2, Math.floor(mv.p * 3))]}…` } : null;
 
   // The stage of the flow in play.
   let stage = 0;
@@ -563,6 +634,7 @@ export function sceneAt(i: SceneInput): Scene {
   }
 
   return {
+    L,
     days,
     lamps,
     rail,
@@ -577,7 +649,7 @@ export function sceneAt(i: SceneInput): Scene {
     tokens,
     chips,
     agents,
-    scout: scoutAt(f.run, st, t, age, now, order, one),
+    scout: scoutAt(L, f.run, st, t, age, now, order, one),
     steps3,
     sub,
     ledger: ledgerAt(tl, t, one),
@@ -634,7 +706,8 @@ export function ledgerAt(tl: Timeline, t: number, one: string | null): Scene["le
 }
 
 /** The Scout in the Sources room: along the stations while it reads, at its post otherwise. */
-function scoutAt(run: FloorRun | null, st: FloorStep | null, t: number, age: SceneInput["age"], now: number, order: string[], one: string | null): Scene["scout"] {
+function scoutAt(L: Layout, run: FloorRun | null, st: FloorStep | null, t: number, age: SceneInput["age"], now: number, order: string[], one: string | null): Scene["scout"] {
+  const ROOM = L.room;
   const yx = (league: string | null) => SITES[2].px(Math.max(0, order.indexOf(league ?? "")));
   const bbmEnd = SITES[0].px(4) + 8;
   const yc = SITES[2].px(Math.max(0, order.length - 1) / 2);
@@ -695,7 +768,7 @@ function scoutAt(run: FloorRun | null, st: FloorStep | null, t: number, age: Sce
         const fx = yx(u.league);
         const pts: [number, number][] =
           s.cast.to === "gate"
-            ? [[fx, ROOM.y], [fx, ROOM.line], [ROOM.up, ROOM.line], [ROOM.up, ROOM.over], [ROOM.gx, ROOM.over], [ROOM.gx, 296], [GATE.x - 5, 296], [GATE.x - 5, BELT_Y + 12]]
+            ? [[fx, ROOM.y], [fx, ROOM.line], [ROOM.up, ROOM.line], [ROOM.up, ROOM.over], [ROOM.gx, ROOM.over], [ROOM.gx, 296], [L.gate.x - 5, 296], [L.gate.x - 5, BELT_Y + 12]]
             : [[fx, ROOM.y], [fx, ROOM.line], [10, ROOM.line], [10, 250], [20, 250]];
         pulses.push(walk(pts, ease(q) * pathLength(pts)));
       }

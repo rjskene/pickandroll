@@ -3,7 +3,7 @@
 import type { KeyboardEvent, ReactNode } from "react";
 import { AGENTS, BELT, SIGNS } from "./model";
 import type { Agent } from "./model";
-import { BELT_Y, DOCK_X, FLOW, FLOW_TERMS, GATE, H, HUB, RACK, RACK_X, RAIL_Y, ROOM, SITES, W, lanePath, rackY } from "./scene";
+import { BELT_Y, FLOW, FLOW_TERMS, H, HUB, RACK, RAIL_Y, SITES, lanePath, rackY } from "./scene";
 import type { Scene, SiteKey } from "./scene";
 
 export interface StageHandlers {
@@ -104,8 +104,11 @@ function Boom({ x, y, h, open }: { x: number; y: number; h: number; open: number
 }
 
 export default function FloorStage({ s, one, h }: { s: Scene; one: string | null; h: StageHandlers }) {
+  // The scene's own geometry (#470): as wide as the stage's box allows, centred past the cap.
+  const L = s.L;
+  const { gate: GATE, room: ROOM, dockX: DOCK_X, rackX: RACK_X } = L;
   return (
-    <svg className="fl-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMinYMin meet" role="img" aria-label="The floor: the agents at work, from the reads to the execute time and out">
+    <svg className="fl-svg" viewBox={`0 0 ${L.w} ${H}`} preserveAspectRatio="xMidYMin meet" role="img" aria-label="The floor: the agents at work, from the reads to the execute time and out">
       <defs>
         <pattern id="fl-hz" width={5} height={5} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width={5} height={5} className="fl-hz-a" />
@@ -114,12 +117,12 @@ export default function FloorStage({ s, one, h }: { s: Scene; one: string | null
       </defs>
       {/* the week strip */}
       {s.days.map((d, k) => (
-        <Act key={d.date} onAct={() => h.onDay(d.date)} label={`${d.label}: the day`} className={`fl-day${d.on ? " on" : ""}`} transform={`translate(${14 + k * 179.3},4)`}>
-          <rect width={172} height={50} rx={8} />
+        <Act key={d.date} onAct={() => h.onDay(d.date)} label={`${d.label}: the day`} className={`fl-day${d.on ? " on" : ""}`} transform={`translate(${L.dayX(k)},4)`}>
+          <rect width={L.dayW} height={50} rx={8} />
           <text x={10} y={19} className="d fl-daytitle">
             {d.label}
           </text>
-          <text x={163} y={19} textAnchor="end" className="fl-tally">
+          <text x={L.dayW - 9} y={19} textAnchor="end" className="fl-tally">
             {d.tally.claimed + d.tally.held + d.tally.failed + d.tally.skipped > 0 && (
               <>
                 <tspan className="g">✓ {d.tally.claimed}</tspan>
@@ -138,7 +141,7 @@ export default function FloorStage({ s, one, h }: { s: Scene; one: string | null
       {/* the flow: a caption a stage, its number on the floor */}
       {FLOW.map((f, i) => {
         const on = s.stage === i + 1;
-        const x = 20 + i * 141;
+        const x = L.flowX(i);
         return (
           <g key={f.title} className={`fl-flow${on ? " on" : ""}`}>
             <Act onAct={() => h.onStage(i)} label={`${i + 1} · ${f.title}: open its step in Explain`}>
@@ -247,8 +250,8 @@ export default function FloorStage({ s, one, h }: { s: Scene; one: string | null
       {/* the lanes out to the leagues */}
       {s.lanes.map((l) => (
         <g key={l.key}>
-          <path d={lanePath(l.y, l.x1)} className="fl-lane" />
-          <path d={lanePath(l.y, l.x1)} className={`fl-lanehot${l.color ? ` c-${l.color}` : ""}`} opacity={l.hot} />
+          <path d={lanePath(L, l.y, l.x1)} className="fl-lane" />
+          <path d={lanePath(L, l.y, l.x1)} className={`fl-lanehot${l.color ? ` c-${l.color}` : ""}`} opacity={l.hot} />
         </g>
       ))}
       {s.docks.map((d) => (
@@ -271,24 +274,24 @@ export default function FloorStage({ s, one, h }: { s: Scene; one: string | null
       {s.court && (
         <>
           <Act onAct={() => h.onDock(s.court!.league)} label={`${s.court.league}: open its page`} className={`fl-court${s.court.mine ? " mine" : ""}`}>
-            <rect x={1000} y={78} width={266} height={440} rx={10} className="fl-box" />
-            <text x={1012} y={106} className="d fl-courtid">
+            <rect x={L.courtX} y={78} width={266} height={440} rx={10} className="fl-box" />
+            <text x={L.courtX + 12} y={106} className="d fl-courtid">
               {s.court.league}
             </text>
-            <text x={1012} y={122} className="fl-sub">
+            <text x={L.courtX + 12} y={122} className="fl-sub">
               {s.court.sub}
             </text>
-            <text x={1012} y={140} className={`fl-dockres fl-res ${s.court.cls}`}>
+            <text x={L.courtX + 12} y={140} className={`fl-dockres fl-res ${s.court.cls}`}>
               {s.court.res}
             </text>
             {s.court.tiles.length === 0 && (
-              <text x={1012} y={170} className="fl-knob">
+              <text x={L.courtX + 12} y={170} className="fl-knob">
                 reading the roster…
               </text>
             )}
           </Act>
           {s.court.tiles.slice(0, 16).map((tile, k) => (
-            <g key={k} className={`fl-tile${tile.name ? "" : " open"}${tile.state ? ` ${tile.state}` : ""}`} transform={`translate(${1010 + (k < 8 ? 0 : 126)},${152 + (k % 8) * 45})`}>
+            <g key={k} className={`fl-tile${tile.name ? "" : " open"}${tile.state ? ` ${tile.state}` : ""}`} transform={`translate(${L.courtX + 10 + (k < 8 ? 0 : 126)},${152 + (k % 8) * 45})`}>
               <rect width={120} height={38} rx={6} />
               <text x={8} y={14} className="fl-slot">
                 {tile.slot}
@@ -298,7 +301,7 @@ export default function FloorStage({ s, one, h }: { s: Scene; one: string | null
               </text>
             </g>
           ))}
-          <Act onAct={h.onAll} label="The other leagues: back to all" className="fl-dock" transform="translate(1000,556)">
+          <Act onAct={h.onAll} label="The other leagues: back to all" className="fl-dock" transform={`translate(${L.courtX},556)`}>
             <rect className="card" width={266} height={44} rx={8} />
             <text x={12} y={19} className="d fl-dockid muted">
               The other leagues
@@ -421,7 +424,7 @@ export default function FloorStage({ s, one, h }: { s: Scene; one: string | null
       )}
       {/* the stage's number pinned on the floor where it happens */}
       {FLOW.map((f, i) => (
-        <g key={f.title} className={`fl-flow fl-pin${s.stage === i + 1 ? " on" : ""}`} transform={`translate(${f.at[0]},${f.at[1]})`}>
+        <g key={f.title} className={`fl-flow fl-pin${s.stage === i + 1 ? " on" : ""}`} transform={`translate(${L.pins[i][0]},${L.pins[i][1]})`}>
           <circle r={8} />
           <text y={3.6} textAnchor="middle" className="n">
             {i + 1}

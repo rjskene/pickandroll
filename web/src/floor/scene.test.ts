@@ -6,9 +6,10 @@ import { formatHash, parseHash } from "../explain/nav.ts";
 import { TRACKS } from "../explain/tracks/index.ts";
 import { floorAt, timeline } from "./model.ts";
 import { PRIVATE, PUBLIC, sampleRoster, sampleWeek } from "./sample.ts";
-import { FLOW, FLOW_EXPLAIN, knobs, ledgerAt, rosterAt, sceneAt, type LeagueRow } from "./scene.ts";
+import { BELT_Y, FLOW, FLOW_EXPLAIN, H, HUB, RAIL_Y, SITES, W, W_MAX, knobs, layout, ledgerAt, rosterAt, sceneAt, sceneWidth, type LeagueRow } from "./scene.ts";
 
 const w = sampleWeek();
+const w0 = w;
 const tl = timeline({ runs: w.runs, queues: w.queues, seasons: w.seasons, now: w.liveAt });
 const leagues: LeagueRow[] = w.seasons.map((s) => ({ league: s.league, mine: s.league === PRIVATE, adds: { used: 1, limit: 4 }, budget: s.league === PRIVATE ? null : 80 }));
 const at = (t: number, one: string | null = null) =>
@@ -92,4 +93,76 @@ test("the ledger: the seven latest results and holds by the moment, newest first
   assert.ok(one.length > 0 && one.every((r) => r.text.includes(PUBLIC[0])));
   // nothing from after the moment
   assert.ok(!ledgerAt(tl, w.demoAt, null).some((r) => r.at.startsWith("Fri")));
+});
+
+test("the layout at 1280 is the mock-up's geometry exactly (#470)", () => {
+  const L = layout(1280);
+  assert.equal(L.w, 1280);
+  assert.deepEqual(L.gate, { x: 850, y: 250 });
+  assert.equal(L.dockX, 1046);
+  assert.equal(L.rackX, 888);
+  assert.deepEqual(L.room, { rest: 36, y: 526, line: 556, up: 540, over: 424, gx: 868, ledger: 552 });
+  for (let k = 0; k < 7; k++) {
+    assert.equal(L.ruleX(k), 344 + k * 66);
+    assert.equal(L.dayX(k), 14 + k * 179.3);
+    assert.equal(L.flowX(k), 20 + k * 141);
+  }
+  assert.equal(L.dayW, 172);
+  assert.deepEqual(L.pins, [[94, 445], [192, 374], [231, 221], [317, 272], [808, 231], [880, 200], [902, 268]]);
+  assert.deepEqual([L.courtX, L.laneOne, L.subMax, L.chipX], [1000, 994, 1180, 650]);
+  assert.deepEqual([W, H, HUB, BELT_Y, RAIL_Y], [1280, 612, { x: 262, y: 250 }, 250, 374]);
+  // and below 1280 the scene stays 1280 (it scales to a narrower box), above the cap it stops
+  assert.equal(layout(900).w, 1280);
+  assert.equal(layout(3000).w, W_MAX);
+});
+
+test("wider, the belt stretches, the docks stay pinned right and nothing leaves the drawing (#470)", () => {
+  const base = layout(1280);
+  for (const w of [1600, 2000]) {
+    const L = layout(w);
+    assert.equal(L.w, w);
+    // the docks' and the card's right margin is unchanged
+    assert.equal(L.w - (L.dockX + 220), 1280 - (base.dockX + 220));
+    assert.equal(L.w - (L.courtX + 266), 1280 - (base.courtX + 266));
+    // the week strip spans the width, at the same margins
+    assert.equal(L.dayX(0), 14);
+    assert.ok(Math.abs(L.w - (L.dayX(6) + L.dayW) - (1280 - (base.dayX(6) + base.dayW))) < 1e-9);
+    // every box inside [0, w]
+    for (const x of [L.gate.x, L.rackX, L.room.gx, L.room.ledger + 300, L.dockX + 220, L.courtX + 266, L.subMax, L.flowX(6) + 141, ...L.pins.map((p) => p[0])]) {
+      assert.ok(x > 0 && x <= L.w, `${w}: ${x}`);
+    }
+    // the rules spread, never closer than at 1280, and the gate stands clear of the last one
+    for (let k = 1; k < 7; k++) assert.ok(L.ruleX(k) - L.ruleX(k - 1) >= 66);
+    assert.ok(L.gate.x - L.ruleX(6) >= base.gate.x - base.ruleX(6));
+    // the gate, the rack and the ledger move with the belt; the lanes keep room to the docks
+    assert.ok(L.gate.x > base.gate.x && L.rackX - L.gate.x === base.rackX - base.gate.x);
+    assert.ok(L.dockX - L.gate.x >= base.dockX - base.gate.x);
+    assert.ok(L.room.ledger + 300 < L.dockX);
+    // the left column is unmoved
+    assert.equal(L.ruleX(0), base.ruleX(0));
+    assert.deepEqual(L.pins.slice(0, 4), base.pins.slice(0, 4));
+    assert.deepEqual([L.room.rest, L.room.y, L.room.line, L.room.up, L.room.over], [36, 526, 556, 540, 424]);
+    assert.deepEqual(SITES.map((x) => x.x0), [56, 232, 374]);
+  }
+});
+
+test("the scene's width follows the stage box: never under 1280, capped at 2048 (#470)", () => {
+  assert.equal(sceneWidth(1000, 700), 1280);
+  assert.equal(sceneWidth(1952, 700), Math.round((612 * 1952) / 700));
+  assert.equal(sceneWidth(4000, 600), W_MAX);
+  assert.equal(sceneWidth(0, 0), 1280);
+});
+
+test("a wide scene keeps the agents and entries on the drawing: the lanes end at the pinned docks (#470)", () => {
+  for (const w of [1600, 2000]) {
+    const t = w === 1600 ? w0.liveAt : w0.demoAt;
+    const s = sceneAt({ tl, t, age: (x) => (t - x) / 1000, now: 0, leagues, one: null, w, executeTime: "09:15" });
+    assert.equal(s.L.w, w);
+    assert.ok(s.lanes.every((l) => l.x1 === s.L.dockX - 8));
+    for (const p of [...s.tokens, ...s.agents, ...s.chips, ...s.steps3]) assert.ok(p.x >= 0 && p.x <= w, `${w}: ${p.x}`);
+    assert.ok(s.gates.every((g, k) => g.x === s.L.ruleX(k)));
+  }
+  const one = sceneAt({ tl, t: w0.liveAt, age: (x) => (w0.liveAt - x) / 1000, now: 0, leagues, one: PUBLIC[5], w: 2000, executeTime: "09:15", roster: sampleRoster(PUBLIC[5]), claims: true });
+  assert.ok(one.tokens.every((p) => p.x <= 2000));
+  assert.equal(one.L.courtX + 266, 2000 - 14);
 });

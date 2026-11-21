@@ -17,7 +17,7 @@ import { PRIVATE, sampleRoster, sampleWeek } from "./sample";
 import { formatHash, termHash } from "../explain/nav";
 import { TRACKS } from "../explain/tracks/index.ts";
 import FloorStage from "./FloorStage";
-import { FLOW_EXPLAIN, clockText, dayLabel, sceneAt, weekOf } from "./scene";
+import { FLOW_EXPLAIN, W, clockText, dayLabel, sceneAt, sceneWidth, weekOf } from "./scene";
 import type { LeagueRow } from "./scene";
 
 export interface FloorControl {
@@ -41,6 +41,20 @@ function useSample() {
     const tl = timeline({ runs: w.runs, queues: w.queues, seasons: w.seasons, now: w.liveAt });
     return { w, tl, clock: bentClock(tl) };
   }, []);
+}
+
+/** The scene's width for the stage's content box (#470), kept as the box resizes. */
+function useSceneWidth(): [RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [w, setW] = useState(W);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => setW(sceneWidth(e.contentRect.width, e.contentRect.height)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w];
 }
 
 /** The Demo's clock: wall seconds on requestAnimationFrame at a speed; still under reduced motion. */
@@ -103,6 +117,7 @@ export default function FloorFace({
   api: RefObject<FloorApi | null>;
 }) {
   const sample = useSample();
+  const [stageRef, sceneW] = useSceneWidth();
   // Under reduced motion the Demo is a still frame: the live moment, Friday mid-claim.
   const still = useMemo(reducedMotion, []);
   const demoStart = sample.clock.toWall(still ? sample.w.liveAt : sample.w.demoAt);
@@ -165,7 +180,7 @@ export default function FloorFace({
     () => (!one ? null : control.demo ? sampleRoster(one) : (season.data?.roster.map((r) => ({ slot: r.slot, name: r.player.name })) ?? null)),
     [one, control.demo, season.data],
   );
-  const scene = sceneAt({ tl, t, age, now: frame, leagues, one, executeTime: dayQueue?.settings.in_force ?? "--:--", roster, claims: control.demo });
+  const scene = sceneAt({ tl, t, age, now: frame, leagues, one, w: sceneW, executeTime: dayQueue?.settings.in_force ?? "--:--", roster, claims: control.demo });
 
   const startDemo = (date?: string) => {
     const at = date ? sample.w.runs.by_day.find((d) => d.date === date)?.runs[still ? "morning" : "signin"]?.started_at : null;
@@ -288,7 +303,7 @@ export default function FloorFace({
         </span>
         <span className="dim">a dock opens its league · the hub the Queue · the ledger History · a stage's number its step in Explain, its title or a name the glossary</span>
       </div>
-      <div className="fl-stage">
+      <div className="fl-stage" ref={stageRef}>
         <FloorStage
           s={scene}
           one={one}
