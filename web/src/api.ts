@@ -1624,6 +1624,9 @@ export interface QueuePayload {
     sunday_at: string | null;
     sunday_by: string | null;
     in_force: string;
+    /** The values each league's gates read (FLOOR, #458), by league, for each row of the day's
+     * build; empty before one, absent from a server before it. */
+    rules?: Record<string, QueueRules>;
   };
   stop: boolean;
   now: string;
@@ -1639,6 +1642,79 @@ export interface QueuePayload {
   last_pass?: RoutinePass | null;
   /** Each league's latest Start Active run of the day (#215); absent from a server before it. */
   start_active?: Record<string, StartActiveRunLog>;
+}
+
+/** A league's queue gates as the build read them (#458): the noise floor and the day's cap from
+ * its row, the add reserve's and the re-cut rule's knobs as the solve reads them. A null price is
+ * the typical gain at solve time. */
+export interface QueueRules {
+  noise_floor: QueueFloor | null;
+  daily_cap: { value: number | null; from: "the user" | "the knob" | null };
+  reserve_adds: number;
+  reserve_release: string;
+  reserve_price: number | null;
+  reserve_price_from: "typical" | "the knob";
+  recut_days: number;
+}
+
+// ---------------------------------------------------------------- the routines' runs (#458)
+/** A step of a routine's run log, as ``scripts/routine.py`` writes it. */
+export interface RoutineStepLog {
+  name: string;
+  status: "ok" | "failed" | "skipped";
+  detail: string;
+  started?: string;
+  finished?: string;
+  data?: Record<string, unknown>;
+}
+
+/** A routine's run log, ``data/routine/runs/<day>-<routine>.json``. */
+export interface RoutineRunLog {
+  routine: string;
+  started_at: string;
+  finished_at: string | null;
+  refused: string | null;
+  stopped: boolean;
+  steps: RoutineStepLog[];
+  alerts: string[];
+  exports: Record<string, string>;
+  failed: boolean;
+  opened?: string[];
+}
+
+/** ``GET /routine/runs``: the run logs of a window of days, oldest day first; a file that does
+ * not read is listed under its day's ``unread``. */
+export interface RoutineRunsPayload {
+  date: string;
+  days: number;
+  by_day: {
+    date: string;
+    runs: Record<string, RoutineRunLog>;
+    unread: { routine: string; file: string; reason: string }[];
+  }[];
+}
+
+/** A run's live progress file (#459): the step under way is named when it said so, else null
+ * with the step it follows, since that one finished. */
+export interface RoutineProgress {
+  routine: string;
+  started_at: string;
+  written_at: string | null;
+  current: { name: string | null; after: string | null; started: string };
+  steps: RoutineStepLog[];
+}
+
+/** ``GET /routine/live``: each live progress file, stale an hour after its last write. */
+export interface RoutineLivePayload {
+  now: string;
+  live: {
+    routine: string;
+    file: string;
+    written_at: string;
+    stale: boolean;
+    progress: RoutineProgress | null;
+    reason: string | null;
+  }[];
 }
 
 /** A routine's execute pass as the record keeps it (#201): the leagues done of those it named (in
@@ -3093,6 +3169,11 @@ export const api = {
   removePlayerPick: (player: number) => request<PicksPayload>(`/autopilot/picks/${player}`, { method: "DELETE" }),
   /** A day's queue of the moves executor (#171), today's by default; reads only. */
   queue: (date?: string) => request<QueuePayload>(`/autopilot/queue${date ? `?date=${date}` : ""}`),
+  /** The routines' run logs of ``days`` days up to ``date`` (#458), as written; reads only. */
+  routineRuns: (date?: string, days = 1) =>
+    request<RoutineRunsPayload>(`/routine/runs?days=${days}${date ? `&date=${date}` : ""}`),
+  /** The routines' live progress files (#458), stale after an hour; reads only. */
+  routineLive: () => request<RoutineLivePayload>("/routine/live"),
   history: () => request<HistoryPayload>("/history"),
   /** The user's veto: strike a queue entry, or its bid alone, or undo either. */
   strike: (id: string, body: { bid_only?: boolean; undo?: boolean }) =>
