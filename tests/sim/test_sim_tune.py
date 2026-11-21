@@ -99,6 +99,19 @@ def test_the_order_is_the_screen_s_survivors_strongest_first_by_difference_over_
         tn.order_of(screen_of(screened("pool", "pool-45", 0.1, 0.4, survives=False)), None)
 
 
+def test_a_lever_s_strength_is_its_strongest_cell_s_not_its_weakest():
+    """A row's strength is the largest of its cells' difference over SE: a row of two cells,
+    one strong and one weak, goes before a lever whose one cell lies between them (by the
+    weakest cell it would go after)."""
+    two = screened("min_gain", "min_gain-double", 1.0, 0.1)
+    two["result"]["cells"]["2023"] = {"prior": {"difference": {M: {"mean": 0.1, "se": 0.1}}}}
+    screen = screen_of(two, screened("daily_cap", "daily_cap-minus", 0.5, 0.1))
+    order = tn.order_of(screen, None)
+    assert [o["lever"] for o in order] == ["min_gain", "daily_cap"]
+    assert order[0]["strength"] == pytest.approx(10.0)
+    assert order[1]["strength"] == pytest.approx(5.0)
+
+
 def test_levers_named_by_hand_take_the_screen_s_order_or_the_list_s():
     screen = screen_of(
         screened("pool", "pool-45", 0.1, 0.4, survives=False),
@@ -719,6 +732,20 @@ def test_a_noisy_larger_mean_is_passed_over_for_the_surer_value_and_the_step_say
         {"lever": "pool", "from": 30, "values": [values[0], lone], "choice": unsure}
     )
     assert "passed over" not in words and words.endswith("the best of the values that clear")
+
+
+def test_a_taken_value_names_no_dependence_though_another_value_s_cells_flip():
+    """``depends`` names the values whose cells flip only when the lever stays: a step that
+    takes one value while another's cells flip between the seasons moves, its ``depends`` is
+    empty, and the flipping value's standing still says what it depends on."""
+    taken = {(2023, "prior"): [1.0, 2.0, 1.0, 2.0], (2024, "prior"): [1.0, 2.0, 1.0, 2.0]}
+    flips = {(2023, "prior"): [3.0, 3.0, 4.0, 4.0], (2024, "prior"): [-1.0, -1.0, 0.0, 0.0]}
+    values = [value("pool-45", taken, 45), value("pool-45-again", flips, 60)]
+    assert values[1]["result"]["signs"] == tn.FLIPS
+    choice = tn.choose(values)
+    assert choice["key"] == "pool-45" and choice["passed"] == []
+    assert choice["depends"] == []
+    assert choice["standings"] == {"pool-45": tn.TAKEN, "pool-45-again": tn.DEPENDS_SEASON}
 
 
 def test_a_lever_whose_values_do_not_count_or_clear_stays_and_says_why():

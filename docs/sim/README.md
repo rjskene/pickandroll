@@ -2920,9 +2920,13 @@ when its folder is started, and no flag lets a caller pick after seeing a figure
 - **A value's difference** is the mean over those cells of the paired difference B less A on the
   measure the league's standings count (matchup wins in a one-win league and in a points league,
   category wins where every category is a result). Its SE is over the paths: a path shares its
-  seat and its draws across the cells, so a path's figure is the mean over its cells. The record
-  keeps every outcome for every pair (category wins, matchup wins, rank, playoff odds, title)
-  and both arms' mechanism counts.
+  seat and its draws across the cells, so a path's figure is the mean over its cells. A path the
+  audit voided is set aside in its cell: a cell's mean is over the paths that stand in it, and
+  the SE is over the paths that stand in every cell read (`whole_paths` in the record). The
+  value's line says how many paths were voided, and the step still chooses: unlike the
+  confirmation, the search neither stops nor withholds on a voided path, and the command's exit
+  code says the audit voided one. The record keeps every outcome for every pair (category wins,
+  matchup wins, rank, playoff odds, title) and both arms' mechanism counts.
 - **The sign rule.** A value counts only when its difference is above zero in **every** cell. A
   value that helps in one season and hurts in another does not count however large its mean, and
   the step says so: "depends on the season" ("depends on the forecaster" when it is one season's
