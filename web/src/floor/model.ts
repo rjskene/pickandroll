@@ -523,7 +523,14 @@ export function floorAt(tl: Timeline, t: number): FloorNow {
   const run = tl.runs.find((r) => within(t, r.start, r.state === "running" ? null : r.end)) ?? null;
   const pass = tl.passes.find((p) => within(t, p.start, p.end)) ?? null;
   if (!run) return { run: null, step: null, unit: null, pass, next: nextTimer(t) };
-  const step = run.steps.find((s) => within(t, s.start, s.end)) ?? run.steps[run.steps.length - 1] ?? null;
+  let step = run.steps.find((s) => within(t, s.start, s.end)) ?? run.steps[run.steps.length - 1] ?? null;
+  // A step the run has not named (its live file says only what it follows) is the pass's own when
+  // a pass is under way: the moves step's Mover, the lineup step's Setter.
+  if (step && step.status === "running" && step.name === null && pass && pass.end === null) {
+    const name = pass.kind === "moves" ? "moves" : "lineup";
+    const done = pass.entries?.total ? ` · entry ${Math.min(pass.entries.done + 1, pass.entries.total)} of ${pass.entries.total}` : "";
+    step = { ...step, name, cast: castOf(name), detail: `${name} under way${done}` };
+  }
   const unit = step?.units.find((u) => t >= u.start && t < u.end) ?? null;
   return { run, step, unit, pass, next: null };
 }

@@ -739,7 +739,8 @@ function nowPanel(f: ReturnType<typeof floorAt>, t: number, tl: Timeline): NowPa
   const r = f.run;
   const s = f.step;
   const agent = s.cast.agent;
-  const steps = r.steps.map((x) => ({
+  // The step under way as floorAt reads it (an unnamed step under a pass is the pass's).
+  const steps = r.steps.map((y) => (y.status === "running" && y.start === s.start ? s : y)).map((x) => ({
     name: x.name ?? `after ${x.after ?? "the start"}`,
     agent: x.cast.agent,
     state: (x.status === "running" ? "running" : t < x.start ? "todo" : x.status === "skipped" ? "skipped" : x.end === null || t < x.end ? "doing" : "done") as PelletState | "running",

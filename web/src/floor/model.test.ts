@@ -393,3 +393,55 @@ test("a held entry stands from its own solve (the decision stamp, UTC), else fro
   // before its evening solve the entry is not on the floor yet
   assert.equal(entryState(tl.entries[0], Date.parse("2026-11-20T12:00:00Z")), "unbuilt");
 });
+
+test("mid-run and mid-pass together: the step the live file has not named is the pass's, its Mover at work (#462)", () => {
+  const live: RoutineLivePayload = {
+    now: "2026-11-21T04:40:45Z",
+    live: [
+      {
+        routine: "evening-pass",
+        file: "evening-pass.json",
+        written_at: "2026-11-21T04:40:38Z",
+        stale: false,
+        reason: null,
+        progress: {
+          routine: "evening-pass",
+          started_at: "2026-11-21T04:40:11Z",
+          written_at: "2026-11-21T04:40:38Z",
+          current: { name: null, after: "due", started: "2026-11-21T04:40:38Z" },
+          steps: [
+            { name: "api", status: "ok", detail: "200", started: "2026-11-21T04:40:11Z", finished: "2026-11-21T04:40:14Z" },
+            { name: "due", status: "ok", detail: "1 entry due", started: "2026-11-21T04:40:35Z", finished: "2026-11-21T04:40:38Z" },
+          ],
+        },
+      },
+    ],
+  };
+  const active = {
+    id: "2026-11-20:moves:2",
+    kind: "moves" as const,
+    trigger: "routine_evening" as const,
+    started: "2026-11-21T04:40:38Z",
+    updated: "2026-11-21T04:40:44Z",
+    ended: null,
+    end: null,
+    leagues: { done: 0, total: 1, order: ["900101"] },
+    entries: { done: 0, total: 1 },
+    current: { league: "900101", entry: "e", since: "2026-11-21T04:40:40Z" },
+    results: {},
+    summary: null,
+  };
+  const t = Date.parse("2026-11-21T04:40:45Z");
+  const e = entry({ id: "e", date: "2026-11-20", queued_at: "2026-11-21T03:20:08Z", executes_at: "2026-11-21T04:20:08Z" });
+  const tl = timeline({ live, queues: [queue([e], { active })], now: t });
+  const f = floorAt(tl, t);
+  assert.equal(f.run?.state, "running");
+  assert.equal(f.step?.name, "moves");
+  assert.equal(f.step?.cast.agent, "mover");
+  assert.match(f.step?.detail ?? "", /entry 1 of 1/);
+  assert.equal(entryState(tl.entries[0], t, f.pass, f.unit), "doing");
+  // with no pass under way the unnamed step stays the orchestrator's
+  const bare = floorAt(timeline({ live, now: t }), t);
+  assert.equal(bare.step?.name, null);
+  assert.equal(bare.step?.cast.agent, "orchestrator");
+});

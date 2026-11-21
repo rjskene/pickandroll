@@ -67,3 +67,18 @@ test("the floor's names and stage titles each open a glossary term by its hash (
   // a term hash is no place: Explain stays where it opens
   assert.deepEqual(parseHash(termHash("scout"), TRACKS), parseHash("", TRACKS));
 });
+
+test("the panel names the pass's step when the live file has not: the moves chip runs, the Mover at work (#462)", () => {
+  const now = Date.parse("2026-11-21T04:40:45Z");
+  const live: RoutineLivePayload = { ...liveOf(false) };
+  const p = live.live[0].progress;
+  assert.ok(p);
+  live.live[0] = { ...live.live[0], progress: { ...p, current: { name: null, after: "fresh_reads", started: "2026-11-21T04:40:30Z" } } };
+  const active = { id: "p", kind: "moves" as const, trigger: "routine_evening" as const, started: "2026-11-21T04:40:38Z", updated: null, ended: null, end: null, leagues: { done: 0, total: 1, order: ["900101"] }, entries: { done: 0, total: 1 }, current: null, results: {}, summary: null };
+  const q = { date: "2026-11-20", built: [], execute_time: "09:00", leagues: [], entries: [], settings: { execute_time: "09:00", at: null, by: null, set: false, sunday_execute_time: null, sunday_at: null, sunday_by: null, in_force: "09:00" }, stop: false, now: "2026-11-21T04:40:45Z", active } as never;
+  const tl = timeline({ live, queues: [q], now });
+  const s = sceneAt({ tl, t: now, age: (x) => (now - x) / 1000, now: 0, leagues: [], one: null, executeTime: "09:00" });
+  assert.equal(s.now.agent, "mover");
+  assert.ok(s.now.steps.some((x) => x.name === "moves" && x.state === "running"));
+  assert.ok(!s.now.steps.some((x) => x.name.startsWith("after ")));
+});
