@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from pickandroll.api import routine_runs as rr
 from pickandroll.routine import Report, run
 from pickandroll.routine.report import Live, live_path, marker, progress
 
@@ -70,6 +71,10 @@ def test_the_file_mid_run_names_the_routine_its_start_and_the_steps_so_far(tmp_p
     named = [x["current"]["name"] for x in rest if x["current"]["name"] is not None]
     assert set(named) <= HOOKED
     assert {"exports", "refresh", "solve", "queue_build", "post"} <= set(named)
+    # The route reads the file the run wrote last, as the floor will (PR 1, #458); here the
+    # recording kept it, as the runner's caller removes it.
+    [row] = rr.live(tmp_path, report.finished)["live"]
+    assert row["routine"] == "daily" and row["progress"] == rest[-1] and not row["stale"]
     # Named while under way: that run of the step is not yet among the steps written.
     for x in rest:
         if (step := x["current"]["name"]) is not None:
