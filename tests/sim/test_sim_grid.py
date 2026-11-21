@@ -78,7 +78,7 @@ def test_league_and_grid_are_refused_by_name(wire: Path):
     pair = ("--arms", *spec(wire, "S", "R"))
     for flags, why in (
         (("--league", "teams=11"), "--league teams=11: the grid's teams are 10, 12, 14"),
-        (("--league", "adds=5"), "the grid's adds are 2, 3, 4, none"),
+        (("--league", "adds=0"), "--league adds=0: a positive whole count of adds a week, or none"),
         (("--league", "size=3"), "is not one of teams, slots, adds, playoffs="),
         (("--league", "teams=10", "--grid", "full"), "--league names one league shape"),
     ):
@@ -118,7 +118,7 @@ def test_on_the_fixed_shape_a_short_draft_is_noted_and_played_as_before(bare: Pa
     assert league["grid"] == "fixed" and league["shapes"] == [shapes.FIXED.payload()]
     assert league["by_path"] == [{"shape": 0, "turn": 0}, {"shape": 0, "turn": 1}]
     assert [x["holds"] for x in league["short_draft"]] == [85]
-    assert one["replay_version"] == 20 and "by_axis" not in one
+    assert one["replay_version"] == 21 and "by_axis" not in one
 
 
 def test_a_pair_on_a_grid_plays_each_path_s_shape_and_seat(wire: Path, monkeypatch):

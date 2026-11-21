@@ -671,7 +671,11 @@ def _record(
     starters: Mapping[int, Mapping[int, str]],
     held: Mapping[str, Mapping[int, Rates]] | None = None,
     holds: Mapping[int, str] | None = None,
+    queued: Mapping[int, tuple[mv.Move, ...]] | None = None,
 ) -> DayRecord:
+    """The day record of ``state``. ``due``: the moves that landed today (yesterday's queue, or
+    in a same-day league today's, PR today); ``queued``: what the seats queued today, the
+    state's queue when None (in a same-day league it has landed, and the runner hands it)."""
     on = {t: {k for k, _ in r} for t, r in state.rosters.items()}
     return DayRecord(
         state.day,
@@ -681,7 +685,7 @@ def _record(
         returns,
         {t: tuple(m for m in moves if m.add in on.get(t, ())) for t, moves in due.items() if moves},
         dict(decided),
-        {t: moves for t, moves in state.pending.items() if moves},
+        {t: moves for t, moves in (state.pending if queued is None else queued).items() if moves},
         dict(starters),
         state,
         dict(held or {}),
@@ -719,9 +723,11 @@ class DayRecord:
     beliefs: Mapping[int, Rates]
     status: Mapping[int, str | None]
     returns: Mapping[int, date]
-    #: Yesterday's queued moves whose add is on the team's roster this morning, by team.
+    #: Yesterday's queued moves whose add is on the team's roster this morning, by team; in a
+    #: same-day league (PR today) today's, landed before the lineups.
     landed: Mapping[int, tuple[mv.Move, ...]]
-    #: Each moving seat's decision, and the moves it queued to land tomorrow, by team.
+    #: Each moving seat's decision, and the moves it queued to land tomorrow (today in a
+    #: same-day league), by team.
     decisions: Mapping[int, policy.Decision]
     queued: Mapping[int, tuple[mv.Move, ...]]
     #: Each team's starters for the day (player to slot).
@@ -889,6 +895,7 @@ def simulate(
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
     waiting = setup.waiting
+    same_day = setup.same_day
 
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
@@ -923,7 +930,12 @@ def simulate(
         # the players clearing today are decided once the cleared held players are back, the
         # rosters trimmed and the churns' held players gone (``policy.arrive``, Fc's review), and
         # before the rest lands (PR Fa), each won one charged to the same week as yesterday's
-        # moves: the week of the day before.
+        # moves: the week of the day before. In a same-day league (PR today, the lead's
+        # decision) yesterday's moves landed yesterday, and a claim is charged to the week it
+        # clears in: on a Monday the week starts over before the morning, and the morning's
+        # landing (the claims, the held players back) is charged to today's week.
+        if monday and same_day:
+            states = [policy.new_week(s) for s in states]
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
@@ -951,10 +963,12 @@ def simulate(
             for vi, s in enumerate(states)
         ]
         for vi, s in enumerate(states):
-            tallies[vi].charge((made or week).number, before[vi], s.executed_by)
+            tallies[vi].charge(
+                (week if same_day else made or week).number, before[vi], s.executed_by
+            )
             if stash:
                 tallies[vi].left(was[vi], s)
-        if monday:
+        if monday and not same_day:
             states = [policy.new_week(s) for s in states]
         # A round of the bracket is seeded on its first morning, each variant's from its own
         # totals: the weeks finished before it (PR bracket).
@@ -1009,13 +1023,45 @@ def simulate(
                     # seat sent today (:func:`set_sent`).
                     adds = set_sent(decision, state, team, day)
                     tallies[vi].searched(team, decision.union, adds)
+            queued_today = state.pending
+            decided_state = state
+            if same_day:
+                # A same-day league (PR today): the free agents' adds queued today land now, in
+                # the day's rotation, with the held-slot moves they need, once every seat has
+                # decided on the morning's wire and before the lineups; charged to this week. A
+                # claim is placed as before. The day's lineups are set on the rosters after it,
+                # a split seat's on its table read on them.
+                state = policy.land(
+                    state,
+                    order,
+                    spots,
+                    slot_counts,
+                    status,
+                    value,
+                    values[vi],
+                    **waiver,
+                    arrived=True,
+                )
+                tallies[vi].charge(week.number, decided_state.executed_by, state.executed_by)
+                if stash:
+                    tallies[vi].left(decided_state, state)
+                values[vi] = {t: tables.of(label, state)[1] for t, label in holds[vi].items()}
             states[vi] = state
             lineup = {
                 t: policy.starters_of(setup, state, t, day, status, values[vi].get(t, value))
                 for t in setup.teams
             }
             lineups.append(lineup)
-            auditor.check(audit.Day(day, vi, state, status, lineup))
+            auditor.check(
+                audit.Day(
+                    day,
+                    vi,
+                    state,
+                    status,
+                    lineup,
+                    decided=decided_state if same_day else None,
+                )
+            )
             tallies[vi].day(week.number, state)
             if on_day is not None:
                 on_day(
@@ -1023,7 +1069,7 @@ def simulate(
                         setup,
                         vi,
                         state,
-                        due[vi],
+                        queued_today if same_day else due[vi],
                         decided,
                         beliefs,
                         status,
@@ -1034,6 +1080,7 @@ def simulate(
                             for label, t in sorted({lb: t for t, lb in holds[vi].items()}.items())
                         },
                         holds[vi],
+                        queued_today if same_day else None,
                     )
                 )
         states = [
@@ -1577,6 +1624,7 @@ def replay_setup(
     waiver_rule: str = shapes.DROPPED,
     rival_bids: str = shapes.ASSUMED,
     rival_prices: tuple[tuple[float, int], ...] = (),
+    lineup_from: str = shapes.TOMORROW,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1616,7 +1664,10 @@ def replay_setup(
     draft's leftovers claimable from the first morning; the default, a claim only on a dropped
     player in his wait. A FAAB league's ``rival_bids`` (PR Fd, ``shapes.RIVAL_BIDS``): ``book``,
     the market rivals bid on the book's ``rival_prices`` (``bids.prices_of``); the default, the
-    assumed form."""
+    assumed form. ``lineup_from`` (PR today, ``shapes.LINEUP_FROM``): ``today``, a free agent's
+    add lands the day it is made; the default, the morning after."""
+    if lineup_from not in shapes.LINEUP_FROM:
+        raise ValueError(f"lineup rule {lineup_from!r}: one of {', '.join(shapes.LINEUP_FROM)}")
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     if h2h not in shapes.H2H or (points and h2h != ONE_WIN):
@@ -1708,6 +1759,7 @@ def replay_setup(
         waiver_rule=waiver_rule,
         rival_bids=rival_bids,
         rival_prices=tuple(rival_prices),
+        lineup_from=lineup_from,
     )
 
 

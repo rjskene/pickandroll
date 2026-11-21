@@ -24,7 +24,7 @@ from typing import Any
 
 from .engine import HELD, ONE_WIN, Calendar, Move, Player, Week, monday_of
 from .league import LeagueSpec
-from .shapes import ASSUMED, BOOK, CONTINUOUS, DROPPED
+from .shapes import ASSUMED, BOOK, CONTINUOUS, DROPPED, TODAY, TOMORROW
 
 Rates = Mapping[str, float]
 #: A roster as the simulator holds it: each player with the slot he sits in.
@@ -78,7 +78,8 @@ class Claim:
     an open spot), the day it was placed, its add's clear date (the morning it is decided: a
     dropped player's clear date, or under continuous waivers the next morning for a player nobody
     dropped lately), the week its add is charged to (the week of the day before it lands, so the
-    plan's and the world's weeks agree; None outside the calendar), the held-slot moves it needs,
+    plan's and the world's weeks agree; in a same-day league, PR today, the week it lands in, for
+    the same reason; None outside the calendar), the held-slot moves it needs,
     made only if it is won, and whether its drop is a held player (a churn, #221), who leaves on
     his own the morning after the claim is placed. In a FAAB league (PR Fb) its sealed ``bid``,
     whole dollars set when it is placed (0 by priority), and its ``value`` in typicals when it
@@ -178,6 +179,10 @@ class Setup:
     #: (share of the budget, count; the shares ascending, ``bids.prices_of``) it carries.
     rival_bids: str = ASSUMED
     rival_prices: tuple[tuple[float, int], ...] = ()
+    #: When a free agent's add plays (PR today, ``shapes.LINEUP_FROM``): ``tomorrow``, it lands
+    #: the morning after it is made; ``today``, the day it is made, before that day's lineups. A
+    #: claim is decided as before under either.
+    lineup_from: str = TOMORROW
 
     def __post_init__(self) -> None:
         # The seat's half of the format and the standings' half are one rule of the run (the
@@ -208,6 +213,19 @@ class Setup:
     def continuous(self) -> bool:
         """Whether every add is a claim: a waiver league under continuous waivers (PR Fc)."""
         return self.waiting and self.waiver_rule == CONTINUOUS
+
+    @property
+    def same_day(self) -> bool:
+        """Whether a free agent's add lands the day it is made (PR today): ``lineup_from``
+        ``today`` in a league that has free agents (under continuous waivers every add is a
+        claim, and the rule moves nothing)."""
+        return self.lineup_from == TODAY and not self.continuous
+
+    @property
+    def lands_after(self) -> timedelta:
+        """How long after it is made a free agent's add lands: a day, or none under
+        :attr:`same_day`. A claim's day is its own (its clear date, or the next morning)."""
+        return timedelta(0) if self.same_day else timedelta(1)
 
     @property
     def one_win(self) -> bool:
