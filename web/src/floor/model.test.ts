@@ -362,3 +362,16 @@ test("the Demo's bent clock: wall seconds and time map both ways, the idle hours
   assert.ok(evening?.end && nextSignin);
   assert.ok(c.toWall(nextSignin.start) - c.toWall(evening.end) <= 1.4 + 0.2 + 1e-9);
 });
+
+test("a finished pass read back names no current entry: the unit under way marks its entry as doing (#461)", () => {
+  const w = sampleWeek();
+  const tl = timeline({ runs: w.runs, queues: w.queues, seasons: w.seasons, now: w.liveAt });
+  const f = floorAt(tl, w.liveAt);
+  assert.equal(f.pass?.current, null);
+  assert.ok(f.unit?.entry);
+  const e = tl.entries.find((x) => x.id === f.unit?.entry);
+  assert.ok(e);
+  assert.equal(entryState(e, w.liveAt, f.pass), "queued");
+  assert.equal(entryState(e, w.liveAt, f.pass, f.unit), "doing");
+  assert.equal(entryState(e, (e.outcomeAt ?? 0) + 1, f.pass, f.unit), e.outcome);
+});

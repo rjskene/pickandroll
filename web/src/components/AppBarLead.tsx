@@ -6,9 +6,12 @@ import Wordmark from "./Wordmark";
  * wordmark, the update indicator immediately right of it, then the Progress button (icon only).
  * They stay together when a phone's bar wraps. On Progress itself the button marks the page.
  * A page's own icons follow the button (the league page's Yahoo link, #278). The Explain entry
- * (#283) follows Progress wherever a page passes it; on Explain itself it marks the page. */
+ * (#283) follows Progress wherever a page passes it; on Explain itself it marks the page. A
+ * lead icon (#461) goes furthest left, ahead of the update indicator: the in-season page's flip
+ * between the floor and the leagues list, used by that page only. */
 export default function AppBarLead({
   onHome,
+  lead,
   status,
   onProgress,
   here,
@@ -17,6 +20,7 @@ export default function AppBarLead({
   children,
 }: {
   onHome?: () => void;
+  lead?: ReactNode;
   status: ReactNode;
   onProgress?: () => void;
   here?: boolean;
@@ -27,6 +31,7 @@ export default function AppBarLead({
   return (
     <span className="bar-lead">
       <Wordmark onHome={onHome} />
+      {lead}
       {status}
       <button
         className={`icon${here ? " on" : ""}`}

@@ -446,3 +446,21 @@ export function sampleWeek(): SampleWeek {
     demoAt,
   };
 }
+
+const SLOTS = ["PG", "SG", "G", "SF", "PF", "F", "C", "C", "Util", "Util", "BN", "BN", "BN", "IL", "IL", "IL"];
+
+/** One sample league's roster as the week begins (invented): the players its moves drop that
+ * week first, then others from the sample's names, an open spot where the week adds to one. */
+export function sampleRoster(league: string): { slot: string; name: string | null }[] {
+  const specs = SPECS.filter((s) => s.league === league && s.res !== "held");
+  const adds = new Set(specs.map((s) => s.add));
+  const names: string[] = [];
+  for (const s of specs) if (s.drop && !adds.has(s.drop) && !names.includes(s.drop)) names.push(s.drop);
+  const start = ALL.indexOf(league) * 3;
+  for (let k = 0; names.length < 13 && k < PLAYERS.length * 2; k++) {
+    const n = PLAYERS[(start + k) % PLAYERS.length];
+    if (!adds.has(n) && !names.includes(n)) names.push(n);
+  }
+  const open = specs.filter((s) => !s.drop).length;
+  return SLOTS.map((slot, k) => ({ slot, name: k < 13 ? (k >= 13 - open ? null : (names[k] ?? null)) : null }));
+}

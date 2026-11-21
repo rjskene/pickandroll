@@ -11,6 +11,8 @@ import {
   draftKeys,
   handleKey,
   landingKeys,
+  LANDING_SHEET,
+  type FloorKeys,
   queueKeys,
   explainKeys,
   EXPLAIN_SHEET,
@@ -692,4 +694,37 @@ test("e opens the step's example and Esc closes it before the glossary (#282)", 
   assert.deepEqual([n.closePop, n.closeGloss, n.back], [1, 0, 0]);
   assert.equal(handleKey(key("Escape"), api(false, true)), true);
   assert.deepEqual([n.closePop, n.closeGloss, n.back], [1, 1, 0]);
+});
+
+test("the landing's f flips the face; v, d, Space and the arrows drive the floor only on the floor and never from a field (#461)", () => {
+  const n = { flip: 0, view: 0, demo: 0, play: 0, days: [] as number[] };
+  const floor = (onFloor: boolean): FloorKeys => ({
+    onFloor,
+    flip: () => n.flip++,
+    toggleView: () => n.view++,
+    toggleDemo: () => n.demo++,
+    playPause: () => n.play++,
+    day: (d) => n.days.push(d),
+  });
+  const on = landingKeys(null, null, floor(true));
+  for (const k of ["f", "v", "d", " ", "ArrowLeft", "ArrowRight"]) assert.equal(handleKey(key(k), on), true, k);
+  assert.deepEqual(n, { flip: 1, view: 1, demo: 1, play: 1, days: [-1, 1] });
+  // On the list, f still flips; the floor's keys do nothing.
+  const off = landingKeys(null, null, floor(false));
+  assert.equal(handleKey(key("f"), off), true);
+  for (const k of ["v", "d", " ", "ArrowLeft", "ArrowRight"]) assert.equal(handleKey(key(k), off), false, k);
+  // From a field nothing fires; Space on a button keeps the button's press.
+  for (const k of ["f", "v", "d", " ", "ArrowLeft", "ArrowRight"]) assert.equal(handleKey(key(k, { target: field }), on), false, k);
+  assert.equal(handleKey(key(" ", { target: { tagName: "BUTTON" } }), on), false);
+  assert.deepEqual(n, { flip: 2, view: 1, demo: 1, play: 1, days: [-1, 1] });
+  // Without the floor (the draft-season page) f is no key.
+  assert.equal(handleKey(key("f"), landingKeys(null)), false);
+});
+
+test("the landing's ? opens its sheet when one is given (#461)", () => {
+  let open = false;
+  const map = landingKeys(null, null, null, { open, setOpen: (o) => (open = o) });
+  assert.equal(handleKey(key("?"), map), true);
+  assert.equal(open, true);
+  assert.ok(LANDING_SHEET.groups.some((g) => g.rows.some(([ks]) => ks.includes("f"))));
 });

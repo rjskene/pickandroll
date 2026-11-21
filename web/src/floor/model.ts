@@ -374,7 +374,10 @@ function liveRunOf(p: RoutineProgress, stale: boolean, written: number | null, e
 
 function entryOf(e: QueueEntry, q: QueuePayload): FloorEntry {
   const row = q.leagues.find((l) => l.league === e.league);
-  const builtAt = ms(e.queued_at) ?? ms(row?.built_at) ?? ms(q.built[q.built.length - 1]) ?? ms(q.now) ?? 0;
+  // A queued entry carries when it was queued; a held one does not, so it stands from the day's
+  // first build (a rebuild keeps holding it), and a queued one without the time from its row's.
+  const firstBuild = ms(q.built[0]);
+  const builtAt = ms(e.queued_at) ?? (e.queued ? ms(row?.built_at) : firstBuild) ?? ms(row?.built_at) ?? firstBuild ?? ms(q.now) ?? 0;
   const name = (id: number | null) => (id === null ? null : (q.names?.[String(id)] ?? `#${id}`));
   return {
     id: e.id,
@@ -471,12 +474,14 @@ export type EntryState = "unbuilt" | "held" | "struck" | "queued" | "doing" | Ou
 export type StepState = "todo" | "doing" | "done" | "skipped";
 
 /** An entry's state at ``t``: not built yet, held at its rule, struck, queued, under way in a
- * pass, or its outcome once it landed. */
-export function entryState(e: FloorEntry, t: number, pass?: FloorPass | null): EntryState {
+ * pass (the live pass's current entry, or the unit under way), or its outcome once it landed. */
+export function entryState(e: FloorEntry, t: number, pass?: FloorPass | null, unit?: FloorUnit | null): EntryState {
   if (t < e.builtAt) return "unbuilt";
   if (!e.queued) return "held";
   if (e.outcome !== null && e.outcomeAt !== null && t >= e.outcomeAt) return e.outcome;
   if (pass && pass.current?.entry === e.id && t >= pass.current.since && (pass.end === null || t < pass.end)) return "doing";
+  // A finished pass read back (the Demo, a past day) names no current entry: its unit does.
+  if (unit && unit.entry === e.id && t >= unit.start && t < unit.end) return "doing";
   if (e.struck) return "struck";
   return "queued";
 }

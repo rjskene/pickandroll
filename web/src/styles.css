@@ -1257,3 +1257,131 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .ex-fig svg .dot.g { fill: var(--good); }
 .ex-fig svg .band.a { fill: var(--accent); opacity: 0.22; }
 .ex-fig > .ex-entry > svg { display: block; width: 100%; height: auto; max-width: none; margin: 0; overflow: visible; }
+
+/* ---------------------------------------------------------------- the floor (#461) */
+:root { --scout: #cfd8e3; --solver: #b69cff; --setter: #4ea1ff; --starter: #2fd3c5; --mover: #f5b942; --desk: #e8edf2; }
+.c-scout { --c: var(--scout); } .c-solver { --c: var(--solver); } .c-setter { --c: var(--setter); }
+.c-starter { --c: var(--starter); } .c-mover { --c: var(--mover); } .c-orchestrator { --c: var(--desk); }
+.floor { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.floorbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 7px 24px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.fl-clock { font-family: var(--display); font-size: 22px; font-weight: 700; color: #fff; letter-spacing: 0.03em; }
+.fl-clock small { font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 6px; letter-spacing: 0.08em; }
+.floorbar .seg button { padding: 4px 12px; }
+.livechip { display: inline-flex; align-items: center; gap: 6px; }
+.livechip i { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.livechip.on i { background: var(--bad); animation: fl-blink 1.1s infinite; }
+.livechip.demo { background: var(--them); border-color: var(--them); color: #06121f; font-family: var(--display); font-size: 14px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 12px; }
+@keyframes fl-blink { 50% { opacity: 0.25; } }
+.floor .transport { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 24px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.floor .transport input[type="range"] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+.fl-days { display: inline-flex; gap: 4px; }
+.fl-days button { font-family: var(--display); letter-spacing: 0.06em; text-transform: uppercase; }
+.fl-legend { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 6px 24px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
+.fl-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.fl-legend .sw { width: 9px; height: 9px; border-radius: 3px; display: inline-block; background: var(--c); }
+.fl-legend .sw.ring { border-radius: 50%; background: transparent; border: 2px solid var(--accent); }
+.fl-legend .sw.hold { border-radius: 2px; background: repeating-linear-gradient(135deg, var(--accent) 0 3px, #141413 3px 6px); width: 14px; height: 6px; }
+.fl-stage { flex: 1; min-height: 0; overflow: auto; padding: 10px 24px 14px; }
+.fl-svg { display: block; width: 100%; max-height: 100%; }
+.fl-now { display: flex; gap: 16px; align-items: stretch; padding: 10px 24px; border-top: 1px solid var(--line); background: var(--panel); min-height: 86px; }
+.fl-now .what { width: 300px; flex-shrink: 0; }
+.fl-now .what b { font-family: var(--display); font-size: 20px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--c, var(--muted)); }
+.fl-now .what p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.fl-now .steps { display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; flex: 1; }
+.fl-now .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-2); font-size: 11.5px; color: var(--dim); background: var(--panel-2); }
+.fl-now .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--dim)); opacity: 0.45; }
+.fl-now .chip.done { color: var(--muted); } .fl-now .chip.done i { opacity: 1; }
+.fl-now .chip.skipped { text-decoration: line-through; text-decoration-color: var(--dim); }
+.fl-now .chip.doing, .fl-now .chip.running { color: var(--text); border-color: var(--c, var(--accent)); }
+.fl-now .chip.doing i, .fl-now .chip.running i { opacity: 1; animation: fl-blink 0.7s infinite; }
+.fl-now .unit { width: 330px; flex-shrink: 0; border-left: 1px solid var(--line); padding-left: 16px; }
+.fl-now .unit .k { display: block; margin-bottom: 3px; }
+.fl-now .unit .big { font-size: 14px; }
+.fl-now .bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 7px; }
+.fl-now .bar > span { display: block; height: 100%; background: var(--c, var(--accent)); }
+.fl-svg text { font-family: var(--body); fill: var(--muted); font-size: 10px; }
+.fl-svg text.d { font-family: var(--display); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.fl-act { cursor: pointer; outline: none; }
+.fl-act:focus-visible > rect:first-of-type, .fl-act:focus-visible > circle:first-of-type, .fl-act:focus-visible > path:first-of-type { stroke: var(--accent); stroke-width: 2; }
+.fl-hz-a { fill: #141413; } .fl-hz-b { fill: var(--accent); }
+.fl-agent { --c: var(--desk); }
+.fl-agent.ag-scout { --c: var(--scout); } .fl-agent.ag-solver { --c: var(--solver); } .fl-agent.ag-setter { --c: var(--setter); }
+.fl-agent.ag-starter { --c: var(--starter); } .fl-agent.ag-mover { --c: var(--mover); }
+.fl-agent .ag-body { fill: var(--c); stroke: rgba(0, 0, 0, 0.35); stroke-width: 0.6; }
+.fl-agent .ag-mouth { fill: #05080b; }
+.fl-agent .ag-wheel { fill: #0b0f14; stroke: var(--c); stroke-width: 1.4; }
+.fl-agent .ag-spoke { stroke: var(--c); stroke-width: 0.9; }
+.fl-agent .ag-eye { fill: #0b0f14; } .fl-agent .ag-pupil { fill: #fff; }
+.fl-agent .ag-ant { stroke: var(--c); stroke-width: 1; } .fl-agent .ag-tip { fill: var(--c); }
+.fl-agent .ag-shadow { fill: rgba(0, 0, 0, 0.45); }
+.fl-agent .ag-stripe { stroke: rgba(0, 0, 0, 0.3); stroke-width: 1.2; stroke-linecap: round; }
+.fl-tok .tk-ring { fill: #0b0f14; stroke: var(--accent); stroke-width: 1.6; }
+.fl-tok .tk-core { fill: var(--accent); }
+.fl-tok .tk-arc { fill: none; stroke: var(--accent); stroke-width: 1.7; stroke-linecap: round; }
+.fl-tok .tk-mark { fill: none; stroke: #0b0f14; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.fl-tok.unbuilt { opacity: 0.18; } .fl-tok.unbuilt .tk-core { fill: transparent; }
+.fl-tok.queued .tk-core { animation: fl-blink 1.4s infinite; }
+.fl-tok.struck { opacity: 0.45; } .fl-tok.struck .tk-core { fill: transparent; }
+.fl-tok.claimed .tk-ring, .fl-tok.added .tk-ring { fill: var(--good); stroke: var(--good); }
+.fl-tok.failed .tk-ring, .fl-tok.gone .tk-ring { fill: var(--bad); stroke: var(--bad); }
+.fl-tok.skipped .tk-ring { fill: var(--dim); stroke: var(--dim); }
+.fl-tok.claimed .tk-core, .fl-tok.added .tk-core, .fl-tok.failed .tk-core, .fl-tok.gone .tk-core, .fl-tok.skipped .tk-core { fill: transparent; }
+.fl-tok.held .tk-ring { stroke-dasharray: 2.4 1.9; } .fl-tok.held .tk-core { fill: transparent; }
+.fl-gate .gt-post { fill: var(--muted); } .fl-gate .gt-arm { stroke: #141413; stroke-width: 0.4; }
+.fl-pl { fill: var(--c); }
+.fl-pl.scout { --c: var(--scout); } .fl-pl.solver { --c: var(--solver); }
+.fl-pl.todo { opacity: 0.4; } .fl-pl.done { opacity: 0.13; } .fl-pl.doing { opacity: 1; } .fl-pl.skipped { opacity: 0.1; }
+.fl-day rect { fill: var(--panel); stroke: var(--line); } .fl-day.on rect { stroke: var(--accent); fill: var(--panel-2); }
+.fl-svg .fl-daytitle { font-size: 14px; fill: var(--muted); } .fl-svg .fl-day.on .fl-daytitle { fill: #fff; }
+.fl-svg .fl-tally { font-size: 10px; } .fl-svg .g { fill: var(--good); } .fl-svg .h { fill: #c9a25a; } .fl-svg .b { fill: var(--bad); }
+.fl-pip { fill: var(--line-2); } .fl-pip.done { fill: var(--muted); } .fl-pip.doing { fill: var(--accent); }
+.fl-box { fill: var(--panel); stroke: var(--line); }
+.fl-svg .fl-h { font-size: 15px; fill: var(--text); } .fl-svg .fl-sub { font-size: 10px; fill: var(--muted); }
+.fl-lamp { fill: var(--panel-2); stroke: var(--line-2); } .fl-svg .fl-lamptxt { font-size: 10.5px; fill: var(--dim); }
+.fl-lamp.read { stroke: var(--scout); }
+.fl-lamp.solved { fill: rgba(182, 156, 255, 0.16); stroke: var(--solver); } .fl-svg .fl-lamptxt.solved, .fl-svg .fl-lamptxt.read { fill: var(--text); }
+.fl-lamp.solving { fill: var(--solver); stroke: var(--solver); } .fl-svg .fl-lamptxt.solving { fill: #141413; font-weight: 600; }
+.fl-lampg.off { opacity: 0.35; }
+.fl-belt { stroke: #161f29; stroke-width: 16; stroke-linecap: round; } .fl-beltdash { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 3 9; }
+.fl-hub { fill: var(--panel-2); stroke: var(--desk); stroke-width: 2; }
+.fl-ring { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 10 13; }
+.fl-svg .fl-hubn { font-size: 22px; fill: #fff; }
+.fl-svg .fl-rule { font-size: 10.5px; fill: var(--text); } .fl-svg .fl-rule.hot { fill: var(--accent); font-weight: 600; }
+.fl-svg .fl-knob { font-size: 9px; fill: var(--dim); } .fl-lead { stroke: var(--line-2); }
+.fl-svg .fl-key { font-size: 9.5px; fill: var(--muted); } .fl-svg .fl-key.hot { fill: var(--accent); font-weight: 600; }
+.fl-face { fill: var(--panel-2); stroke: var(--muted); stroke-width: 1.4; } .fl-svg .fl-facetxt { font-size: 10.5px; fill: #fff; font-weight: 600; }
+.fl-svg .fl-veto { font-size: 10px; fill: var(--accent); }
+.fl-lane { fill: none; stroke: var(--line-2); stroke-width: 1.2; stroke-dasharray: 2 5; }
+.fl-lanehot { fill: none; stroke: var(--c, var(--accent)); stroke-width: 3; stroke-linecap: round; }
+.fl-dock rect.card { fill: var(--panel); stroke: var(--line); } .fl-dock.mine rect.card { fill: #15140f; stroke: rgba(245, 185, 66, 0.45); }
+.fl-svg .fl-dockid { font-size: 17px; fill: var(--text); } .fl-svg .fl-dockid.muted { fill: var(--muted); }
+.fl-svg .fl-courtid { font-size: 24px; fill: #fff; }
+.fl-svg .fl-dockres { font-size: 10.5px; } .fl-svg .fl-bud { font-size: 10.5px; } .fl-svg .fl-bud.mine { fill: var(--accent); }
+.fl-svg .fl-res.claimed { fill: var(--good); } .fl-svg .fl-res.failed { fill: var(--bad); } .fl-svg .fl-res.skipped { fill: var(--muted); } .fl-svg .fl-res.held { fill: #c9a25a; }
+.fl-svg .fl-res.scout { fill: var(--scout); } .fl-svg .fl-res.solver { fill: var(--solver); } .fl-svg .fl-res.setter { fill: var(--setter); }
+.fl-svg .fl-res.starter { fill: var(--starter); } .fl-svg .fl-res.mover { fill: var(--mover); } .fl-svg .fl-res.orchestrator { fill: var(--accent); }
+.fl-pipq { fill: none; stroke: var(--dim); } .fl-pipq.on { fill: var(--accent); stroke: var(--accent); }
+.fl-svg .fl-ledger { font-size: 11px; } .fl-svg .fl-ledger .t { fill: var(--dim); }
+.fl-svg .fl-rack { font-size: 10px; fill: var(--c); }
+.fl-step { fill: var(--accent); } .fl-step.done { opacity: 0.12; }
+.fl-svg .fl-subl { font-size: 10.5px; fill: #fff; }
+.fl-flow circle { fill: var(--panel-2); stroke: var(--line-2); stroke-width: 1.2; }
+.fl-svg .fl-flow .n { font-family: var(--display); font-weight: 700; font-size: 11.5px; fill: var(--muted); }
+.fl-svg .fl-flow .t { font-size: 14px; fill: var(--muted); } .fl-svg .fl-flow .p { font-size: 9.6px; fill: var(--dim); }
+.fl-flow.on circle { fill: var(--accent); stroke: var(--accent); } .fl-svg .fl-flow.on .n { fill: var(--accent-ink); }
+.fl-svg .fl-flow.on .t { fill: #fff; } .fl-svg .fl-flow.on .p { fill: var(--text); }
+.fl-pin { pointer-events: none; } .fl-pin circle { fill: var(--bg); stroke: var(--muted); }
+.fl-sign { fill: var(--bg); stroke: var(--solver); stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; opacity: 0.6; }
+.fl-sign.on { opacity: 1; fill: color-mix(in srgb, var(--solver) 30%, var(--bg)); }
+.fl-sign.hot { opacity: 1; stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 38%, var(--bg)); }
+.fl-pole { stroke: var(--solver); stroke-width: 1; opacity: 0.75; }
+.fl-road { fill: none; stroke: #161f29; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.fl-pulse { fill: var(--scout); }
+.fl-chip { fill: var(--muted); } .fl-chip.claimed { fill: var(--good); } .fl-chip.failed { fill: var(--bad); }
+.fl-site rect { fill: var(--panel-2); stroke: var(--line-2); } .fl-site path { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; }
+.fl-svg .fl-site .nm { font-size: 14px; fill: var(--text); } .fl-svg .fl-site .sub { font-size: 9px; fill: var(--dim); }
+.fl-site.on rect { stroke: var(--scout); } .fl-site.on path { stroke: #fff; } .fl-svg .fl-site.on .nm { fill: #fff; }
+@media (prefers-reduced-motion: reduce) { .livechip.on i, .fl-tok.queued .tk-core, .fl-now .chip i { animation: none; } }
+.fl-tile rect { fill: var(--panel-2); stroke: var(--line-2); }
+.fl-tile.new rect { stroke: var(--good); fill: rgba(61, 220, 132, 0.14); } .fl-tile.target rect { stroke: var(--accent); stroke-width: 1.6; }
+.fl-svg .fl-slot { font-size: 8.5px; fill: var(--dim); } .fl-svg .fl-nm { font-size: 10.5px; fill: var(--text); } .fl-svg .fl-tile.open .fl-nm { fill: var(--dim); font-style: italic; }

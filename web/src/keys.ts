@@ -656,14 +656,41 @@ export const PROGRESS_SHEET: Sheet = {
 };
 
 // ---------------------------------------------------------------- the landing and the Queue screen (#194)
+/** The in-season page's floor (#461), for the landing's keys: null when the page has no flip
+ * icon (the draft-season page, a phone). ``onFloor`` is the face drawn; the floor's own keys work
+ * only on it. */
+export interface FloorKeys {
+  onFloor: boolean;
+  flip: () => void;
+  /** v: all the leagues or one. */
+  toggleView: () => void;
+  /** d: the Demo on or off (back to live). */
+  toggleDemo: () => void;
+  /** Space: the Demo's play or pause; off the Demo, it starts the Demo. */
+  playPause: () => void;
+  /** The arrows: the Demo's day before or after. */
+  day: (delta: number) => void;
+}
+
 /** The landing's keys: ``q`` opens the Queue screen and ``h`` the History screen, unless a field
- * has focus or the opener is null (the drafts drawer is open). */
-export function landingKeys(openQueue: (() => void) | null, openHistory: (() => void) | null = null): KeyMap {
+ * has focus or the opener is null (the drafts drawer is open); with the floor (#461), ``f`` flips
+ * the in-season page's face and, on the floor, ``v`` ``d`` Space and the arrows drive it. ``?``
+ * opens the sheet when one is given. */
+export function landingKeys(
+  openQueue: (() => void) | null,
+  openHistory: (() => void) | null = null,
+  floor: FloorKeys | null = null,
+  sheet: { open: boolean; setOpen: (open: boolean) => void } | null = null,
+): KeyMap {
+  const onFloor = (act: () => void) => ({ field }: { field: boolean }) => {
+    if (field || !floor?.onFloor) return false;
+    act();
+  };
   return {
     cards: 0,
     openCard: () => {},
-    sheetOpen: false,
-    setSheetOpen: () => {},
+    sheetOpen: sheet?.open ?? false,
+    setSheetOpen: sheet?.setOpen ?? (() => {}),
     escape: () => {},
     keys: {
       q: ({ field }) => {
@@ -674,9 +701,51 @@ export function landingKeys(openQueue: (() => void) | null, openHistory: (() => 
         if (field || !openHistory) return false;
         openHistory();
       },
+      ...(floor
+        ? {
+            f: ({ field }: { field: boolean }) => {
+              if (field) return false;
+              floor.flip();
+            },
+            v: onFloor(floor.toggleView),
+            d: onFloor(floor.toggleDemo),
+            " ": ({ field, control }: { field: boolean; control: boolean }) => {
+              if (field || control || !floor.onFloor) return false;
+              floor.playPause();
+            },
+            ArrowLeft: onFloor(() => floor.day(-1)),
+            ArrowRight: onFloor(() => floor.day(1)),
+          }
+        : {}),
     },
   };
 }
+
+/** The in-season page's keys sheet (#461). */
+export const LANDING_SHEET: Sheet = {
+  cards: "The in-season page has two faces under the same bar: today's leagues list and the floor, the agents at work. The icon furthest left in the bar flips them.",
+  groups: [
+    {
+      title: "The page",
+      rows: [
+        [["f"], "the floor or the leagues list"],
+        [["q"], "the Queue: every league's proposed moves today, with the veto"],
+        [["h"], "History: every move and trade, and why"],
+      ],
+    },
+    {
+      title: "The floor",
+      rows: [
+        [["v"], "all the leagues, or one: the league picked beside the switch"],
+        [["d"], "the Demo, a simulated week on sample data, or back to live"],
+        [["Space"], "in the Demo, pause or play; live, it starts the Demo"],
+        [["←", "→"], "in the Demo, the day before or after"],
+        [["?"], "this sheet"],
+      ],
+    },
+  ],
+  footer: "Every key mirrors a visible control. The Demo reads nothing and clicks nothing: its week ships with the page. The page opens on the leagues list.",
+};
 
 /** The Queue and History screens' key: Esc goes back. */
 export function queueKeys(back: () => void): KeyMap {
