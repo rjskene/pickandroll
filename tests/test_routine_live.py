@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -101,6 +103,26 @@ def test_a_step_that_says_it_began_is_named_until_it_finishes(tmp_path):
     report.ok("refresh", "done")
     assert json.loads(report.live.path.read_text())["current"]["name"] is None
     assert progress(report)["written_at"] == clock().isoformat()
+
+
+def test_a_fresh_run_overwrites_the_file_a_killed_run_left_behind(tmp_path):
+    """A run systemd killed (SIGTERM skips the ``finally``) leaves its file, stale after an hour;
+    the routine's next run replaces it at its first write, so it never outlives a fresh run."""
+    path = live_path(tmp_path, "daily")
+    path.parent.mkdir(parents=True)
+    left = {"routine": "daily", "started_at": "2026-10-28T05:01:00-05:00", "steps": [1, 2]}
+    path.write_text(json.dumps(left))
+    old = datetime(2026, 10, 28, 5, 30, tzinfo=rr.CENTRAL).timestamp()
+    os.utime(path, (old, old))
+    [row] = rr.live(tmp_path, datetime(2026, 10, 29, 5, 0, tzinfo=rr.CENTRAL))["live"]
+    assert row["stale"] and row["progress"] == left
+    live = Recording(path)
+    report = daily(tmp_path, live)
+    first = live.seen[0]
+    assert first["started_at"] == report.started.isoformat() != left["started_at"]
+    assert first["steps"] == []
+    [row] = rr.live(tmp_path, report.finished)["live"]
+    assert not row["stale"] and row["progress"]["started_at"] == report.started.isoformat()
 
 
 def test_a_begin_with_no_finish_is_cleared_by_the_next_finish(tmp_path):
