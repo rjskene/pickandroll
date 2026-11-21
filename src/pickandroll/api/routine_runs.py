@@ -42,7 +42,15 @@ STALE_AFTER = timedelta(hours=1)
 #: ``<day>-<routine>.json``; a routine's name may hold a hyphen (``evening-build``).
 _RUN_FILE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)\.json$")
 #: What the floor reads of a pre-tip attempt: its times and outcome, never its moves or pulls.
-ATTEMPT_FIELDS = ("started_at", "outcome", "reason", "solved_at", "pushed_at", "unchanged", "lineups_at")
+ATTEMPT_FIELDS = (
+    "started_at",
+    "outcome",
+    "reason",
+    "solved_at",
+    "pushed_at",
+    "unchanged",
+    "lineups_at",
+)
 #: A day's tip-offs (the schedule copy's ``tips``), None when the day has no copy.
 TipsOf = Callable[[date], Mapping[str, str] | None]
 
@@ -123,7 +131,14 @@ def runs(data_dir: Path, day: date, days: int = 1, tips_of: TipsOf | None = None
             else:
                 unread.append({"routine": routine, "file": path.name, "reason": reason})
         tips = tips_of(date.fromisoformat(d)) if tips_of is not None else None
-        out.append({"date": d, "runs": logs, "unread": unread, "pretip": pretip_day(data_dir, date.fromisoformat(d), tips)})
+        out.append(
+            {
+                "date": d,
+                "runs": logs,
+                "unread": unread,
+                "pretip": pretip_day(data_dir, date.fromisoformat(d), tips),
+            }
+        )
     return {"date": day.isoformat(), "days": days, "by_day": out}
 
 

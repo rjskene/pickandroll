@@ -144,15 +144,25 @@ def test_each_day_carries_its_pretip_slates_planned_from_the_tips_with_their_att
     season_pretip.record(
         tmp_path,
         day,
-        attempt("first", "2026-11-19T17:00:10-06:00", outcome="failed", reason="push failed",
-                solved_at="2026-11-19T17:05:00-06:00"),
+        attempt(
+            "first",
+            "2026-11-19T17:00:10-06:00",
+            outcome="failed",
+            reason="push failed",
+            solved_at="2026-11-19T17:05:00-06:00",
+        ),
     )
     season_pretip.record(
         tmp_path,
         day,
-        attempt("first", "2026-11-19T17:10:10-06:00", outcome="done",
-                solved_at="2026-11-19T17:12:00-06:00", pushed_at="2026-11-19T17:12:01-06:00",
-                lineups_at="2026-11-19T17:18:00-06:00"),
+        attempt(
+            "first",
+            "2026-11-19T17:10:10-06:00",
+            outcome="done",
+            solved_at="2026-11-19T17:12:00-06:00",
+            pushed_at="2026-11-19T17:12:01-06:00",
+            lineups_at="2026-11-19T17:18:00-06:00",
+        ),
     )
     asked = []
 
@@ -189,7 +199,9 @@ def test_each_day_carries_its_pretip_slates_planned_from_the_tips_with_their_att
 
 def test_a_kept_slate_without_a_schedule_copy_or_missed_is_served_from_the_day_file(tmp_path):
     day = date(2026, 11, 19)
-    season_pretip.record(tmp_path, day, attempt("late", "2026-11-19T20:46:00-06:00", outcome="missed"))
+    season_pretip.record(
+        tmp_path, day, attempt("late", "2026-11-19T20:46:00-06:00", outcome="missed")
+    )
     block = rr.runs(tmp_path, day)["by_day"][0]["pretip"]
     assert block["enabled"] is False  # the knob is off by default
     [late] = block["slates"]
