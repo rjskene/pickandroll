@@ -3,7 +3,7 @@
 import type { KeyboardEvent, ReactNode } from "react";
 import { AGENTS, BELT, SIGNS } from "./model";
 import type { Agent } from "./model";
-import { BELT_Y, DOCK_X, FLOW, GATE, H, HUB, RACK, RACK_X, RAIL_Y, ROOM, SITES, W, lanePath, rackY } from "./scene";
+import { BELT_Y, DOCK_X, FLOW, FLOW_TERMS, GATE, H, HUB, RACK, RACK_X, RAIL_Y, ROOM, SITES, W, lanePath, rackY } from "./scene";
 import type { Scene, SiteKey } from "./scene";
 
 export interface StageHandlers {
@@ -15,6 +15,8 @@ export interface StageHandlers {
   onLedger: () => void;
   onStation: () => void;
   onStage: (index: number) => void;
+  /** A stage's title: its term in Explain's glossary. */
+  onTerm: (id: string) => void;
   /** One league's floor: back to all the leagues. */
   onAll: () => void;
 }
@@ -144,6 +146,8 @@ export default function FloorStage({ s, one, h }: { s: Scene; one: string | null
               <text x={x + 9} y={82} textAnchor="middle" className="n">
                 {i + 1}
               </text>
+            </Act>
+            <Act onAct={() => h.onTerm(FLOW_TERMS[i])} label={`${f.title}: what it means, in Explain's glossary`}>
               <text x={x + 24} y={83} className="d t">
                 {f.title}
               </text>

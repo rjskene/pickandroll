@@ -14,7 +14,8 @@ import { useLandingOrder } from "../components/landingOrder";
 import { OverviewStatus } from "../components/StatusLight";
 import { useNow } from "../components/YahooSync";
 import { GlossaryProvider, GlossarySheet } from "./Glossary";
-import { formatHash, move, nextLabel, parseHash, stepCount } from "./nav";
+import { formatHash, move, nextLabel, parseHash, stepCount, termOfHash } from "./nav";
+import { termById } from "./terms";
 import type { Place } from "./nav";
 import { FORMULAS } from "./formulas";
 import { PopProvider } from "./PopContext";
@@ -63,7 +64,11 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
   const now = useNow(30_000);
   const [place, setPlace] = useState<Place>(() => parseHash(location.hash, TRACKS));
   const [all, setAll] = useState(false);
-  const [gloss, setGloss] = useState<{ open: boolean; term: string | null }>({ open: false, term: null });
+  // A ``#term/<id>`` hash (the floor's links, #462) opens on the glossary at that term.
+  const [gloss, setGloss] = useState<{ open: boolean; term: string | null }>(() => {
+    const id = termOfHash(location.hash);
+    return id && termById(id) ? { open: true, term: id } : { open: false, term: null };
+  });
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pop, setPop] = useState<Pop | null>(null);
   // The last popout opened, so its sheet keeps its content while it slides out.
@@ -83,7 +88,9 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
   useEffect(() => {
     const on = () => {
       setPop(null);
-      setPlace(parseHash(location.hash, TRACKS));
+      const id = termOfHash(location.hash);
+      if (id && termById(id)) setGloss({ open: true, term: id });
+      else setPlace(parseHash(location.hash, TRACKS));
     };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);

@@ -269,6 +269,15 @@ export interface Inputs {
 
 const ms = (iso: string | null | undefined): number | null => (iso ? Date.parse(iso) : null);
 
+/** When a decision was solved, from its stamp (``20261120T032141223108-moves-bbm``, UTC); null
+ * for a stamp that does not read. */
+export function decisionAt(stamp: string | null | undefined): number | null {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})?/.exec(stamp ?? "");
+  if (!m) return null;
+  const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], m[7] ? +m[7] : 0);
+  return Number.isNaN(t) ? null : t;
+}
+
 /** The league a run's per-league line names first ("223259 lineup https://..."). */
 const leadLeague = (line: unknown): string | null => {
   const m = typeof line === "string" ? /^(\d+)\s/.exec(line) : null;
@@ -374,10 +383,12 @@ function liveRunOf(p: RoutineProgress, stale: boolean, written: number | null, e
 
 function entryOf(e: QueueEntry, q: QueuePayload): FloorEntry {
   const row = q.leagues.find((l) => l.league === e.league);
-  // A queued entry carries when it was queued; a held one does not, so it stands from the day's
-  // first build (a rebuild keeps holding it), and a queued one without the time from its row's.
+  // A queued entry carries when it was queued; a held one does not, so it stands from its own
+  // solve (the decision stamp), else from the day's first build (a rebuild keeps holding it); a
+  // queued one without the time stands from its row's build.
   const firstBuild = ms(q.built[0]);
-  const builtAt = ms(e.queued_at) ?? (e.queued ? ms(row?.built_at) : firstBuild) ?? ms(row?.built_at) ?? firstBuild ?? ms(q.now) ?? 0;
+  const solved = decisionAt(e.decision);
+  const builtAt = ms(e.queued_at) ?? (e.queued ? ms(row?.built_at) : (solved ?? firstBuild)) ?? ms(row?.built_at) ?? firstBuild ?? ms(q.now) ?? 0;
   const name = (id: number | null) => (id === null ? null : (q.names?.[String(id)] ?? `#${id}`));
   return {
     id: e.id,
@@ -512,7 +523,14 @@ export function floorAt(tl: Timeline, t: number): FloorNow {
   const run = tl.runs.find((r) => within(t, r.start, r.state === "running" ? null : r.end)) ?? null;
   const pass = tl.passes.find((p) => within(t, p.start, p.end)) ?? null;
   if (!run) return { run: null, step: null, unit: null, pass, next: nextTimer(t) };
-  const step = run.steps.find((s) => within(t, s.start, s.end)) ?? run.steps[run.steps.length - 1] ?? null;
+  let step = run.steps.find((s) => within(t, s.start, s.end)) ?? run.steps[run.steps.length - 1] ?? null;
+  // A step the run has not named (its live file says only what it follows) is the pass's own when
+  // a pass is under way: the moves step's Mover, the lineup step's Setter.
+  if (step && step.status === "running" && step.name === null && pass && pass.end === null) {
+    const name = pass.kind === "moves" ? "moves" : "lineup";
+    const done = pass.entries?.total ? ` · entry ${Math.min(pass.entries.done + 1, pass.entries.total)} of ${pass.entries.total}` : "";
+    step = { ...step, name, cast: castOf(name), detail: `${name} under way${done}` };
+  }
   const unit = step?.units.find((u) => t >= u.start && t < u.end) ?? null;
   return { run, step, unit, pass, next: null };
 }

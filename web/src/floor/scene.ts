@@ -52,6 +52,9 @@ export const FLOW_EXPLAIN: { track: "moves" | "daily"; step: string }[] = [
   { track: "daily", step: "morning" },
 ];
 
+/** The glossary term each stage's title opens (Explain, #462). */
+export const FLOW_TERMS = ["reads", "solve", "queue-build", "rules", "veto-window", "execute-time", "out-and-back"] as const;
+
 /** The rack's agents, top down: the Scout lives in the Sources room, the Solver on its rail. */
 export const RACK: Agent[] = ["setter", "starter", "mover"];
 export const rackY = (i: number) => 326 + i * 33;
@@ -736,7 +739,8 @@ function nowPanel(f: ReturnType<typeof floorAt>, t: number, tl: Timeline): NowPa
   const r = f.run;
   const s = f.step;
   const agent = s.cast.agent;
-  const steps = r.steps.map((x) => ({
+  // The step under way as floorAt reads it (an unnamed step under a pass is the pass's).
+  const steps = r.steps.map((y) => (y.status === "running" && y.start === s.start ? s : y)).map((x) => ({
     name: x.name ?? `after ${x.after ?? "the start"}`,
     agent: x.cast.agent,
     state: (x.status === "running" ? "running" : t < x.start ? "todo" : x.status === "skipped" ? "skipped" : x.end === null || t < x.end ? "doing" : "done") as PelletState | "running",

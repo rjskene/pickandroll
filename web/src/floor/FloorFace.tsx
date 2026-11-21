@@ -1,18 +1,20 @@
 // The floor as the in-season page's second face (#461): its own row under the app's bar (all
 // leagues or one, the Live chip, the clock), the Demo's transport row while the Demo runs, the
-// stage, and the panel naming what runs now. Live shows today at rest from the queue alone in
-// this PR; the Demo plays the sample week on the bent clock. Nothing here writes anything but the
-// execute time, through the control the landing already has.
+// stage, and the panel naming what runs now. Live plays the week from the run logs, the live
+// progress files and each day's queue (#462), polled every few seconds while a run or a pass is in
+// flight and once a minute at rest; the Demo plays the sample week on the bent clock. Nothing here
+// writes anything but the execute time, through the control the landing already has.
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { QueuePayload, SeasonSummary, StatusPayload } from "../api";
 import ExecuteTime from "../components/ExecuteTime";
 import { reducedMotion } from "../explain/useClock";
 import { AGENTS, bentClock, centralDate, timeline } from "./model";
 import type { Agent, Timeline } from "./model";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { livePoll, pastDays } from "./live";
 import { api as client } from "../api";
 import { PRIVATE, sampleRoster, sampleWeek } from "./sample";
-import { formatHash } from "../explain/nav";
+import { formatHash, termHash } from "../explain/nav";
 import { TRACKS } from "../explain/tracks/index.ts";
 import FloorStage from "./FloorStage";
 import { FLOW_EXPLAIN, clockText, dayLabel, sceneAt, weekOf } from "./scene";
@@ -109,7 +111,19 @@ export default function FloorFace({
   // The frame time, for the chewing and the spin: the Demo's clock, else the second; none when still.
   const frame = still ? 0 : control.demo ? clk.wall : now / 1000;
 
-  const liveTl: Timeline = useMemo(() => timeline({ queues: queue ? [queue] : [], seasons, status, now }), [queue, seasons, status, now]);
+  // Live: the week's run logs, the run in flight, and the queues of the week's days before today
+  // (read once each; today's is the page's own, polled with these).
+  const today = centralDate(now);
+  const live = useQuery({ queryKey: ["routine-live"], queryFn: client.routineLive, enabled: !control.demo, refetchInterval: (q) => livePoll(q.state.data, queue) });
+  const runs = useQuery({ queryKey: ["routine-runs", today], queryFn: () => client.routineRuns(today, 7), enabled: !control.demo, refetchInterval: livePoll(live.data, queue) });
+  const past = useQueries({
+    queries: pastDays(today).map((d) => ({ queryKey: ["queue-day", d], queryFn: () => client.queue(d), enabled: !control.demo, staleTime: 30 * 60_000, retry: false })),
+    combine: (rs) => rs.map((r) => r.data),
+  });
+  const liveTl: Timeline = useMemo(
+    () => timeline({ runs: runs.data, live: live.data, queues: [...past, queue], seasons, status, now }),
+    [runs.data, live.data, past, queue, seasons, status, now],
+  );
   const tl = control.demo ? sample.tl : liveTl;
   const t = control.demo ? sample.clock.toTime(clk.wall) : now;
   const age = control.demo ? (x: number) => clk.wall - sample.clock.toWall(x) : (x: number) => (now - x) / 1000;
@@ -124,8 +138,14 @@ export default function FloorFace({
         budget: s.league === PRIVATE ? null : 80,
       }));
     }
+    // /seasons can take a while to answer: until it does, the day's queue names the leagues, the
+    // private league first as the landing pins it.
+    if (!seasons.length) {
+      const rows = (queue?.leagues ?? []).map((l) => ({ league: l.league, mine: l.status === "private", adds: null, budget: l.budget ?? null }));
+      return [...rows.filter((l) => l.mine), ...rows.filter((l) => !l.mine)];
+    }
     return seasons.map((s) => ({ league: s.league, mine: !s.public, adds: s.adds ? { used: s.adds.used, limit: s.adds.limit } : null, budget: s.funds?.dollars ?? null }));
-  }, [control.demo, sample, seasons, t]);
+  }, [control.demo, sample, seasons, queue, t]);
   const names = leagues.map((l) => l.league);
   const one = control.one && names.includes(control.one) ? control.one : null;
   const dayQueue = control.demo ? sample.w.queues.find((q) => q.date === centralDate(t)) : queue;
@@ -243,11 +263,11 @@ export default function FloorFace({
         </div>
       )}
       <div className="fl-legend">
-        {(["scout", "solver", "setter", "starter", "mover"] as Agent[]).map((r) => (
-          <span key={r}>
+        {(["scout", "solver", "setter", "starter", "mover", "orchestrator"] as Agent[]).map((r) => (
+          <button key={r} type="button" className="fl-term" onClick={() => onExplainStep(termHash(r))} title={`${AGENTS[r].label} in Explain's glossary`}>
             <i className={`sw c-${r}`} />
             {AGENTS[r].label}: {AGENTS[r].does}
-          </span>
+          </button>
         ))}
         <span>
           <i className="sw ring" />a queued entry
@@ -256,7 +276,7 @@ export default function FloorFace({
           <i className="sw hold" />
           held by a rule
         </span>
-        <span className="dim">a dock opens its league · the hub the Queue · the ledger History · a stage's number its step in Explain</span>
+        <span className="dim">a dock opens its league · the hub the Queue · the ledger History · a stage's number its step in Explain, its title or a name the glossary</span>
       </div>
       <div className="fl-stage">
         <FloorStage
@@ -275,6 +295,7 @@ export default function FloorFace({
               const i = TRACKS.find((x) => x.id === track)?.steps.findIndex((x) => x.id === step) ?? 0;
               onExplainStep(formatHash({ track, step: Math.max(0, i) }, TRACKS));
             },
+            onTerm: (id) => onExplainStep(termHash(id)),
             onAll: () => pick(null),
           }}
         />

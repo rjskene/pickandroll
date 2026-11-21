@@ -47,6 +47,15 @@ export function parseHash(hash: string, tracks: Track[]): Place {
   return { track: m[1], step: Math.min(Math.max(0, at), Math.max(0, n - 1)) };
 }
 
+/** A glossary term opened from outside the screen (the floor, #462): ``#term/<id>``. */
+export const termHash = (id: string): string => `#term/${id}`;
+
+/** The term a ``#term/<id>`` hash names, else null. */
+export function termOfHash(hash: string): string | null {
+  const m = /^#?term\/([a-z0-9-]+)$/.exec(hash.trim());
+  return m ? m[1] : null;
+}
+
 export function formatHash(p: Place, tracks: Track[]): string {
   return `#${p.track}/${stepNumber(tracks.find((t) => t.id === p.track), p.step)}`;
 }
