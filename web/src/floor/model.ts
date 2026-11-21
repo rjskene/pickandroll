@@ -78,16 +78,20 @@ export function castOf(step: string | null): Cast {
   return (step !== null && CAST[step]) || C("orchestrator", "desk", "desk");
 }
 
-/** The routines: their systemd timers on the routine host (Central), and their names on the
- * floor. A routine not here (one added later) plays as a generic run. */
-export const ROUTINES: Readonly<Record<string, { label: string; at: string }>> = {
+/** A routine's systemd timer on the routine host (Central): once a day at ``at``, or every
+ * ``every`` minutes from ``from`` to ``to`` (the pre-tip check, ``09..20:00/5``). */
+export type Timer = { label: string; at: string } | { label: string; every: number; from: string; to: string };
+
+/** The routines: their timers (``ops/vm/*.timer``) and their names on the floor. A routine not
+ * here (one added later) plays as a generic run. */
+export const ROUTINES: Readonly<Record<string, Timer>> = {
   signin: { label: "sign-in check", at: "04:50" },
   daily: { label: "daily", at: "05:00" },
   monday: { label: "Monday", at: "06:00" },
   watchdog: { label: "watchdog", at: "06:45" },
   morning: { label: "morning pass", at: "09:15" },
   late: { label: "late pass", at: "15:00" },
-  pretip: { label: "pre-tip", at: "18:00" },
+  pretip: { label: "pre-tip", every: 5, from: "09:00", to: "20:55" },
   "evening-build": { label: "evening build", at: "21:00" },
   "evening-pass": { label: "evening pass", at: "22:40" },
 };
@@ -135,15 +139,23 @@ export type Hold =
   | { at: "desk"; reason: string }
   | { at: "league"; reason: string };
 
+/** A rebuild's leftover (``SUPERSEDED``, #209): it holds no place and is never due, so it is left
+ * off the floor; the timeline only counts it. */
+export const SUPERSEDED = "superseded by a later solve";
+export const isSuperseded = (e: Pick<QueueEntry, "reason" | "superseded_at">): boolean => !!e.superseded_at || e.reason === SUPERSEDED;
+
 const LEAGUE_REASONS = [
   "the private league is never touched",
   "the moves executor is off in this league",
-  "switched on after today's build: its moves queue at the next build",
 ];
 
-/** The hold of an entry the queue did not queue; null for a queued one. */
-export function holdOf(e: Pick<QueueEntry, "queued" | "reason">): Hold | null {
-  if (e.queued) return null;
+/** The hold of an entry the queue did not queue; null for a queued one and for a superseded one.
+ * The orchestrator's desk takes, on purpose, the two reasons of a claim already placed (on the add,
+ * on the drop: the queue's own check, not a rule of the belt) and any reason the floor does not
+ * know. A drop on Yahoo's can't-cut list is no reason of its own: the keep rule protects it, and
+ * its entry stands at the keep sign as "the drop is protected". */
+export function holdOf(e: Pick<QueueEntry, "queued" | "reason" | "superseded_at">): Hold | null {
+  if (e.queued || isSuperseded(e)) return null;
   const reason: string = e.reason ?? "held";
   const rule = BELT.find((r) => (r.reasons as readonly string[]).includes(reason));
   if (rule) return { at: "belt", rule: rule.key, reason };
@@ -238,6 +250,8 @@ export interface Timeline {
   leagues: FloorLeague[];
   /** Each league's gates on the newest queue that carries them (#458). */
   rules: Record<string, QueueRules>;
+  /** The entries left off the floor as superseded by a later solve, for the ledger. */
+  superseded: number;
   /** When each source was last read, from the status sheet; ESPN is a still station. */
   sources: Record<"bbm" | "yahoo" | "espn", number | null>;
   start: number;
@@ -400,7 +414,8 @@ function passOf(p: RoutinePass): FloorPass {
  * whose run already logged is left out), entries and passes from each day's queue. */
 export function timeline(i: Inputs): Timeline {
   const queues = (i.queues ?? []).filter((q): q is QueuePayload => !!q).sort((a, b) => a.date.localeCompare(b.date));
-  const entries = queues.flatMap((q) => q.entries.map((e) => entryOf(e, q)));
+  const all = queues.flatMap((q) => q.entries.map((e) => ({ e, q })));
+  const entries = all.filter(({ e }) => !isSuperseded(e)).map(({ e, q }) => entryOf(e, q));
   const runs: FloorRun[] = [];
   for (const day of i.runs?.by_day ?? []) {
     for (const log of Object.values(day.runs)) runs.push(runOf(day.date, log, entries));
@@ -440,6 +455,7 @@ export function timeline(i: Inputs): Timeline {
     passes: [...passes.values()].sort((a, b) => a.start - b.start),
     leagues,
     rules,
+    superseded: all.length - entries.length,
     sources: {
       bbm: exportsAt.length ? Math.max(...exportsAt) : null,
       yahoo: yahooAt.length ? Math.max(...yahooAt) : null,
@@ -497,6 +513,8 @@ export function floorAt(tl: Timeline, t: number): FloorNow {
 }
 
 // ---------------------------------------------------------------- the Central clock
+const hm = (s: string): number => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
+
 const CENTRAL = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Chicago",
   year: "numeric",
@@ -515,17 +533,26 @@ function centralParts(t: number): { date: string; minutes: number } {
 /** The Central day of ``t``, ``YYYY-MM-DD``. */
 export const centralDate = (t: number): string => centralParts(t).date;
 
-/** The next routine timer after ``t`` on the Central clock (Monday's only on a Monday). */
+/** Each timer's minutes past Central midnight in a day, the once-a-day timers first, so a check
+ * that falls on a once-a-day timer's minute (the pre-tip at 09:15 or 15:00) gives way to it. */
+const TICKS = Object.entries(ROUTINES)
+  .flatMap(([routine, r]) => {
+    if ("at" in r) return [{ routine, label: r.label, min: hm(r.at), fixed: true }];
+    const ticks = [];
+    for (let m = hm(r.from); m <= hm(r.to); m += r.every) ticks.push({ routine, label: r.label, min: m, fixed: false });
+    return ticks;
+  })
+  .sort((a, b) => a.min - b.min || Number(b.fixed) - Number(a.fixed));
+
+/** The next routine timer after ``t`` on the Central clock: Monday's only on a Monday, the pre-tip
+ * check's next five-minute tick inside its window. */
 export function nextTimer(t: number): { routine: string; label: string; at: number } {
-  const timers = Object.entries(ROUTINES)
-    .map(([routine, r]) => ({ routine, label: r.label, min: hm(r.at) }))
-    .sort((a, b) => a.min - b.min);
   for (let day = 0; day < 8; day++) {
     const base = t + day * 86_400_000;
     const { minutes } = centralParts(base);
     const dayStart = base - minutes * 60_000 - (base % 60_000);
     const weekday = new Date(dayStart + 12 * 3_600_000).getUTCDay();
-    for (const x of timers) {
+    for (const x of TICKS) {
       if (x.routine === "monday" && weekday !== 1) continue;
       const at = dayStart + x.min * 60_000;
       if (at > t) return { routine: x.routine, label: x.label, at };
@@ -534,7 +561,6 @@ export function nextTimer(t: number): { routine: string; label: string; at: numb
   return { routine: "daily", label: ROUTINES.daily.label, at: t + 86_400_000 };
 }
 
-const hm = (s: string): number => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
 
 // ---------------------------------------------------------------- the Demo's bent clock
 export interface BentClock {

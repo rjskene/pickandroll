@@ -1355,7 +1355,8 @@ export type QueueReason =
   | "its drop is on a claim already placed"
   | "a claim on the add is already placed"
   | "held for the week's reserve"
-  | "added within the re-cut days";
+  | "added within the re-cut days"
+  | "superseded by a later solve";
 
 /** An execute pass's outcome for one entry: ``gone`` when another team had the add first. */
 export type MoveOutcome = "would_claim" | "claimed" | "added" | "skipped" | "failed" | "gone";
@@ -1427,6 +1428,8 @@ export interface QueueEntry {
   struck: boolean;
   bid_struck: boolean;
   struck_at?: string;
+  /** When a rebuild superseded the entry (#209): not queued, holding no place; absent otherwise. */
+  superseded_at?: string;
   outcome: MoveOutcome | null;
   outcome_reason: string | null;
   outcome_at: string | null;

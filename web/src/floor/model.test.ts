@@ -107,7 +107,7 @@ test("a day at rest: no run, the next timer, every entry where it rests", () => 
   const f = floorAt(tl, t);
   assert.equal(f.run, null);
   assert.equal(f.step, null);
-  assert.deepEqual(f.next, { routine: "morning", label: "morning pass", at: ct("2026-11-20T09:15:00") });
+  assert.deepEqual(f.next, { routine: "pretip", label: "pre-tip", at: ct("2026-11-20T09:00:00") });
   assert.equal(entryState(tl.entries[0], t), "queued");
   assert.equal(entryState(tl.entries[1], t), "held");
   assert.equal(entryState(tl.entries[0], Date.parse("2026-11-20T11:00:00Z")), "unbuilt");
@@ -118,6 +118,29 @@ test("the next timer: Monday's run only on a Monday, and past the evening pass t
   assert.equal(nextTimer(ct("2026-11-17T05:30:00")).routine, "watchdog");
   assert.deepEqual(nextTimer(ct("2026-11-20T23:00:00")), { routine: "signin", label: "sign-in check", at: ct("2026-11-21T04:50:00") });
   assert.equal(centralDate(ct("2026-11-20T23:59:00")), "2026-11-20");
+});
+
+test("the pre-tip check ticks every five minutes from 09:00 to 20:55, giving way to a timer on its minute", () => {
+  assert.deepEqual(nextTimer(ct("2026-11-20T17:02:00")), { routine: "pretip", label: "pre-tip", at: ct("2026-11-20T17:05:00") });
+  assert.deepEqual(nextTimer(ct("2026-11-20T20:57:00")), { routine: "evening-build", label: "evening build", at: ct("2026-11-20T21:00:00") });
+  assert.deepEqual(nextTimer(ct("2026-11-20T20:52:00")).at, ct("2026-11-20T20:55:00"));
+  // Before the window the first tick is 09:00; on 09:15 and 15:00 the passes take the minute.
+  assert.deepEqual(nextTimer(ct("2026-11-20T08:00:00")), { routine: "pretip", label: "pre-tip", at: ct("2026-11-20T09:00:00") });
+  assert.deepEqual(nextTimer(ct("2026-11-20T09:12:00")), { routine: "morning", label: "morning pass", at: ct("2026-11-20T09:15:00") });
+  assert.deepEqual(nextTimer(ct("2026-11-20T14:58:00")).routine, "late");
+  assert.deepEqual(nextTimer(ct("2026-11-20T15:00:00")), { routine: "pretip", label: "pre-tip", at: ct("2026-11-20T15:05:00") });
+});
+
+test("an entry a later solve superseded is left off the floor: no hold, no state, only a count", () => {
+  const gone = entry({ id: "s1", queued: false, reason: "superseded by a later solve", superseded_at: "2026-11-20T03:10:00Z", executes_at: null });
+  const marked = entry({ id: "s2", queued: false, reason: "superseded by a later solve", executes_at: null });
+  const kept = entry({ id: "k" });
+  assert.equal(holdOf(gone), null);
+  assert.equal(holdOf(marked), null);
+  const tl = timeline({ queues: [queue([gone, marked, kept])], now: Date.parse("2026-11-20T12:00:00Z") });
+  assert.deepEqual(tl.entries.map((e) => e.id), ["k"]);
+  assert.equal(tl.superseded, 2);
+  assert.equal(timeline({ queues: [queue([kept])], now: 0 }).superseded, 0);
 });
 
 test("a logged run: its steps in order, their agents, their units by league", () => {
