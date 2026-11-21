@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { formatHash, parseHash } from "../explain/nav.ts";
 import { TRACKS } from "../explain/tracks/index.ts";
+import { gatesOf } from "./gates.ts";
 import { floorAt, timeline } from "./model.ts";
 import { PRIVATE, PUBLIC, sampleRoster, sampleWeek } from "./sample.ts";
 import { BELT_Y, FLOW, FLOW_EXPLAIN, H, HUB, RAIL_Y, SITES, W, W_MAX, knobs, layout, ledgerAt, rosterAt, sceneAt, sceneWidth, type LeagueRow } from "./scene.ts";
@@ -43,12 +44,19 @@ test("the live moment: the morning pass's last claim out and back, every lamp so
   assert.ok(s.tokens.filter((x) => x.state === "held").length >= 3);
 });
 
-test("before the Thursday pass the floor is at rest and names the next timer (#461)", () => {
+test("before the Thursday pass the floor is at rest; the gates under it name the next timer (#461, #472)", () => {
   const s = at(w.demoAt);
   assert.equal(s.now.title, "Idle");
-  assert.match(s.now.line, /morning pass, Thu Nov 19 09:15/);
+  assert.doesNotMatch(s.now.line, /Next:/);
   assert.equal(s.days.find((d) => d.on)?.date, "2026-11-19");
   assert.ok(s.days[0].tally.claimed > 0);
+  const next = gatesOf(tl, "2026-11-19", w.demoAt).gates.find((g) => g.state === "todo" && g.kind === "routine");
+  assert.equal(next?.label, "morning pass");
+});
+
+test("a day picked for the gates marks the week strip instead of the moment's day (#472)", () => {
+  const s = sceneAt({ tl, t: w.demoAt, age: () => 0, now: 0, leagues: [], one: null, executeTime: "09:15", day: "2026-11-17" });
+  assert.deepEqual(s.days.filter((d) => d.on).map((d) => d.date), ["2026-11-17"]);
 });
 
 test("one league: its roster replaces the docks, the claim under way marks its slot, a landed claim takes it (#461)", () => {

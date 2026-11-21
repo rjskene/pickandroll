@@ -9,6 +9,7 @@ import type {
   QueuePayload,
   QueueRules,
   RoutineLivePayload,
+  RoutinePretipDay,
   RoutinePass,
   RoutineProgress,
   RoutineRunLog,
@@ -97,6 +98,27 @@ export const ROUTINES: Readonly<Record<string, Timer>> = {
 };
 
 export const routineLabel = (routine: string): string => ROUTINES[routine]?.label ?? routine;
+
+/** The orchestrator's own steps at its desk, named in the run reports but not in ``CAST`` (they
+ * fall to the orchestrator there): the API check, the read-backs, the posts, the pre-tip's own. */
+export const DESK_STEPS = [
+  "api", "check", "status", "digest", "post", "record", "scorecard", "sunday", "pretip_due", "push", "day_file", "lineups_logged",
+] as const;
+
+/** Each routine's steps as its run report names them (``scripts/routine.py``), for the gates
+ * strip's lanes before a run reports (#472); held to ``CAST`` and ``DESK_STEPS`` by a test. The
+ * watchdog writes no run report: no steps. */
+export const ROUTINE_AGENTS: Readonly<Record<string, readonly string[]>> = {
+  signin: ["browser", "bbm", "yahoo"],
+  daily: ["api", "exports", "private_pages", "lineup_pages", "refresh", "solve", "start_active", "lineup", "check", "resolve_comebacks", "queue_build", "digest", "post"],
+  monday: ["api", "record", "private_pages", "scorecard", "monday", "solve", "queue_build"],
+  watchdog: [],
+  morning: ["api", "due", "moves", "start_active", "check", "fresh_reads", "comebacks"],
+  late: ["api", "lineup", "due", "moves", "start_active", "resolve", "comebacks", "fresh_reads", "check", "status"],
+  pretip: ["api", "pretip_due", "exports", "private_pages", "lineup_pages", "solve", "push", "day_file", "lineup", "resolve", "check", "status", "lineups_logged"],
+  "evening-build": ["api", "exports", "refresh", "solve", "queue_build"],
+  "evening-pass": ["api", "placed_il", "cancel", "due", "moves", "start_active", "claim_page", "check", "sunday", "fresh_reads"],
+};
 
 // ---------------------------------------------------------------- the rules
 /** The queue's seven rules on the belt, in the order the queue build applies them
@@ -252,6 +274,8 @@ export interface Timeline {
   rules: Record<string, QueueRules>;
   /** The entries left off the floor as superseded by a later solve, for the ledger. */
   superseded: number;
+  /** Each day's pre-tip slates, from the run reports' ``pretip`` block (#472). */
+  pretip: Record<string, RoutinePretipDay>;
   /** When each source was last read, from the status sheet; ESPN is a still station. */
   sources: Record<"bbm" | "yahoo" | "espn", number | null>;
   start: number;
@@ -470,6 +494,7 @@ export function timeline(i: Inputs): Timeline {
     leagues,
     rules,
     superseded: all.length - entries.length,
+    pretip: Object.fromEntries((i.runs?.by_day ?? []).filter((d) => d.pretip).map((d) => [d.date, d.pretip as RoutinePretipDay])),
     sources: {
       bbm: exportsAt.length ? Math.max(...exportsAt) : null,
       yahoo: yahooAt.length ? Math.max(...yahooAt) : null,
@@ -555,6 +580,21 @@ function centralParts(t: number): { date: string; minutes: number } {
 
 /** The Central day of ``t``, ``YYYY-MM-DD``. */
 export const centralDate = (t: number): string => centralParts(t).date;
+
+/** ``minutes`` past Central midnight on ``date`` (to 24:00, the next midnight), as epoch ms. */
+export function centralAt(date: string, minutes: number): number {
+  const base = Date.parse(`${date}T00:00:00Z`);
+  if (minutes >= 1440) return centralAt(new Date(base + 86_400_000).toISOString().slice(0, 10), minutes - 1440);
+  for (const off of [6, 5]) {
+    const t = base + (minutes + off * 60) * 60_000;
+    const p = centralParts(t);
+    if (p.date === date && p.minutes === Math.floor(minutes)) return t;
+  }
+  return base + (minutes + 6 * 60) * 60_000;
+}
+
+/** ``HH:MM`` as minutes past midnight. */
+export const minutesOf = hm;
 
 /** Each timer's minutes past Central midnight in a day, the once-a-day timers first, so a check
  * that falls on a once-a-day timer's minute (the pre-tip at 09:15 or 15:00) gives way to it. */

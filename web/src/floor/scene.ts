@@ -176,6 +176,8 @@ export interface SceneInput {
    * on it as they land (the Demo, with ``claims``). */
   roster?: { slot: string; name: string | null }[] | null;
   claims?: boolean;
+  /** The day picked on the week strip for the gates (#472), when not the moment's own. */
+  day?: string | null;
 }
 
 export interface Tile {
@@ -374,7 +376,7 @@ export function sceneAt(i: SceneInput): Scene {
     const pips = tl.runs
       .filter((r) => r.date === date)
       .map((r) => ({ title: `${hhmm(r.start)} ${r.label}`, state: (t < r.start ? "todo" : r.end === null || t < r.end ? "doing" : "done") as PelletState }));
-    return { date, label: dayLabel(date), on: date === today, tally, pips };
+    return { date, label: dayLabel(date), on: date === (i.day ?? today), tally, pips };
   });
 
   // The engine's lamps: outlined once read today, tinted once solved, filled while solving.
@@ -653,7 +655,7 @@ export function sceneAt(i: SceneInput): Scene {
     steps3,
     sub,
     ledger: ledgerAt(tl, t, one),
-    now: nowPanel(f, t, tl),
+    now: nowPanel(f, t),
   };
 }
 
@@ -794,17 +796,15 @@ function walk(pts: [number, number][], d: number): [number, number] {
   return pts[pts.length - 1];
 }
 
-/** The panel under the floor: the run under way (its steps, its unit) or, at rest, the next timer. */
-function nowPanel(f: ReturnType<typeof floorAt>, t: number, tl: Timeline): NowPanel {
+/** The panel under the floor: the run under way (its steps, its unit) or, at rest, a line; the
+ * day's gates under the stage show what ran and what comes next (#472). */
+function nowPanel(f: ReturnType<typeof floorAt>, t: number): NowPanel {
   if (!f.run || !f.step) {
-    // The next run the timeline holds (the Demo's week), else the next timer.
-    const ahead = tl.runs.find((r) => r.start > t);
-    const nx = ahead ? { label: ahead.label, at: ahead.start } : f.next;
     return {
       title: "Idle",
       agent: null,
       when: "",
-      line: nx ? `Next: ${nx.label}, ${dayLabel(centralDate(nx.at))} ${hhmm(nx.at)}. Nothing runs between the timers.` : "Nothing runs between the timers.",
+      line: "Nothing runs between the timers. The gates below show what ran today and what comes next.",
       steps: [],
       unit: null,
     };

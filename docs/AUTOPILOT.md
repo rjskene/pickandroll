@@ -37,7 +37,8 @@ the one thing it can change is the execute time, through the same control the la
 | on the floor | what it shows | where it comes from |
 |---|---|---|
 | the week strip | each day's runs as pips; the claims landed, held, failed or skipped | `GET /routine/runs?days=7`, and each day's `GET /autopilot/queue?date=` |
-| the "now" panel and the agent at work | the run under way, its steps and the step in progress; at rest, the next timer | `GET /routine/live` (the progress file `data/routine/live/<routine>.json`, rewritten after each step and removed when the run ends); the timers are in `web/src/floor/model.ts` |
+| the "now" panel and the agent at work | the run under way, its steps and the step in progress | `GET /routine/live` (the progress file `data/routine/live/<routine>.json`, rewritten after each step and removed when the run ends); the timers are in `web/src/floor/model.ts` |
+| the day's gates (#472) | under the stage, one lane per agent from 04:30 to midnight Central: each routine's steps as bars (done, failed red, nothing to do grey), a run in flight pulsing, a gate still to come hollow, one 20 minutes late with no report amber and "not run", the watchdog a plain tick (it writes no report), the pre-tip check by its slates (one that would start past `latest_start` grey, not run by design), and the execute times on the Mover's lane with their counts | the run reports and their `pretip` block (each slate's start, tip-off and attempts, from `data/routine/pretip/<date>.json` and the day's tip-offs), `GET /routine/live`, the queue's `executes_at`; each routine's steps in `ROUTINE_AGENTS` (`web/src/floor/model.ts`) |
 | the engine's lamps | outlined once a league is read, tinted once it is solved, filled while it solves | the run's steps and their per-league lines |
 | the belt and the Solver's two signs | each held entry in the bay of the rule that held it; the keep rule and the season guard on the Solver | the queue's entries and reasons; each rule's knob from the queue's `settings.rules` |
 | the execute-time gate | the time it opens and the entries waiting at it | the queue's `settings.in_force` and `executes_at` |
@@ -47,6 +48,9 @@ the one thing it can change is the execute time, through the same control the la
 
 An entry stands on the floor from its own solve: its queue time when queued, else its decision
 stamp, else the day's first build.
+
+The gates follow the day picked on the week strip: today live, a past day its done and missed
+gates, a future day its gates still to come (a day of the Demo moves the bent clock there instead).
 
 The floor polls every three seconds while a run or a pass is in flight, once a minute at rest, and
 never while the page is hidden.

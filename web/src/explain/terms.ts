@@ -35,7 +35,8 @@ export const GLOSSARY: Term[] = [
   { id: "live-guard", term: "Live guard", def: "Enough dry-run days in the log (lineups: seven, two fully checked), no stop file, the user's click; read again on every live run." },
   // The floor (#462): the in-season page's second face, its cast and the ribbon's stages.
   { id: "the-floor", term: "The floor", def: "The in-season page's second face: the agents at work over the week, from the run logs, the live progress files and each day's queue." },
-  { id: "demo", term: "Demo", def: "The floor's sample week on a bent clock: made-up leagues and players, the idle hours skipped; never the user's leagues." },
+  { id: "demo", term: "Demo", def: "The floor's sample week on a bent clock: made-up leagues and players, idle hours skipped, never the user's. Live chip or d starts it, the arrows move its day." },
+  { id: "gates", term: "The day's gates", def: "The strip under the floor: one lane per agent, what ran, what runs and what is to come. A day on the week strip picks its day; today or the Live chip clears it." },
   { id: "orchestrator", term: "Orchestrator", def: "The routine itself, the floor's hub: starts each run on its timer, checks the API, builds the queue and posts the digest." },
   { id: "scout", term: "Scout", def: "Reads and clicks nothing: saves the projection exports, reads each league's Yahoo pages, and reads the claim pages before a pass." },
   { id: "solver", term: "Solver", def: "Solves each league's recommended moves and lineups; the keep rule and the season guard are its two signs." },

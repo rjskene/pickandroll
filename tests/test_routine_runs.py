@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from pickandroll.api import routine_runs as rr
-from pickandroll.api import season_knobs
+from pickandroll.api import season_knobs, season_pretip
 from pickandroll.season import reserve as rs
 
 from .test_moves_queue import PRIVATE, queued, row_of
@@ -49,7 +49,12 @@ def test_the_runs_of_a_window_of_days_are_served_as_written_keyed_by_day_and_rou
     assert all(d["unread"] == [] for d in out["by_day"])
     # One day by default; a day with no run is listed empty.
     [one] = rr.runs(tmp_path, TODAY + timedelta(days=1))["by_day"]
-    assert one == {"date": (TODAY + timedelta(days=1)).isoformat(), "runs": {}, "unread": []}
+    assert one == {
+        "date": (TODAY + timedelta(days=1)).isoformat(),
+        "runs": {},
+        "unread": [],
+        "pretip": {"enabled": False, "lead_min": 60, "latest_start": "20:40", "slates": []},
+    }
 
 
 def test_a_file_that_does_not_read_is_listed_with_its_reason_never_dropped(tmp_path):
@@ -117,6 +122,128 @@ def test_the_routes_serve_both_over_the_apps_data_folder(client):  # noqa: F811
     os.utime(folder / "daily.json", (old, old))
     [row] = client.get("/routine/live").json()["live"]
     assert row["routine"] == "daily" and row["stale"] and row["progress"] == {"step": "refresh"}
+
+
+# --------------------------------------------------------------------------- the pre-tip block
+TIPS = {"BOS": "2026-11-20T00:00:00+00:00", "LAL": "2026-11-20T03:30:00+00:00"}
+
+
+def pretip_on(data_dir) -> None:
+    folder = season_knobs.autopilot_dir(data_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "executor.json").write_text(json.dumps({"pretip": {"enabled": True}}))
+
+
+def attempt(slate: str, at: str, **kw) -> season_pretip.PretipRun:
+    return season_pretip.PretipRun(slate=slate, started_at=at, moves=[{"add": 1, "drop": 2}], **kw)
+
+
+def test_each_day_carries_its_pretip_slates_planned_from_the_tips_with_their_attempts(tmp_path):
+    day = date(2026, 11, 19)
+    pretip_on(tmp_path)
+    season_pretip.record(
+        tmp_path,
+        day,
+        attempt(
+            "first",
+            "2026-11-19T17:00:10-06:00",
+            outcome="failed",
+            reason="push failed",
+            solved_at="2026-11-19T17:05:00-06:00",
+        ),
+    )
+    season_pretip.record(
+        tmp_path,
+        day,
+        attempt(
+            "first",
+            "2026-11-19T17:10:10-06:00",
+            outcome="done",
+            solved_at="2026-11-19T17:12:00-06:00",
+            pushed_at="2026-11-19T17:12:01-06:00",
+            lineups_at="2026-11-19T17:18:00-06:00",
+        ),
+    )
+    asked = []
+
+    def tips_of(d):
+        asked.append(d)
+        return TIPS if d == day else None
+
+    out = rr.runs(tmp_path, day, 2, tips_of)
+    assert asked == [day - timedelta(days=1), day]
+    before, block = (d["pretip"] for d in out["by_day"])
+    assert before == {"enabled": True, "lead_min": 60, "latest_start": "20:40", "slates": []}
+    assert block["enabled"] and block["lead_min"] == 60
+    first, late = block["slates"]
+    # Planned from the tip-offs as the pass plans them: start an hour before, until 15 minutes before.
+    assert first["slate"] == "first" and first["tip"] == "2026-11-19T18:00:00-06:00"
+    assert first["start_at"] == "2026-11-19T17:00:00-06:00"
+    assert first["until"] == "2026-11-19T17:45:00-06:00"
+    assert first["done"] and not first["missed"]
+    assert [a["outcome"] for a in first["attempts"]] == ["failed", "done"]
+    assert first["attempts"][0]["reason"] == "push failed"
+    assert first["attempts"][1]["lineups_at"] == "2026-11-19T17:18:00-06:00"
+    # The attempts carry their times and outcome only: never the moves or the pulls.
+    assert set(first["attempts"][0]) == set(rr.ATTEMPT_FIELDS)
+    assert late == {
+        "slate": "late",
+        "tip": "2026-11-19T21:30:00-06:00",
+        "start_at": "2026-11-19T20:30:00-06:00",
+        "until": "2026-11-19T21:15:00-06:00",
+        "past_latest": False,
+        "done": False,
+        "missed": False,
+        "attempts": [],
+    }
+
+
+def test_a_kept_slate_without_a_schedule_copy_or_missed_is_served_from_the_day_file(tmp_path):
+    day = date(2026, 11, 19)
+    season_pretip.record(
+        tmp_path, day, attempt("late", "2026-11-19T20:46:00-06:00", outcome="missed")
+    )
+    block = rr.runs(tmp_path, day)["by_day"][0]["pretip"]
+    assert block["enabled"] is False  # the knob is off by default
+    [late] = block["slates"]
+    assert late["slate"] == "late" and late["tip"] is None and late["start_at"] is None
+    assert late["past_latest"] is False
+    assert late["missed"] and not late["done"]
+    assert [a["outcome"] for a in late["attempts"]] == ["missed"]
+    # A day file that does not read is no slate.
+    season_pretip.day_path(tmp_path, day).write_text("{oops")
+    assert rr.runs(tmp_path, day)["by_day"][0]["pretip"]["slates"] == []
+
+
+def test_a_slate_that_would_start_past_latest_start_is_marked_so_never_due(tmp_path):
+    day = date(2026, 11, 19)
+    pretip_on(tmp_path)
+    # A 21:45 CT late tip-off: its start, 20:45, is past latest_start 20:40.
+    tips = {"BOS": "2026-11-20T00:00:00+00:00", "LAL": "2026-11-20T03:45:00+00:00"}
+    block = rr.runs(tmp_path, day, 1, lambda d: tips)["by_day"][0]["pretip"]
+    assert block["latest_start"] == "20:40"
+    first, late = block["slates"]
+    assert late["start_at"] == "2026-11-19T20:45:00-06:00"
+    assert late["past_latest"] is True and first["past_latest"] is False
+    # And due() agrees: at 20:50 the late slate is not made due.
+    now = datetime(2026, 11, 19, 20, 50, tzinfo=rr.CENTRAL)
+    out = season_pretip.due(tmp_path, now, day, tips, stopped=False)
+    assert not out["due"] and "would start past 20:40" in out["reason"]
+
+
+def test_the_route_plans_the_slates_from_the_schedule_copy(client):  # noqa: F811
+    data = client.data_dir
+    pretip_on(data)
+    folder = data / "schedule"
+    folder.mkdir(parents=True, exist_ok=True)
+    tips = {"BOS": f"{TODAY.isoformat()}T23:00:00+00:00"}
+    (folder / f"{TODAY.isoformat()}.json").write_text(
+        json.dumps({"fetched_at": NOW.isoformat(), "teams": ["BOS"], "tips": tips})
+    )
+    [day] = client.get("/routine/runs").json()["by_day"]
+    [first] = day["pretip"]["slates"]
+    assert first["slate"] == "first" and first["attempts"] == [] and not first["done"]
+    assert first["tip"] == season_pretip.slates(tips, season_pretip.settings(data))[0]["tip"]
 
 
 # --------------------------------------------------------------------------- the rule knobs
