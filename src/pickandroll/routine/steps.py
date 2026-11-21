@@ -164,6 +164,7 @@ def refresh_all(
     stopped (503, after the longest ``Retry-After`` and at least ten minutes) while the clock is
     before ``retry_before``; a 502 is retried once in the same pass. A league that fails twice is
     reported failed with its data a day old."""
+    ctx.report.begin(name)  # the floor names it (#459)
     if ctx.dry_run:
         ctx.report.skipped(
             name, f"dry run: would refresh {len(leagues)} leagues, {REFRESH_PACE_S:.0f} s apart"
@@ -229,6 +230,7 @@ def solve_all(
     entry (#125); nothing is posted or changed by it. The detail names the leagues whose search
     the budget cut (#306) or stopped on a cycle (#364), from each answer's ``search``, and, for a
     re-solve, each league's reasons (``why``, #415)."""
+    ctx.report.begin(name)  # the floor names it (#459)
     left_out = [k for k in leagues if k in ctx.skip_solve]
     leagues = [k for k in leagues if k not in ctx.skip_solve]
     note = f"; left out by --skip-solve: {', '.join(left_out)}" if left_out else ""
@@ -280,6 +282,7 @@ def solve_all(
 def queue_build(ctx: Context, name: str = "queue_build") -> dict[str, Any] | None:
     """``POST /autopilot/queue/build``: the day's queue from the decision log; solves nothing,
     clicks nothing."""
+    ctx.report.begin(name)  # the floor names it (#459)
     if ctx.dry_run:
         ctx.report.skipped(name, "dry run: would build the queue")
         return None
@@ -420,6 +423,7 @@ def resolve_comebacks(ctx: Context, leagues: Sequence[str], since: datetime) -> 
 
     The detail names each league's reason."""
     name = "resolve_comebacks"
+    ctx.report.begin(name)  # the floor names it (#459)
     if ctx.dry_run:
         ctx.report.skipped(
             name,
@@ -909,6 +913,7 @@ def post_markdown(
 
 
 def post_digest(ctx: Context, payload: dict[str, Any] | None) -> None:
+    ctx.report.begin("post")  # the floor names it (#459)
     if payload is None:
         ctx.report.skipped("post", "no digest to post")
         return
@@ -1166,6 +1171,7 @@ def export_all(
     Sunday); from ``by`` on (the evening's 21:15) the kinds still to make are skipped and
     named. A refused import is reported with its line and never retried. ``kinds``: the ones
     this run makes (the pre-tip pass's two, #355)."""
+    ctx.report.begin(name)  # the floor names it (#459)
     today = ctx.now()
     lines: dict[str, str] = {}
     if today.weekday() in not_due_on and "week_this" in kinds:
