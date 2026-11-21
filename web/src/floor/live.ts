@@ -16,6 +16,12 @@ export function inFlight(live: RoutineLivePayload | null | undefined, queue: Pic
 export const livePoll = (live: RoutineLivePayload | null | undefined, queue: Pick<QueuePayload, "active"> | null | undefined): number =>
   inFlight(live, queue) ? POLL.busy : POLL.rest;
 
-/** The days of the week strip before today, whose queues the live floor reads once (today's is
- * the page's own queue). */
-export const pastDays = (today: string): string[] => weekOf(Date.parse(`${today}T18:00:00Z`)).filter((d) => d < today);
+/** The days of the Central week, up to and including the Central today, whose queues the live
+ * floor reads itself: every one the page's own queue does not cover (#468). The page's queue is
+ * the NBA day (Eastern), so from 23:00 to midnight Central it is already tomorrow's, and the
+ * Central today is read here. Before the page's queue answers (``covered`` null) only the days
+ * before today, so today is not read twice. */
+export function weekQueueDays(today: string, covered: string | null): string[] {
+  const week = weekOf(Date.parse(`${today}T18:00:00Z`));
+  return covered === null ? week.filter((d) => d < today) : week.filter((d) => d <= today && d !== covered);
+}

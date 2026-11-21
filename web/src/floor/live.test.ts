@@ -6,8 +6,8 @@ import type { RoutineLivePayload } from "../api.ts";
 import { GLOSSARY, termById } from "../explain/terms.ts";
 import { termHash, termOfHash, parseHash } from "../explain/nav.ts";
 import { TRACKS } from "../explain/tracks/index.ts";
-import { AGENTS, timeline } from "./model.ts";
-import { POLL, inFlight, livePoll, pastDays } from "./live.ts";
+import { AGENTS, centralDate, timeline } from "./model.ts";
+import { POLL, inFlight, livePoll, weekQueueDays } from "./live.ts";
 import { FLOW, FLOW_TERMS, sceneAt } from "./scene.ts";
 
 const liveOf = (stale: boolean, progress = true): RoutineLivePayload => ({
@@ -42,10 +42,50 @@ test("the floor polls every few seconds while a run or a pass is in flight, once
   assert.equal(inFlight(null, { active: { id: "p" } as never }), true);
 });
 
-test("the week strip reads the queues of the week's days before today (#462)", () => {
-  assert.deepEqual(pastDays("2026-11-20"), ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]);
-  assert.deepEqual(pastDays("2026-11-16"), []);
-  assert.deepEqual(pastDays("2026-11-22"), ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21"]);
+test("the floor reads every day of the Central week to today that the page's queue (the NBA day) does not cover (#468)", () => {
+  const ct = (s: string) => Date.parse(`${s}-06:00`);
+  // the page's queue is the NBA (Eastern) day: from 23:00 Central it is already tomorrow's
+  const nbaDay = (t: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(t));
+  const days = (at: string) => {
+    const t = ct(at);
+    return weekQueueDays(centralDate(t), nbaDay(t));
+  };
+  // Friday 22:59: the page's queue is Friday's, the floor reads Monday to Thursday
+  assert.deepEqual(days("2026-11-20T22:59"), ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]);
+  // Friday 23:01: the page's queue is Saturday's, so the floor reads Friday too
+  assert.equal(nbaDay(ct("2026-11-20T23:01")), "2026-11-21");
+  assert.deepEqual(days("2026-11-20T23:01"), ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20"]);
+  // Sunday 22:59: Monday to Saturday; Sunday 23:01, the page on next Monday: the whole week
+  assert.deepEqual(days("2026-11-22T22:59"), ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21"]);
+  assert.deepEqual(days("2026-11-22T23:01"), ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22"]);
+  // Monday 23:01 starts the next week: Monday's own queue only
+  assert.deepEqual(days("2026-11-23T23:01"), ["2026-11-23"]);
+  // before the page's queue answers, only the days before today
+  assert.deepEqual(weekQueueDays("2026-11-20", null), ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19"]);
+  assert.deepEqual(weekQueueDays("2026-11-16", null), []);
+});
+
+test("at 23:01 Central Friday's moves stay on the floor: its tally, its ledger and the hub (#468)", () => {
+  const ct = (s: string) => Date.parse(`${s}-06:00`);
+  const t = ct("2026-11-20T23:01");
+  const settings = { execute_time: "09:00", at: null, by: null, set: false, sunday_execute_time: null, sunday_at: null, sunday_by: null, in_force: "09:00" };
+  const base = { execute_time: "09:00", leagues: [], settings, stop: false, now: "2026-11-21T05:01:00Z", names: { "7001": "Ari Vance", "7002": "Bo Lindqvist" } };
+  const e = (id: string, over: Record<string, unknown>) => ({
+    id, date: "2026-11-20", league: "900101", scoring: "categories", set: "three", decision: null, add: 7001, drop: 7002, from: null, availability: "W", judged: "three",
+    gain: 0.4, value: 0.4, season: 0.1, season_costly: false, flag: null, floor: null, bid: { amount: 2 }, queued: true, reason: null, rank: null,
+    queued_at: "2026-11-21T03:20:08Z", executes_at: "2026-11-21T04:20:08Z", struck: false, bid_struck: false, outcome: null, outcome_reason: null, outcome_at: null, resolved: null, ...over,
+  });
+  const friday = { ...base, date: "2026-11-20", built: ["2026-11-20T11:42:07Z"], entries: [e("a", { outcome: "claimed", outcome_at: "2026-11-21T04:40:51Z" }), e("b", { executes_at: "2026-11-21T15:00:00Z" })] } as never;
+  const saturday = { ...base, date: "2026-11-21", built: [], entries: [] } as never;
+  const scene = (queues: unknown[]) => sceneAt({ tl: timeline({ queues: queues as never, now: t }), t, age: (x) => (t - x) / 1000, now: 0, leagues: [], one: null, executeTime: "09:00" });
+  const fixed = scene([friday, saturday]);
+  assert.equal(fixed.days.find((d) => d.date === "2026-11-20")?.tally.claimed, 1);
+  assert.match(fixed.ledger[0].text, /^claimed · 900101/);
+  assert.equal(fixed.hub.text, "1 waiting · 0 held");
+  // the page's queue alone (what 3cb39ef read): Friday gone, the hub empty
+  const broken = scene([saturday]);
+  assert.equal(broken.days.find((d) => d.date === "2026-11-20")?.tally.claimed, 0);
+  assert.equal(broken.hub.text, "queue empty");
 });
 
 test("a run in flight plays on the floor: the panel names the run and its step, its agent at work (#462)", () => {
