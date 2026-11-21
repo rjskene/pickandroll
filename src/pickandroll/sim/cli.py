@@ -640,7 +640,9 @@ def audit_rules(league_rules: shapes.LeagueRules, grid: shapes.Grid) -> tuple[au
     (``audit.has_round``). Every shape of the ruled grid has one: a replay's league is drafted
     with its bracket (``run.replay_setup``)."""
     bracket = any(s.playoff_teams > 1 and s.playoff_weeks > 0 for s in grid.shapes)
-    return audit.rules_of(league_rules.waivers, league_rules.waiver_rule, bracket)
+    return audit.rules_of(
+        league_rules.waivers, league_rules.waiver_rule, bracket, league_rules.same_day
+    )
 
 
 def audited(
@@ -1011,6 +1013,7 @@ def replay_setup_of(
         waiver_rule=league_rules.waiver_rule,
         rival_bids=league_rules.rival_bids,
         rival_prices=league_rules.rival_prices,
+        lineup_from=league_rules.lineup_from,
     )
 
 
@@ -1543,8 +1546,23 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 20
+REPLAY_VERSION = 21
 REPLAY_VERSION_WHY = (
+    "21: a league whose free-agent adds play the same day: a league rule of the run, "
+    "lineup_from (--lineup-from, tomorrow by default, today); under today a free agent's add "
+    "decided on a day lands that day, once every seat has decided on the morning's wire and "
+    "before the day's lineups, in the day's rotation, with its drop and its held-slot moves, "
+    "and his line of the day is his new team's; a claim is decided as before and charged to "
+    "the week it clears in (on a Monday the week starts over before the morning); the seat's "
+    "problem is the live build's (a free agent effective today, the weeks' own add windows); "
+    "the audit holds such a league to lands_same_day in the place of lands_next_day, and its "
+    "claim rules read each winner's roster after the morning, before the day's landing; the "
+    "record names the rule in the league's rules, the label, the execution model "
+    "(free_agents_same_day, with a name of its own for each kind of waivers) and lineup_note; a "
+    "screen's or a tune's world names the flag only when named, and the rule is part of the "
+    "league kind; under continuous waivers every add is a claim and the rule moves nothing; "
+    "with the rule left off the figures are version 20's. Beside it, --league adds takes any "
+    "positive whole count (the private league allows five), the grid's own axis unchanged. "
     "20: the union pool as an arm's choice: an arm may set a fifth field, guard_pool, the size "
     "of the guard's list (0, the default, is off); above 0, while the arm's guard blocks, the "
     "exact tier's three weeks' set, its weighted search and under the queue's rule its week's "
@@ -2349,6 +2367,7 @@ def replay_plan(
         h2h = shapes.parse_h2h(args.scoring, args.h2h)
         waiver_rule = shapes.parse_waiver_rule(waivers, args.waiver_rule)
         rival_bids = shapes.parse_rival_bids(waivers, args.rival_bids)
+        lineup_from = shapes.parse_lineup_from(getattr(args, "lineup_from", None))
         league_rules = shapes.LeagueRules(
             args.scoring,
             table,
@@ -2360,6 +2379,7 @@ def replay_plan(
             h2h,
             waiver_rule,
             rival_bids,
+            lineup_from=lineup_from,
         )
     except ValueError as e:
         print(f"refused: {e}")
@@ -2686,7 +2706,7 @@ def replay_payload(
         fit,
         workers,
         arms,
-        policy.executions_of(league_rules.waivers, league_rules.waiver_rule),
+        policy.executions_of(league_rules.waivers, league_rules.waiver_rule, league_rules.same_day),
         policy.measure(league_rules.points is not None, league_rules.one_win),
         plan.book,
     )
@@ -3313,6 +3333,22 @@ FAAB_BOOK = (
 )
 #: How a league under continuous waivers adds (#172, PR Fc), in such a run's league block, by
 #: priority or by FAAB; a run with the rule not named has none.
+#: A same-day run's note on its lineup rule (PR today).
+LINEUP_NOTE = (
+    "a free agent's add plays the day it is made: every seat decides on the morning's wire, then "
+    "the day's free-agent adds land in the day's rotation (an add an earlier team took is lost, "
+    "its drop kept), with their drops and held-slot moves, before the day's lineups, so an added "
+    "player may start that day and his line of the day is his new team's, a dropped one's "
+    "nobody's; a move is charged to the week of its day, with no shift. A claim is decided as "
+    "before, on a dropped player's clear date. Not modelled: a game's tip-off (every add of the "
+    "day plays that day), the hour a manager acts, news between the morning and the tip"
+)
+#: The same rule under continuous waivers, where it moves nothing.
+LINEUP_NOTE_CONTINUOUS = (
+    "a free agent's add would play the day it is made, but under continuous waivers every add is "
+    "a claim, decided the next morning or on a dropped player's clear date, so the rule moves "
+    "nothing: the season is the season of the default rule"
+)
 WAIVER_RULE_NOTE = (
     "continuous waivers: every unowned player is on waivers at all times, the draft's leftovers "
     "from the first morning, so every add is a claim: one on a player nobody dropped lately is "
@@ -3351,7 +3387,19 @@ def league_block(
         **({"faab_note": faab_note(league_rules)} if league_rules.bidding else {}),
         **({"h2h_note": H2H_NOTE} if league_rules.h2h == EACH_CATEGORY else {}),
         **({"waiver_rule_note": WAIVER_RULE_NOTE} if league_rules.continuous else {}),
+        **(
+            {"lineup_note": lineup_note(league_rules)}
+            if league_rules.lineup_from == shapes.TODAY
+            else {}
+        ),
     }
+
+
+def lineup_note(league_rules: shapes.LeagueRules) -> str:
+    """A same-day run's note on its lineup rule (PR today): :data:`LINEUP_NOTE`, and under
+    continuous waivers :data:`LINEUP_NOTE_CONTINUOUS`, since there every add is a claim and the
+    rule moves nothing."""
+    return LINEUP_NOTE_CONTINUOUS if league_rules.continuous else LINEUP_NOTE
 
 
 def faab_note(league_rules: shapes.LeagueRules) -> str:
@@ -3540,10 +3588,14 @@ SCREEN_WORLD = (
     "rival_scale",
     "rival_bids",
     "h2h",
+    "lineup_from",
     "news_sd",
     "paths",
     "seed",
 )
+#: World flags added after a screen's record was fixed (PR today's ``lineup_from``): recorded only
+#: when named, so a screen or a tune that names none records the world it did before.
+WORLD_IF_NAMED = ("lineup_from",)
 #: What a screen is, in its record.
 SCREEN_NOTE = (
     "a screen nudges each lever of its list once against the baseline arm, on the same paths, "
@@ -3766,7 +3818,11 @@ def screen_spec(
         "replay_version": REPLAY_VERSION,
         "arm": dict(base),
         "levers": list(names),
-        "world": {k: read[k] if k in read else getattr(args, k) for k in SCREEN_WORLD},
+        "world": {
+            k: read[k] if k in read else getattr(args, k)
+            for k in SCREEN_WORLD
+            if k not in WORLD_IF_NAMED or getattr(args, k, None) is not None
+        },
         "fit_sha": plan.sha,
         **({} if plan.book is None else {"book_sha": plan.book[1]}),
     }
@@ -4122,6 +4178,7 @@ KIND_FLAGS = (
     "waiver_rule",
     "budget",
     "h2h",
+    "lineup_from",
 )
 #: What a tune says of a screen played under another code, fit or world than its own.
 SCREEN_DIFFERS_NOTE = (
@@ -5453,7 +5510,8 @@ def _world_args(p: argparse.ArgumentParser) -> None:
         default=None,
         metavar="KEY=VALUE,...",
         help="one league shape for the whole run, as teams=10,slots=15,adds=none,playoffs=4/2: "
-        "each a value of the grid's, a key left out the fixed shape's; not with --grid full",
+        "teams, slots and playoffs each a value of the grid's, adds any positive whole count or "
+        "none, a key left out the fixed shape's; not with --grid full",
     )
     p.add_argument(
         "--scoring",
@@ -5499,6 +5557,15 @@ def _world_args(p: argparse.ArgumentParser) -> None:
         help="with --waivers priority or faab, which adds are claims: dropped, a dropped player's "
         "in his wait, every other add a free agent's the next morning; continuous, every add, "
         "one on a player nobody dropped lately decided the next morning (default dropped)",
+    )
+    p.add_argument(
+        "--lineup-from",
+        default=None,
+        metavar="DAY",
+        help="when a free agent's add plays, in every seat's league: tomorrow, it lands the "
+        "morning after it is made; today, the day it is made, before that day's lineups (a claim "
+        "is decided as before, so under continuous waivers today moves nothing) (default "
+        "tomorrow)",
     )
     p.add_argument(
         "--budget",
