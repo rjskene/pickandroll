@@ -144,6 +144,7 @@ def browser_pass(
     (kind, trigger, entries) the record is opened, told each opening and closed. Gives the
     leagues whose pages were opened. In a dry run, without a browser, or signed out, the plan
     is reported and nothing opens. ``idle`` is the step's line when nothing is planned."""
+    ctx.report.begin(name)  # the floor names it (#459)
     if not openings:
         ctx.report.skipped(name, idle)
         return []
@@ -873,6 +874,7 @@ def run(name: str, ctx: Context, api: str, force: bool = False) -> Report:
     report = ctx.report
     try:
         check_window(ctx, name, force)
+        report.start_live()  # past the window: a refused run writes nothing
         ROUTINES[name](ctx, api)
     except Refused:
         pass

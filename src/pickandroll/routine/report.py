@@ -1,9 +1,11 @@
 """What a run says about itself: its steps, the alerts worth a push, the written summary, the
-JSON run log and the daily marker the freshness light reads (``season/status.py``)."""
+JSON run log and the daily marker the freshness light reads (``season/status.py``); and, while it
+runs, its live progress file (FLOOR, #459), which the floor reads through ``GET /routine/live``."""
 
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +26,8 @@ MARKER_STEPS = (
 )
 #: The exports' kinds (``season.status.EXPORTS``).
 EXPORT_KINDS = ("ros", "week_this", "week_next", "actual_7d", "actual_14d")
+#: The live progress files' folder under the data folder (``api.routine_runs.LIVE_DIR``).
+LIVE_DIR = ("routine", "live")
 
 
 @dataclass
@@ -46,6 +50,38 @@ class Step:
         return out
 
 
+def live_path(data_dir: Path, routine: str) -> Path:
+    """``data/routine/live/<routine>.json``: one file a routine, as one run of a routine runs at
+    a time (a systemd unit is never started twice)."""
+    return data_dir.joinpath(*LIVE_DIR) / f"{routine}.json"
+
+
+def _warn(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
+@dataclass
+class Live:
+    """A run's live progress file (FLOOR, #459): written when the run starts and after each step,
+    each write a temporary file and a replace, and removed when the run ends on whatever path.
+    A write or a removal that fails is logged and never fails or stops the run."""
+
+    path: Path
+    warn: Callable[[str], None] = _warn
+
+    def write(self, report: Report) -> None:
+        try:
+            write_json(self.path, progress(report))
+        except (OSError, TypeError, ValueError) as exc:
+            self.warn(f"live progress not written to {self.path}: {exc}")
+
+    def remove(self) -> None:
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError as exc:
+            self.warn(f"live progress not removed from {self.path}: {exc}")
+
+
 @dataclass
 class Report:
     routine: str
@@ -62,6 +98,11 @@ class Report:
     unreachable: bool = False
     #: Stamps each step's start (the previous step's end) and end; None leaves steps untimed.
     clock: Callable[[], datetime] | None = None
+    #: The live progress file (#459); None writes none (a dry run, a test).
+    live: Live | None = None
+    #: The step under way when a step said so (``begin``), and since when; None between steps.
+    current: str | None = None
+    current_started: str | None = None
 
     def add(self, name: str, status: str, detail: str, **data: Any) -> Step:
         step = Step(name, status, detail, data=data)
@@ -70,7 +111,22 @@ class Report:
             step.started = last or self.started.isoformat()
             step.finished = self.clock().isoformat()
         self.steps.append(step)
+        self.current = self.current_started = None
+        if self.live is not None:
+            self.live.write(self)
         return step
+
+    def start_live(self) -> None:
+        """The run's first progress write, once it is past its window check (#459)."""
+        if self.live is not None:
+            self.live.write(self)
+
+    def begin(self, name: str) -> None:
+        """Step ``name`` is under way: the progress file names it (#459). Nothing else changes."""
+        self.current = name
+        self.current_started = self.clock().isoformat() if self.clock is not None else None
+        if self.live is not None:
+            self.live.write(self)
 
     def ok(self, name: str, detail: str, **data: Any) -> Step:
         return self.add(name, OK, detail, **data)
@@ -122,6 +178,26 @@ class Report:
             "exports": dict(self.exports),
             "failed": self.any_failed,
         }
+
+
+def progress(report: Report) -> dict[str, Any]:
+    """The live progress file (#459): the routine, the run's start, the step under way and its
+    start, and the steps so far in the run log's own shape. The step under way is named when it
+    said so (``Report.begin``), else null with the step it follows: it started when that one
+    finished (the run's start for the first)."""
+    last = report.steps[-1] if report.steps else None
+    since = last.finished if last is not None and last.finished else report.started.isoformat()
+    return {
+        "routine": report.routine,
+        "started_at": report.started.isoformat(),
+        "written_at": report.clock().isoformat() if report.clock is not None else None,
+        "current": {
+            "name": report.current,
+            "after": last.name if last is not None else None,
+            "started": report.current_started or since,
+        },
+        "steps": [s.to_dict() for s in report.steps],
+    }
 
 
 def marker(report: Report) -> dict[str, Any]:
