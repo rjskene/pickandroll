@@ -198,8 +198,12 @@ the Mac command.
 
 A site's check reads one page (Basketball Monster's front page, the private league's page) and
 ends in one of three states (#364): signed in; signed out (the page loaded and shows it: the
-sign-in redirect, the consent page, a sign-in form, no My Team or Logout link); or the page did
-not load (the load raised, or it answered a server error, 429 or Yahoo's 999). Only signed out
+sign-in redirect, the consent page, a sign-in form, no Logout link); or the page did
+not load (the load raised, or it answered a server error, 429 or Yahoo's 999). Yahoo draws the
+My Team link after the page is ready, so a league page with neither a sign-in form nor that link
+waits up to 15 s for it (#476); a page still without it counts as not loaded, and reads as signed
+out only when the last of the three tries still shows neither. A Yahoo sign-out leaves a
+screenshot, `screens/signin-yahoo-*.png`, named in the reason. Only signed out
 is the user's re-sign-in. A page that did not load is tried three times, 15 s and 45 s apart, and
 is not kept for the run, so each browser step after it checks again. In a long outage a step's
 check costs the 60 s of waits plus its three loads: about a minute when the site answers 502 at

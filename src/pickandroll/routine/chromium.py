@@ -58,6 +58,12 @@ GOTO_TIMEOUT_MS = 60_000
 #: A sign-in check page that did not load is tried again after each of these waits (#364): three
 #: tries, about a minute. Yahoo's 502s at the 2026-11-12 05:00 daily were brief.
 SIGNIN_RETRY_S = (15.0, 45.0)
+#: A loaded league page with no sign-in form and no My Team link yet: how long a try waits for
+#: the link (#476; Yahoo draws it after the DOM is ready), and how often it looks.
+MY_TEAM_WAIT_MS = 15_000
+MY_TEAM_POLL_MS = 500
+#: A try whose page never showed the link; the last such try reads as signed out.
+NO_MY_TEAM = "no sign-in form and no My Team link on the league page"
 DOWNLOAD_TIMEOUT_MS = 60_000
 #: A stuck export page may not eat the routine's window.
 EXPORT_CEILING_S = 120.0
@@ -95,9 +101,15 @@ CLICK_JS = (
     " el.click(); return true; }"
 )
 COUNT_JS = "(sel) => document.querySelectorAll(sel).length"
-#: Signed in: the league navigation's My Team link, to the user's team page. Signed out: a
-#: sign-in form, or no such link (the redirect to login.yahoo.com is caught by the host). The
-#: header's own Sign in link is never consulted: Yahoo shows one to signed-in users too.
+#: Signed in: the league navigation's My Team link, to the user's team page. Signed out, at
+#: once: a sign-in form (:data:`YAHOO_LOGIN_FORM_JS`), or the redirect off the Yahoo host. A page
+#: with neither is still drawing (#476): the check waits for the link, and only a page that never
+#: shows it on any try reads as signed out. The header's own Sign in link is never consulted:
+#: Yahoo shows one to signed-in users too.
+YAHOO_LOGIN_FORM_JS = (
+    "() => !!(document.querySelector('input#login-username')"
+    " || document.querySelector('form[action*=\"login.yahoo.com\"]'))"
+)
 YAHOO_SIGNED_IN_JS = (
     "() => !document.querySelector('input#login-username')"
     " && !document.querySelector('form[action*=\"login.yahoo.com\"]')"
@@ -287,7 +299,11 @@ class ChromiumBrowser:
     def sign_check(self, site: str) -> SignCheck:
         """The site's sign-in check (#364): its check page loaded and read, up to three tries
         while it does not load (:data:`SIGNIN_RETRY_S`). Signed in or out is kept for the run; a
-        page that did not load is not, so the next step checks again. ``reason`` says why."""
+        page that did not load is not, so the next step checks again. ``reason`` says why.
+
+        A Yahoo page that loaded without a sign-in form or a My Team link counts as not loaded on
+        each try (#476) and reads as signed out after the last. A Yahoo sign-out leaves a
+        screenshot (``signin-yahoo-*.png``), named in the reason."""
         if site not in ("bbm", "yahoo"):
             raise ValueError(f"unknown site {site!r}")
         if site in self._signed:
@@ -300,6 +316,14 @@ class ChromiumBrowser:
                 break
             self.sleep(wait)
             check = self._check(site, tries)
+        if check.state == NOT_LOADED and check.reason == NO_MY_TEAM:
+            check = SignCheck(SIGNED_OUT, f"{NO_MY_TEAM} after {check.tries} tries", check.tries)
+        if site == "yahoo" and check.state == SIGNED_OUT:
+            shot = self._screenshot("signin-yahoo")
+            if shot:
+                check = SignCheck(
+                    SIGNED_OUT, f"{check.reason}; screenshot {shot.name}", check.tries
+                )
         if check.state != NOT_LOADED:
             self._signed[site] = check
         if check.state != SIGNED_IN:
@@ -319,13 +343,32 @@ class ChromiumBrowser:
             host = (urlsplit(landed).hostname or "").lower()
             if host != YAHOO_HOST:
                 return SignCheck(SIGNED_OUT, f"sent to {host or landed}", tries)
-            if not self._page.evaluate(YAHOO_SIGNED_IN_JS):
-                return SignCheck(
-                    SIGNED_OUT, "a sign-in form, or no My Team link, on the league page", tries
-                )
-            return SignCheck(SIGNED_IN, "", tries)
+            if self._page.evaluate(YAHOO_LOGIN_FORM_JS):
+                return SignCheck(SIGNED_OUT, "a sign-in form on the league page", tries)
+            if self._page.evaluate(YAHOO_SIGNED_IN_JS):
+                return SignCheck(SIGNED_IN, "", tries)
+            return self._await_my_team(tries)
         except Exception as exc:  # noqa: BLE001 - a check page that did not load
             return SignCheck(NOT_LOADED, one_line(exc), tries)
+
+    def _await_my_team(self, tries: int) -> SignCheck:
+        """A loaded league page with no sign-in form and no My Team link yet (#476): Yahoo draws
+        the link after the DOM is ready, so wait for it (:data:`MY_TEAM_WAIT_MS`). Read again
+        when the wait runs out or the page moves: a redirect off the host or a sign-in form is a
+        sign-out; neither is a try that did not load (:data:`NO_MY_TEAM`)."""
+        # The wait ran out, or the page moved: read it again.
+        with contextlib.suppress(Exception):
+            self._page.wait_for_function(
+                YAHOO_SIGNED_IN_JS, timeout=MY_TEAM_WAIT_MS, polling=MY_TEAM_POLL_MS
+            )
+            return SignCheck(SIGNED_IN, "", tries)
+        landed = str(self._page.url)
+        host = (urlsplit(landed).hostname or "").lower()
+        if host != YAHOO_HOST:
+            return SignCheck(SIGNED_OUT, f"sent to {host or landed}", tries)
+        if self._page.evaluate(YAHOO_LOGIN_FORM_JS):
+            return SignCheck(SIGNED_OUT, "a sign-in form on the league page", tries)
+        return SignCheck(NOT_LOADED, NO_MY_TEAM, tries)
 
     def export(self, kind: str) -> Path:
         recipe = RECIPES[kind]
