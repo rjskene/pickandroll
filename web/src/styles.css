@@ -1421,7 +1421,7 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .gs-axis span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 9.5px; color: var(--dim); }
 .gs-now { position: absolute; top: -4px; bottom: 12px; width: 0; border-left: 1.5px solid var(--bad); pointer-events: none; }
 .gs-now b { position: absolute; bottom: -12px; left: 0; transform: translateX(-50%); font-size: 9.5px; color: var(--bad); background: var(--bg); padding: 0 2px; }
-.gs-tip { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 10px)); max-width: 460px; padding: 6px 9px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); color: var(--muted); font-size: 11px; line-height: 1.4; pointer-events: none; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
+.gs-tip { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 10px)); width: max-content; max-width: 460px; padding: 6px 9px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); color: var(--muted); font-size: 11px; line-height: 1.4; pointer-events: none; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
 .gs-tip .t { color: var(--text); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .gs-bar.running, .gs-mark.running, .gs-exec.running, .gs-key .k-run { animation: none; } }
 
