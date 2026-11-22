@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { QueueEntry, QueuePayload, RoutineLivePayload, RoutinePretipDay, RoutineRunLog, RoutineRunsPayload, RoutineStepLog } from "../api.ts";
-import { FROM_MIN, GRACE_MS, LANES, gateTip, gatesOf, stepGateDay } from "./gates.ts";
+import { FROM_MIN, GRACE_MS, LANES, gateTip, gatesOf, stepGateDay, tipCenter } from "./gates.ts";
 import type { Gate } from "./gates.ts";
 import { CAST, DESK_STEPS, ROUTINES, ROUTINE_AGENTS, bentClock, centralAt, centralDate, timeline } from "./model.ts";
 import { sampleWeek } from "./sample.ts";
@@ -356,4 +356,19 @@ test("live, the arrows move the gates' day through the week, stopping at Monday 
   // A future day picked by a click: ← comes back to today, → stays at today.
   assert.equal(stepGateDay(week, today, "2026-11-22", -1), null);
   assert.equal(stepGateDay(week, today, "2026-11-22", 1), null);
+});
+
+test("a tooltip of any width stays inside the strip's box (#474)", () => {
+  // 1600 px box, the daily's 440 px tip hovered at 05:00 (x 60): kept 228 px in, not 180.
+  assert.equal(tipCenter(1600, 440, 60), 228);
+  assert.equal(tipCenter(1600, 440, 1590), 1372); // the right edge mirrors it
+  assert.equal(tipCenter(1600, 200, 800), 800); // in the middle the pointer stands
+  assert.equal(tipCenter(1600, 120, 30), 68); // a short tip comes closer to the edge than the old 180
+  assert.equal(tipCenter(300, 460, 10), 150); // wider than the box: centered in it
+  for (const w of [80, 240, 360, 460]) {
+    for (const x of [-50, 0, 40, 800, 1560, 1700]) {
+      const c = tipCenter(1600, w, x);
+      assert.ok(c - w / 2 >= 8 && c + w / 2 <= 1592, `w ${w} x ${x}`);
+    }
+  }
 });
