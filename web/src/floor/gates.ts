@@ -7,7 +7,7 @@
 
 import type { RoutinePretipAttempt, RoutinePretipSlate } from "../api.ts";
 import { AGENTS, ROUTINES, ROUTINE_AGENTS, castOf, centralAt, centralDate, minutesOf } from "./model.ts";
-import type { Agent, FloorRun, Timeline } from "./model.ts";
+import type { Agent, FloorRun, Reports, Timeline } from "./model.ts";
 
 /** The lanes, top to bottom: the cast's order (the issue's ruling). */
 export const LANES: readonly Agent[] = ["scout", "solver", "orchestrator", "setter", "starter", "mover"];
@@ -76,6 +76,8 @@ export interface DayGates {
   when: "past" | "today" | "future";
   gates: Gate[];
   bands: GateBand[];
+  /** Why no gate reads missed while the run reports are not read (#480), else null. */
+  note: string | null;
 }
 
 const ms = (iso: string | null | undefined): number | null => (iso ? Date.parse(iso) : null);
@@ -118,8 +120,18 @@ function runState(run: FloorRun, t: number, bars: GateBar[]): GateState {
   return "done";
 }
 
-/** A gate not reported by ``t``: still to come, due inside the grace, else missed. */
-const unreported = (at: number, t: number): GateState => (t - at > GRACE_MS ? "missed" : "todo");
+/** What the strip says while the run reports are not read (#480). */
+export const REPORTS_NOTE: Record<Exclude<Reports, "loaded">, string> = {
+  loading: "run reports loading",
+  failed: "run reports not loaded",
+};
+
+/** A gate not reported by ``t``: still to come, due inside the grace, else missed. Its time
+ * past while the run reports are not read, it is not known: a plain tick, never missed (#480). */
+const unreported = (at: number, t: number, reports: Reports): GateState =>
+  t < at ? "todo" : reports !== "loaded" ? "plain" : t - at > GRACE_MS ? "missed" : "todo";
+const unreportedNote = (state: GateState, reports: Reports): string | null =>
+  state === "missed" ? "not run" : state === "plain" && reports !== "loaded" ? REPORTS_NOTE[reports] : null;
 
 const hhmm = (t: number) => {
   const d = new Date(t);
@@ -132,7 +144,7 @@ const attemptEnd = (a: RoutinePretipAttempt, start: number) => ms(a.lineups_at) 
 /** One pre-tip slate's gate. Its attempts are the day file's; the one the day's run report holds
  * (the day's last pass: the report is rewritten) draws its steps, an earlier one spans the
  * pre-tip's lanes from its start to its last stamp. */
-function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t: number, enabled: boolean, latest: string | undefined): Gate | null {
+function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t: number, enabled: boolean, latest: string | undefined, reports: Reports): Gate | null {
   const attempts = slate.attempts.filter((a) => (ms(a.started_at) ?? Infinity) <= t);
   const at = ms(slate.start_at) ?? ms(attempts[0]?.started_at) ?? null;
   if (at === null) return null;
@@ -195,7 +207,7 @@ function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t:
           ? "missed"
           : last
             ? t >= until ? "missed" : "idle"
-            : unreported(at, t);
+            : unreported(at, t, reports);
   const name = slate.slate === "first" ? "first slate" : "late slate";
   return {
     key: `${date}-pretip-${slate.slate}`,
@@ -214,7 +226,7 @@ function slateGate(date: string, slate: RoutinePretipSlate, runs: FloorRun[], t:
       [
         tip !== null ? `tip-off ${hhmm(tip)}` : null,
         byDesign ? `starts past ${latest ?? "the latest start"}: not run by design` : null,
-        state === "missed" ? "not run" : null,
+        unreportedNote(state, reports),
       ]
         .filter(Boolean)
         .join(" · ") || null,
@@ -246,7 +258,7 @@ export function gatesOf(tl: Timeline, date: string, t: number): DayGates {
       gates.push({ ...base, key: run.key, kind: "routine", state, start: run.start, end: state === "running" ? null : run.end, lanes: lanesOf(run.steps.map((s) => s.name)), bars, lines, note: null });
       continue;
     }
-    const state = unreported(at, t);
+    const state = unreported(at, t, tl.reports);
     if (state === "todo" && when === "past") continue;
     gates.push({
       ...base,
@@ -258,14 +270,14 @@ export function gatesOf(tl: Timeline, date: string, t: number): DayGates {
       lanes: lanesOf(ROUTINE_AGENTS[routine] ?? []),
       bars: [],
       lines: [],
-      note: state === "missed" ? "not run" : null,
+      note: unreportedNote(state, tl.reports),
     });
   }
   // The pre-tip check by its slates: the day's pre-tip runs feed them.
   const pretip = tl.pretip[date];
   const pretipRuns = dayRuns.filter((r) => r.routine === "pretip");
   for (const slate of pretip?.slates ?? []) {
-    const g = slateGate(date, slate, pretipRuns, t, pretip.enabled, pretip.latest_start);
+    const g = slateGate(date, slate, pretipRuns, t, pretip.enabled, pretip.latest_start, tl.reports);
     if (g && !(when === "future" && g.state !== "todo")) gates.push(g);
   }
   // An API before the block: each pre-tip run is a gate at its start.
@@ -322,7 +334,8 @@ export function gatesOf(tl: Timeline, date: string, t: number): DayGates {
       label: `pre-tip window ${pt.from}-${pt.to}: its slates are set from the day's tip-offs on the day`,
     });
   }
-  return { date, from, to, now: t >= from && t <= to ? t : null, when, gates, bands };
+  const note = tl.reports === "loaded" ? null : REPORTS_NOTE[tl.reports];
+  return { date, from, to, now: t >= from && t <= to ? t : null, when, gates, bands, note };
 }
 
 /** Live, ← or → on the floor (#472): the gates' day ``delta`` days on inside ``week``, stopping at
@@ -350,7 +363,8 @@ export function gateTip(g: Gate, lane: Agent | null): string[] {
   };
   const out = [`${g.label} · ${hhmm(g.at)}`];
   if (g.start !== null) out.push(`ran ${hhmm(g.start)}${g.end !== null ? ` to ${hhmm(g.end)}` : ", under way"}`);
-  const said = g.state === "idle" && g.start === null ? "no run" : status[g.state];
+  // A routine's plain tick is one not known while the run reports load (#480); the watchdog's is its own.
+  const said = g.state === "idle" && g.start === null ? "no run" : g.state === "plain" && g.kind !== "watchdog" ? "not known yet" : status[g.state];
   out.push(said + (g.note && g.state !== "missed" ? ` · ${g.note}` : ""));
   const lines = g.lines.filter((l) => lane === null || l.agent === lane || g.kind === "slate" && l.name.startsWith("attempt"));
   for (const l of lines.slice(0, 12)) out.push(`${AGENTS[l.agent].label} · ${l.name}: ${l.detail || l.status}`);

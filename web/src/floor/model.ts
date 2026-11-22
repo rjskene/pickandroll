@@ -265,6 +265,10 @@ export interface FloorLeague {
   mode: string | null;
 }
 
+/** Whether the run reports (``/routine/runs`` and ``/routine/live``) have been read (#480):
+ * until both have, a gate with no report is not known, never missed, and nothing reads idle. */
+export type Reports = "loaded" | "loading" | "failed";
+
 export interface Timeline {
   runs: FloorRun[];
   entries: FloorEntry[];
@@ -278,6 +282,8 @@ export interface Timeline {
   pretip: Record<string, RoutinePretipDay>;
   /** When each source was last read, from the status sheet; ESPN is a still station. */
   sources: Record<"bbm" | "yahoo" | "espn", number | null>;
+  /** The run reports read, still loading, or failed (#480); the Demo's are always read. */
+  reports: Reports;
   start: number;
   end: number;
 }
@@ -288,6 +294,8 @@ export interface Inputs {
   queues?: (QueuePayload | null | undefined)[];
   seasons?: SeasonSummary[] | null;
   status?: StatusPayload | null;
+  /** Live: whether the runs and the live payload have loaded (#480); read when left out. */
+  reports?: Reports;
   now: number;
 }
 
@@ -500,6 +508,7 @@ export function timeline(i: Inputs): Timeline {
       yahoo: yahooAt.length ? Math.max(...yahooAt) : null,
       espn: null,
     },
+    reports: i.reports ?? "loaded",
     start: times.length ? Math.min(...times) : i.now,
     end: Math.max(i.now, ...times),
   };
