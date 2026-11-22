@@ -101,7 +101,9 @@ class FakeLocator:
 
 class FakePage:
     """A page whose DOM is a few dicts: the selects by id, where a URL lands, counts by
-    selector, the sign-in markers, the download each export page serves."""
+    selector, the sign-in markers, the download each export page serves. ``signed_out`` is
+    Yahoo's sign-in form; ``my_team`` says when the league page's My Team link shows (#476):
+    "now", "late" (during the wait) or "never", one value for every load or one per load."""
 
     def __init__(
         self,
@@ -113,8 +115,11 @@ class FakePage:
         downloads=None,
         refuse=(),
         statuses=None,
+        my_team="now",
     ):
         self.calls: list[tuple] = []
+        self.my_teams = [my_team] if isinstance(my_team, str) else list(my_team)
+        self.my_team = self.my_teams[0]
         self.url = "about:blank"
         self.expecting = None
         self.landed = landed or {}
@@ -131,6 +136,8 @@ class FakePage:
         if url in self.refuse:
             raise TimeoutError(f"Timeout {timeout}ms exceeded: {url}")
         self.url = self.landed.get(url, url)
+        if url == YAHOO_CHECK:
+            self.my_team = self.my_teams.pop(0) if len(self.my_teams) > 1 else self.my_teams[0]
         left = self.statuses.get(url)
         return SimpleNamespace(status=left.pop(0) if left else 200)
 
@@ -151,9 +158,19 @@ class FakePage:
             return True
         if js is chromium.COUNT_JS:
             return self.counts.get(arg, 0)
+        if js is chromium.YAHOO_LOGIN_FORM_JS:
+            return self.signed_out
         if js is chromium.YAHOO_SIGNED_IN_JS:
-            return not self.signed_out
+            return not self.signed_out and self.my_team == "now"
         raise AssertionError(f"unexpected script {js[:40]}")
+
+    def wait_for_function(self, js, timeout=None, polling=None):
+        assert js is chromium.YAHOO_SIGNED_IN_JS
+        self.calls.append(("wait", timeout))
+        if self.signed_out or self.my_team != "late":
+            raise TimeoutError(f"Timeout {timeout}ms exceeded.")
+        self.my_team = "now"
+        return SimpleNamespace()
 
     def get_by_role(self, role, name=None, exact=False):
         assert role == "button" and exact
@@ -311,7 +328,7 @@ def test_signed_in_checks_each_site_once_and_opens_only_its_check_page(tmp_path)
     [
         ("https://login.yahoo.com/?.src=fantasy&.done=" + PRIVATE, False),  # the sign-in redirect
         ("https://guce.yahoo.com/consent?brandType=nonEu", False),  # the consent interstitial
-        (PRIVATE, True),  # a sign-in form, or a page without the My Team link
+        (PRIVATE, True),  # a sign-in form
     ],
 )
 def test_yahoo_signed_out_by_the_redirect_the_consent_page_or_a_page_without_my_team(
@@ -1106,10 +1123,12 @@ def test_a_502_check_page_is_tried_again_and_passes_when_it_loads(tmp_path):
 def test_a_check_page_that_loads_signed_out_is_read_once_with_where_it_landed(tmp_path):
     page = FakePage(landed={YAHOO_CHECK: "https://login.yahoo.com/?.src=fantasy"})
     b = browser_at(tmp_path, page)
-    assert b.sign_check("yahoo") == SignCheck(SIGNED_OUT, "sent to login.yahoo.com", 1)
-    assert b.sleeps == [] and b.reason == "sent to login.yahoo.com"
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries) == (SIGNED_OUT, 1)
+    assert check.reason.startswith("sent to login.yahoo.com; screenshot signin-yahoo-")
+    assert b.sleeps == [] and b.reason == check.reason
     b = browser_at(tmp_path, FakePage(signed_out=True))
-    assert b.sign_check("yahoo").reason.startswith("a sign-in form, or no My Team link")
+    assert b.sign_check("yahoo").reason.startswith("a sign-in form on the league page")
     b = browser_at(tmp_path, FakePage(counts={LOGOUT: 0}))
     assert b.sign_check("bbm") == SignCheck(SIGNED_OUT, f"no Logout link on {BBM_CHECK}", 1)
     assert b.sleeps == []
@@ -1186,3 +1205,94 @@ def test_the_claim_form_screen_lands_in_the_screens_folder(tmp_path):
     [shot] = sorted((tmp_path / "screens").iterdir())
     assert shot.name.startswith("claim-form-") and shot.suffix == ".png"
     b.close()
+
+
+# ---------------------------------------------------------------- the league page still drawing (#476)
+def shots(tmp_path):
+    return sorted(p.name for p in (tmp_path / "screens").glob("signin-yahoo-*.png"))
+
+
+def test_a_league_page_that_shows_my_team_late_reads_as_signed_in(tmp_path):
+    # The 2026-11-21 22:40 evening pass: the page was ready before Yahoo drew the link.
+    page = FakePage(my_team="late")
+    b = browser_at(tmp_path, page)
+    assert b.sign_check("yahoo") == SignCheck(SIGNED_IN, "", 1)
+    assert [c for c in page.calls if c[0] == "wait"] == [("wait", chromium.MY_TEAM_WAIT_MS)]
+    assert b.sleeps == [] and b.opened == [YAHOO_CHECK] and shots(tmp_path) == []
+    # A first load that never draws it, a second that does: signed in on the second try.
+    page = FakePage(my_team=["never", "late"])
+    b = browser_at(tmp_path, page)
+    assert b.sign_check("yahoo") == SignCheck(SIGNED_IN, "", 2)
+    assert b.sleeps == [15.0] and b.opened == [YAHOO_CHECK] * 2
+
+
+def test_a_sign_in_form_reads_as_signed_out_on_the_first_try_without_a_wait(tmp_path):
+    page = FakePage(signed_out=True)
+    b = browser_at(tmp_path, page)
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries) == (SIGNED_OUT, 1)
+    assert check.reason.startswith("a sign-in form on the league page; screenshot signin-yahoo-")
+    assert not [c for c in page.calls if c[0] == "wait"] and b.sleeps == []
+    assert len(shots(tmp_path)) == 1 and shots(tmp_path)[0] in check.reason
+
+
+def test_a_league_page_that_never_shows_my_team_reads_as_signed_out_after_the_retries(tmp_path):
+    page = FakePage(my_team="never")
+    b = browser_at(tmp_path, page)
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries) == (SIGNED_OUT, 3)
+    assert check.reason.startswith(f"{chromium.NO_MY_TEAM} after 3 tries; screenshot signin-yahoo-")
+    assert [c for c in page.calls if c[0] == "wait"] == [("wait", chromium.MY_TEAM_WAIT_MS)] * 3
+    assert b.sleeps == [15.0, 45.0] and b.opened == [YAHOO_CHECK] * 3
+    assert len(shots(tmp_path)) == 1 and shots(tmp_path)[0] in check.reason
+    # Kept for the run, like any sign-out: the next step does not check again.
+    assert b.signed_in("yahoo") is False and b.opened == [YAHOO_CHECK] * 3
+
+
+def test_a_redirect_off_the_yahoo_host_reads_as_signed_out_without_a_wait(tmp_path):
+    page = FakePage(landed={YAHOO_CHECK: "https://login.yahoo.com/?.src=fantasy"}, my_team="never")
+    b = browser_at(tmp_path, page)
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries) == (SIGNED_OUT, 1)
+    assert check.reason.startswith("sent to login.yahoo.com; screenshot signin-yahoo-")
+    assert not [c for c in page.calls if c[0] == "wait"] and b.sleeps == []
+    assert len(shots(tmp_path)) == 1
+
+
+def test_a_wait_that_ends_on_a_redirect_or_a_sign_in_form_is_a_sign_out(tmp_path):
+    # The page moved during the wait: read again, never a try that did not load.
+    page = FakePage(my_team="never")
+    real = page.wait_for_function
+
+    def moved(js, timeout=None, polling=None):
+        page.url = "https://login.yahoo.com/?.src=fantasy"
+        return real(js, timeout, polling)
+
+    page.wait_for_function = moved
+    b = browser_at(tmp_path, page)
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries) == (SIGNED_OUT, 1) and check.reason.startswith(
+        "sent to login"
+    )
+
+    page = FakePage(my_team="never")
+    real_form = page.wait_for_function
+
+    def form(js, timeout=None, polling=None):
+        try:
+            return real_form(js, timeout, polling)
+        finally:
+            page.signed_out = True
+
+    page.wait_for_function = form
+    b = browser_at(tmp_path, page)
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries) == (SIGNED_OUT, 1)
+    assert check.reason.startswith("a sign-in form on the league page")
+
+
+def test_bbm_check_neither_waits_nor_screens(tmp_path):
+    page = FakePage(counts={LOGOUT: 0})
+    b = browser_at(tmp_path, page)
+    assert b.sign_check("bbm") == SignCheck(SIGNED_OUT, f"no Logout link on {BBM_CHECK}", 1)
+    assert not [c for c in page.calls if c[0] == "wait"] and shots(tmp_path) == []
