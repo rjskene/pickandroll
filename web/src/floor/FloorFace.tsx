@@ -9,7 +9,7 @@ import type { QueuePayload, SeasonSummary, StatusPayload } from "../api";
 import ExecuteTime from "../components/ExecuteTime";
 import { reducedMotion } from "../explain/useClock";
 import { AGENTS, bentClock, centralDate, timeline } from "./model";
-import type { Agent, Timeline } from "./model";
+import type { Agent, Reports, Timeline } from "./model";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { livePoll, weekQueueDays } from "./live";
 import { api as client } from "../api";
@@ -147,9 +147,11 @@ export default function FloorFace({
     })),
     combine: (rs) => rs.map((r) => r.data),
   });
+  // Until the runs and the live payload are both read, no gate is missed and nothing is idle (#480).
+  const reports: Reports = runs.data && live.data ? "loaded" : runs.isError || live.isError ? "failed" : "loading";
   const liveTl: Timeline = useMemo(
-    () => timeline({ runs: runs.data, live: live.data, queues: [...past, queue], seasons, status, now }),
-    [runs.data, live.data, past, queue, seasons, status, now],
+    () => timeline({ runs: runs.data, live: live.data, queues: [...past, queue], seasons, status, reports, now }),
+    [runs.data, live.data, past, queue, seasons, status, reports, now],
   );
   const tl = control.demo ? sample.tl : liveTl;
   const t = control.demo ? sample.clock.toTime(clk.wall) : now;

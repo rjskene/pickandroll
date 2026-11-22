@@ -7,7 +7,7 @@
 
 import type { QueueRules } from "../api.ts";
 import { AGENTS, BELT, SIGNS, centralDate, entryState, floorAt } from "./model.ts";
-import type { Agent, EntryState, FloorEntry, FloorRun, FloorStep, FloorUnit, Timeline } from "./model.ts";
+import type { Agent, EntryState, FloorEntry, FloorRun, FloorStep, FloorUnit, Reports, Timeline } from "./model.ts";
 
 // ---------------------------------------------------------------- the geometry
 /** The narrowest scene, the mock-up's width; the scene widens with its box up to ``W_MAX`` (#470). */
@@ -655,7 +655,7 @@ export function sceneAt(i: SceneInput): Scene {
     steps3,
     sub,
     ledger: ledgerAt(tl, t, one),
-    now: nowPanel(f, t),
+    now: nowPanel(f, t, tl.reports),
   };
 }
 
@@ -798,7 +798,21 @@ function walk(pts: [number, number][], d: number): [number, number] {
 
 /** The panel under the floor: the run under way (its steps, its unit) or, at rest, a line; the
  * day's gates under the stage show what ran and what comes next (#472). */
-function nowPanel(f: ReturnType<typeof floorAt>, t: number): NowPanel {
+function nowPanel(f: ReturnType<typeof floorAt>, t: number, reports: Reports = "loaded"): NowPanel {
+  // Not idle until the run reports are read: a run in flight shows only in them (#480).
+  if ((!f.run || !f.step) && reports !== "loaded") {
+    return {
+      title: reports === "loading" ? "Loading" : "Not loaded",
+      agent: null,
+      when: "",
+      line:
+        reports === "loading"
+          ? "Reading the run reports: what runs now shows once they load."
+          : "The run reports did not load, so what runs now is not known. The page keeps trying.",
+      steps: [],
+      unit: null,
+    };
+  }
   if (!f.run || !f.step) {
     return {
       title: "Idle",

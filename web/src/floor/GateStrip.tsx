@@ -47,6 +47,7 @@ export default function GateStrip({ day, onToday, onTerm }: { day: DayGates; onT
           <b>{dayLabel(day.date)}</b>
         </button>
         <span className="muted">{when}</span>
+        {day.note && <span className="gs-note">{day.note}</span>}
         {onToday && (
           <button type="button" className="small" onClick={onToday}>
             Today

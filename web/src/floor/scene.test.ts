@@ -174,3 +174,13 @@ test("a wide scene keeps the agents and entries on the drawing: the lanes end at
   assert.ok(one.tokens.every((p) => p.x <= 2000));
   assert.equal(one.L.courtX + 266, 2000 - 14);
 });
+
+test("the panel under the floor waits for the run reports before it says Idle (#480)", () => {
+  const scene = (reports: "loading" | "failed" | "loaded") =>
+    sceneAt({ tl: timeline({ reports, now: w.demoAt }), t: w.demoAt, age: () => 0, now: 0, leagues: [], one: null, executeTime: "09:15" }).now;
+  assert.equal(scene("loading").title, "Loading");
+  assert.match(scene("loading").line, /run reports/);
+  assert.equal(scene("failed").title, "Not loaded");
+  assert.match(scene("failed").line, /did not load/);
+  assert.equal(scene("loaded").title, "Idle");
+});
