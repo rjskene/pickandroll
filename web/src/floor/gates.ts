@@ -357,3 +357,13 @@ export function gateTip(g: Gate, lane: Agent | null): string[] {
   if (lines.length > 12) out.push(`… ${lines.length - 12} more`);
   return out;
 }
+
+// Where a tooltip centered on the pointer goes (#474): its center stays at least half its own width
+// plus the margin from each edge of the box, so a tip of any width stays inside; a tip wider than
+// the box (less both margins) is centered in it.
+export function tipCenter(boxWidth: number, tipWidth: number, x: number, margin = 8): number {
+  const lo = tipWidth / 2 + margin;
+  const hi = boxWidth - tipWidth / 2 - margin;
+  if (lo > hi) return boxWidth / 2;
+  return Math.max(lo, Math.min(hi, x));
+}

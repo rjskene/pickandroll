@@ -2,10 +2,10 @@
 // midnight, the now line; done steps as bars, a run in flight pulsing, gates still to come hollow,
 // missed ones amber, the watchdog a plain tick, the execute times on the Mover's lane. Hover a
 // mark for its gate. Drawn from the timeline the face already holds: no fetch of its own.
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { AGENTS } from "./model";
 import type { Agent } from "./model";
-import { LANES, gateTip } from "./gates";
+import { LANES, gateTip, tipCenter } from "./gates";
 import type { DayGates, Gate } from "./gates";
 import { dayLabel } from "./scene";
 
@@ -15,13 +15,19 @@ const hhmm = (t: number) =>
   new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(t));
 
 export default function GateStrip({ day, onToday, onTerm }: { day: DayGates; onToday: (() => void) | null; onTerm: () => void }) {
-  const [tip, setTip] = useState<{ g: Gate; lane: Agent | null; x: number; y: number } | null>(null);
+  const [tip, setTip] = useState<{ g: Gate; lane: Agent | null; x: number; y: number; box: number } | null>(null);
+  const tipEl = useRef<HTMLDivElement>(null);
+  // The tip is centered on its left (translate -50%): place it from its measured width, before paint.
+  useLayoutEffect(() => {
+    const el = tipEl.current;
+    if (el && tip) el.style.left = `${tipCenter(tip.box, el.offsetWidth, tip.x)}px`;
+  }, [tip]);
   const span = day.to - day.from;
   const pct = (t: number) => `${(Math.max(0, Math.min(1, (t - day.from) / span)) * 100).toFixed(3)}%`;
   const wpct = (a: number, b: number) => `${(Math.max(0, Math.min(1, (b - day.from) / span) - Math.max(0, Math.min(1, (a - day.from) / span))) * 100).toFixed(3)}%`;
   const hover = (g: Gate, lane: Agent | null) => (e: React.MouseEvent) => {
     const box = (e.currentTarget as HTMLElement).closest(".gates")?.getBoundingClientRect();
-    if (box) setTip({ g, lane, x: Math.max(180, Math.min(box.width - 180, e.clientX - box.left)), y: e.clientY - box.top });
+    if (box) setTip({ g, lane, x: e.clientX - box.left, y: e.clientY - box.top, box: box.width });
   };
   const leave = () => setTip(null);
   // A hit target wider than the marks: the gate's span on the lane, from its time to its last bar.
@@ -124,7 +130,7 @@ export default function GateStrip({ day, onToday, onTerm }: { day: DayGates; onT
         </div>
       </div>
       {tip && (
-        <div className="gs-tip" style={{ left: tip.x, top: tip.y }} role="tooltip">
+        <div ref={tipEl} className="gs-tip" style={{ top: tip.y }} role="tooltip">
           {gateTip(tip.g, tip.lane).map((l, k) => (
             <div key={k} className={k === 0 ? "t" : ""}>
               {l}
