@@ -372,3 +372,32 @@ test("a tooltip of any width stays inside the strip's box (#474)", () => {
     }
   }
 });
+
+test("until the run reports load, no gate is missed; loaded with no report, missed after the grace; a failed load says so (#480)", () => {
+  // 13:30: the sign-in, the daily and the morning pass are past their grace, the late pass to come.
+  const t = ct(`${FRI}T13:30:00`);
+  const past = ["signin", "daily", "morning"];
+  // Not loaded yet: nothing in hand, so the past gates are plain ticks with the note, never missed.
+  const loading = gatesOf(timeline({ reports: "loading", now: t }), FRI, t);
+  assert.equal(loading.note, "run reports loading");
+  assert.ok(loading.gates.every((g) => g.state !== "missed"));
+  for (const r of past) {
+    const g = by(loading.gates, r) as Gate;
+    assert.equal(g.state, "plain", r);
+    assert.equal(g.note, "run reports loading");
+    assert.equal(gateTip(g, null)[1], "not known yet · run reports loading");
+  }
+  assert.equal(by(loading.gates, "late")?.state, "todo"); // still to come stays still to come
+  // Loaded, with no report for the day: missed after the grace, as before.
+  const loaded = gatesOf(timeline({ runs: { date: FRI, days: 1, by_day: [] }, live: { now: `${FRI}T13:30:00-06:00`, live: [] }, now: t }), FRI, t);
+  assert.equal(loaded.note, null);
+  for (const r of past) assert.equal(by(loaded.gates, r)?.state, "missed", r);
+  // The load failed: no gate is missed, and the strip says the reports did not load.
+  const failed = gatesOf(timeline({ reports: "failed", now: t }), FRI, t);
+  assert.equal(failed.note, "run reports not loaded");
+  assert.ok(failed.gates.every((g) => g.state !== "missed"));
+  assert.equal(by(failed.gates, "daily")?.note, "run reports not loaded");
+  // Reports that did load still draw what ran while the flag says loading: the runs are in hand.
+  const partial = gatesOf(timeline({ runs: friday(), reports: "loading", now: t }), FRI, t);
+  assert.equal(by(partial.gates, "daily")?.state, "done");
+});

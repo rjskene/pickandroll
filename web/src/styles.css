@@ -1388,6 +1388,7 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .gs-title { background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; }
 .gs-title:hover b, .gs-title:focus-visible b { text-decoration: underline; text-decoration-color: var(--line-2); }
 .gs-head b { font-family: var(--display); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }
+.gs-note { padding: 1px 7px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--muted); font-size: 11px; }
 .gs-key { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
 .gs-key i { display: inline-block; width: 12px; height: 7px; border-radius: 2px; margin-left: 8px; }
 .gs-key .k-ok { background: var(--desk); } .gs-key .k-failed { background: var(--bad); } .gs-key .k-idle { background: var(--dim); }
