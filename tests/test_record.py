@@ -24,8 +24,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from pickandroll.api import SessionStore, create_app, season_record
-from pickandroll.api.seasons import save
+from pickandroll.api import SessionStore, create_app, season_lineup, season_record
+from pickandroll.api.seasons import save, season_dir
 from pickandroll.season import EXTENSION, Part, SeasonSettings, Week
 from pickandroll.season import record as rec
 from pickandroll.sources.yahoo import pages
@@ -622,7 +622,9 @@ def test_the_record_keeps_the_weeks_transactions_from_every_snapshot(client):
     ]
 
 
-def test_the_record_counts_my_games_lost_to_the_lineup_from_the_days_read_after(client):
+def lineup_week(client) -> None:
+    """Week 1 with the lineups of Oct 19 and 20 read after them and their box scores cached."""
+
     def spot(slot: str, pid: int, name: str, team: str, position: str) -> dict:
         player = {"yahoo_id": pid, "name": name, "nba_team": team, "positions": [position]}
         return {"slot": slot, "player": player}
@@ -651,10 +653,14 @@ def test_the_record_counts_my_games_lost_to_the_lineup_from_the_days_read_after(
         game = {"id": day, "start": f"{day}T23:00Z", "teams": ["AAA", "BBB"], "players": players}
         (box / f"{day}.json").write_text(json.dumps({"date": day, "games": [game]}))
     (box / "ids.json").write_text(json.dumps({"1001": "e1", "1002": "e2"}))
+
+
+def test_the_record_counts_my_games_lost_to_the_lineup_from_the_days_read_after(client):
+    lineup_week(client)
     assert client.post(f"/seasons/{LEAGUE}/record").json()["status"] == "recorded"
     rec_ = json.loads(week_file(client, LEAGUE, 1).read_text())
     # The benched PG who played on the 19th with PG open; 1003 matched no box score.
-    assert rec_["lineup"] == {"lost": 1, "days_read": 2, "days": 7, "unmatched": 1}
+    assert rec_["lineup"] == {"lost": 1, "sat": 0, "days_read": 2, "days": 7, "unmatched": 1}
     # Two weeks on the lineups are gone: recording again keeps the count.
     later = datetime(2026, 11, 9, 14, 0, tzinfo=UTC)
     save(client.data_dir, LEAGUE, {}, [], "", later)
@@ -662,6 +668,17 @@ def test_the_record_counts_my_games_lost_to_the_lineup_from_the_days_read_after(
     assert client.post(f"/seasons/{LEAGUE}/record", params={"week": 1}).json()["status"] == (
         "unchanged"
     )
+
+
+def test_a_sit_on_record_is_sat_not_a_game_lost(client):
+    """#482: the benched PG sat on the 19th as the day's recommended lineup said."""
+    lineup_week(client)
+    sits = {"2026-10-19": [{"at": "2026-10-19T14:00:00+00:00", "players": [1002]}]}
+    folder = season_dir(client.data_dir, LEAGUE)
+    (folder / season_lineup.SITS_FILE).write_text(json.dumps(sits))
+    assert client.post(f"/seasons/{LEAGUE}/record").json()["status"] == "recorded"
+    rec_ = json.loads(week_file(client, LEAGUE, 1).read_text())
+    assert rec_["lineup"] == {"lost": 0, "sat": 1, "days_read": 2, "days": 7, "unmatched": 1}
 
 
 def test_recording_the_same_week_again_changes_nothing(client):
