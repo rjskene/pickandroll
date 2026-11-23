@@ -2884,8 +2884,15 @@ class SeasonService:
         if out is None:
             raise HTTPException(404, f"week {week} of league {league} has no lineup to show")
         if out.get("this_week"):
-            # The day's sits on record, for the weekly record to tell from games lost (#482).
-            season_lineup.record_sits(season_dir(self.data_dir, league), out, today, self.clock())
+            # The day's sits on record, for the weekly record to tell from games lost (#482). A
+            # record that fails is logged and the lineup still answers: the executor and the
+            # digest read it, and a lost record only counts those games as lost again.
+            try:
+                season_lineup.record_sits(
+                    season_dir(self.data_dir, league), out, today, self.clock()
+                )
+            except (OSError, ValueError, TypeError) as exc:
+                LOG.warning("league %s: today's sits not recorded: %s", league, exc)
         return {"league": league, **out}
 
     def _day_activation(self, league: str, today: date) -> dict[int, int]:

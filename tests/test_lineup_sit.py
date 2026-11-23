@@ -273,3 +273,18 @@ def test_the_lineup_route_records_todays_sit(tmp_path, monkeypatch):
         # Another week's view records nothing more.
         client.get(f"/seasons/{LEAGUE}/lineup", params={"week": 2})
         assert sl.sits_read(season_dir(client.data_dir, LEAGUE)) == recorded
+
+
+def test_a_sits_record_that_fails_leaves_the_lineup_answering(tmp_path, monkeypatch, caplog):
+    def full_disk(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    with season_client(tmp_path) as client:
+        lineup_league(client)
+        monkeypatch.setattr(sl, "record_sits", full_disk)
+        with caplog.at_level("WARNING", logger="uvicorn.error"):
+            r = client.get(f"/seasons/{LEAGUE}/lineup")
+        assert r.status_code == 200, r.text
+        assert r.json()["days"]
+        assert f"league {LEAGUE}: today's sits not recorded" in caplog.text
+        assert "No space left on device" in caplog.text
