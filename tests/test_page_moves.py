@@ -203,6 +203,11 @@ def test_a_page_solve_that_fails_leaves_the_next_look_to_try_again(client, monke
     assert "stale" not in client.get(MOVES, params=PAGE).json()
 
 
+#: The bound on each wait around a real solve (#498): far past the slowest box's solve, never a
+#: test's limit; the droplet's ran past 10 s after #486.
+SOLVE_WAIT = 120
+
+
 def test_two_callers_of_one_key_wait_on_one_solve_and_log_one_entry(client, monkeypatch):
     service = client.app.state.seasons
     started, go = threading.Event(), threading.Event()
@@ -212,7 +217,7 @@ def test_two_callers_of_one_key_wait_on_one_solve_and_log_one_entry(client, monk
     def slow(built, budget=None):
         made.append(1)
         started.set()
-        assert go.wait(10)
+        assert go.wait(SOLVE_WAIT)
         return real(built, budget)
 
     monkeypatch.setattr(season_moves, "moves_payload", slow)
@@ -221,11 +226,12 @@ def test_two_callers_of_one_key_wait_on_one_solve_and_log_one_entry(client, monk
         threading.Thread(target=lambda: out.append(service.moves(LEAGUE, None))) for _ in range(2)
     ]
     threads[0].start()
-    assert started.wait(10)
+    assert started.wait(SOLVE_WAIT)
     threads[1].start()
     go.set()
     for t in threads:
-        t.join(10)
+        t.join(SOLVE_WAIT)
+        assert not t.is_alive()
     assert len(made) == 1 and len(out) == 2 and out[0] is out[1]
     assert len(logged(client)) == 1
 
