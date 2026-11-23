@@ -1523,7 +1523,13 @@ test("the private league's line and set name the checks, the floor and the move'
   assert.equal(refusedOf(checks, "three", 3, 4)?.reason, "below the noise floor");
   assert.equal(refusedOf(checks, "three", 1, 2), undefined);
   assert.equal(refusedOf(checks, "week", 1, 2), undefined);
-  assert.equal(refusedOf(checks, "week", 9, 4)?.reason, "not among today's suggestions: the three weeks' set is the one checked");
+  // Each greyed row of another set names the set that was checked.
+  assert.equal(refusedOf(checks, "week", 9, 4)?.reason, "not today's suggestion (the three weeks' set is the one checked)");
+  const plan: PrivateChecks = { ...checks, set: "week_plan", horizon: "week" };
+  assert.equal(refusedOf(plan, "three", 9, 4)?.reason, "not today's suggestion (the week plan is the one checked)");
+  assert.equal(refusedOf(plan, "other", 9, 4)?.reason, "not today's suggestion (the week plan is the one checked)");
+  assert.equal(refusedOf(plan, "three", 1, 2), undefined);
+  assert.equal(refusedOf(plan, "week_plan", 3, 4)?.reason, "below the noise floor");
   assert.equal(refusedOf(undefined, "week", 9, 4), undefined);
   assert.match(refusedOf({ ...checks, status: "failed", reason: "x", moves: [] }, "three", 1, 2)?.reason ?? "", /^not checked/);
 });

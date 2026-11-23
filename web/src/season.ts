@@ -2902,7 +2902,7 @@ export function refusedOf(c: PrivateChecks | undefined, set: MoveHorizon | "week
   const x = checkOf(c, add, drop);
   if (set === c.set) return x && !x.passes ? x : undefined;
   if (x?.passes) return undefined;
-  return not(`not among today's suggestions: ${c.set === "week_plan" ? "the week plan" : "the three weeks' set"} is the one checked`);
+  return not(`not today's suggestion (${c.set === "week_plan" ? "the week plan" : "the three weeks' set"} is the one checked)`);
 }
 
 /** Why a private league's move does not pass, as the moves view greys it: a week plan's later
