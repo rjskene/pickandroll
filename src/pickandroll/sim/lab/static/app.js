@@ -109,7 +109,7 @@
     return `<section class="panel"><h2>The simulator's capabilities</h2><p class="sub">Each change to what the simulator can do is a mark (the log is under Runs), and every run says which one it was played on. A figure that crosses a mark moved partly because the simulator did.</p>
       <div class="capgrid"><div><span class="k">Now</span><b>${now ? `version ${esc(now.replay_version)}` : "n/a"}</b><small>${now ? `${esc(now.title)} · ${esc(now.date)}` : ""}</small></div>
       <div><span class="k">Last update</span><b>${last ? esc(last.title) : "n/a"}</b><small>${last ? `${esc(last.date)} · ${esc(last.kind)} · ${stepped(last) || "no version stepped"}` : ""}</small></div>
-      <div><span class="k">Behind live in</span><small class="behind">${behind}</small></div></div></section>`;
+      <div><span class="k">Behind live in</span><small class="behind">${behind}</small>${C.earlier && C.earlier.length ? `<small>${C.earlier.length === C.of ? "every run with a version is" : `${C.earlier.map((n) => `<code>${esc(n)}</code>`).join(", ")} ${C.earlier.length === 1 ? "is" : "are"}`} of an engine live has left</small>` : ""}</div></div></section>`;
   }
   const queueItem = (q) => `<div class="item"><b>${esc(q.title)}</b><span class="badge ${q.state === "word" ? "word" : ""}">${q.state === "word" ? "waits on your word" : esc(q.state)}</span>
     <p>${esc(q.what)}</p><span class="sub" style="text-align:right">${esc(q.size || "")}</span>${q.say ? `<p class="say">say: “${esc(q.say)}”</p>` : ""}</div>`;
@@ -254,7 +254,7 @@
       return `<tr><td><b>${esc(r.name)}</b><br><span class="sub">${esc(r.kind)}${r.design ? " · " + esc(r.design) : ""}</span></td><td><span class="c${tone(r.ruleset)}">${esc(x ? x.name : r.ruleset)}</span></td>
       <td>${r.season_words.map(esc).join(", ") || "n/a"}<br><span class="sub">${esc(r.forecasters)}</span></td><td class="n">${esc(r.paths)}<br><span class="sub">seed ${esc(r.seed)}</span></td>
       <td class="n">${esc(r.pairs_done)}${r.pairs_left ? " · " + esc(r.pairs_left) + " left" : ""}<br><span class="sub">${esc(r.not_played)} not played</span></td><td class="n">${esc(r.cleared)}</td>
-      <td class="n">${isNum(r.hours) ? fx(r.hours, 1) + " h" : "n/a"}<br><span class="sub">${r.pieces.length} piece(s)</span></td><td>${levelBadge(r.audit.level)}<br><span class="sub">${esc(r.audit.breaches)} breaches, ${esc(r.audit.voided)} voided</span></td><td>${capw(r.capability)}${r.behind_live && r.behind_live.length ? `<br><span class="sub">behind live: ${r.behind_live.map((e) => esc(e.issue)).join(", ")}</span>` : ""}</td><td><code>${esc(r.code_sha || "")}</code><br><span class="sub">${esc(r.status)}</span></td></tr>`;
+      <td class="n">${isNum(r.hours) ? fx(r.hours, 1) + " h" : "n/a"}<br><span class="sub">${r.pieces.length} piece(s)</span></td><td>${levelBadge(r.audit.level)}<br><span class="sub">${esc(r.audit.breaches)} breaches, ${esc(r.audit.voided)} voided</span></td><td>${capw(r.capability)}${r.behind_live && r.behind_live.length ? `<br><span class="sub">behind live: ${r.behind_live.map((e) => esc(e.issue)).join(", ")}</span>` : ""}${r.live_since && r.live_since.length ? `<br><span class="sub">live changed since: ${r.live_since.map((e) => esc(e.issue)).join(", ")}</span>` : ""}</td><td><code>${esc(r.code_sha || "")}</code><br><span class="sub">${esc(r.status)}</span></td></tr>`;
     }).join("");
     const span = M.timeline || {};
     // The capability log's marks and live's changes on the time line, one line a day (PR capabilities).

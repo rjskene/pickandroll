@@ -966,29 +966,45 @@ def engine_changes(notes: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     return sorted(out, key=lambda e: (e["date"], e["issue"]))
 
 
-def behind_live(
-    started: Any, replay_version: Any, engine: Sequence[Mapping[str, Any]]
+def _live_of(
+    started: Any, replay_version: Any, engine: Sequence[Mapping[str, Any]], before: bool
 ) -> list[dict[str, Any]] | None:
-    """The live engine's changes a run was behind: dated before the day (UTC) it started, and
-    not taken in by its version. None when the run records no start or no version."""
     when = _when(started)
     if when is None or isinstance(replay_version, bool) or not isinstance(replay_version, int):
         return None
-    day = when.astimezone(UTC).date().isoformat()
+    day = cap.central_day(when)
     return [
         {"issue": e["issue"], "title": e["title"], "date": e["date"]}
         for e in engine
-        if e["date"] < day and (e["taken_in"] is None or e["taken_in"] > replay_version)
+        if (e["date"] < day) == before and (e["taken_in"] is None or e["taken_in"] > replay_version)
     ]
 
 
+def behind_live(
+    started: Any, replay_version: Any, engine: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """The live engine's changes a run was behind when it started: dated before the (Central)
+    day it started, and not taken in by its version. None when the run records no start or no
+    version."""
+    return _live_of(started, replay_version, engine, True)
+
+
+def live_since(
+    started: Any, replay_version: Any, engine: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """The live engine's changes since a run: dated on or after the (Central) day it started,
+    and not taken in by its version, so its figures are of the engine live has left. None when
+    the run records no start or no version."""
+    return _live_of(started, replay_version, engine, False)
+
+
 def _place_on(day: str, span: Mapping[str, str] | None) -> float | None:
-    """A dated mark's place on the runs' time line, at the start of its day (UTC); None when
-    there is no line or the day is off it."""
+    """A dated mark's place on the runs' time line, at the start of its (Central) day; None
+    when there is no line or the day is off it."""
     if not span:
         return None
     t0, t1 = _when(span["start"]), _when(span["end"])
-    t = _when(f"{day}T00:00:00+00:00")
+    t = cap.central_midnight(day)
     if t0 is None or t1 is None or t is None:
         return None
     width = (t1 - t0).total_seconds() or 1.0
@@ -1082,6 +1098,67 @@ def _names(xs: Sequence[str]) -> str:
     return ", ".join(xs)
 
 
+def _changes(items: Sequence[Mapping[str, Any]]) -> str:
+    return "; ".join(f"{e['issue']} {e['title']} ({e['date']})" for e in items)
+
+
+def _behind_flag(
+    mine: Sequence[Mapping[str, Any]],
+    run: Mapping[str, Any] | None,
+    engine: Sequence[Mapping[str, Any]],
+    noted: bool,
+) -> dict[str, Any]:
+    """The "Behind live" flag: a problem when a tune started behind live (it tuned an engine
+    live had left); a watch when the latest screen was played before the simulator took a live
+    change in, or live has changed since it was played, or it records no version; ok
+    otherwise."""
+    said = []
+    for t in mine:
+        if t["kind"] == "tune" and t.get("behind_live"):
+            said.append(
+                f"{t['name']} ({cap_words(t['capability'])}) tuned an engine live had left: "
+                f"{_changes(t['behind_live'])}."
+            )
+    level = PROBLEM if said else OK
+    if run is None:
+        said.append("No screen yet.")
+    elif run.get("behind_live") is None:
+        level = level if level == PROBLEM else WATCH
+        said.append(
+            f"Its latest screen, {run['name']}, records no version or start, so whether live had "
+            "moved is not known."
+        )
+    elif run["behind_live"] or run.get("live_since"):
+        level = level if level == PROBLEM else WATCH
+        head = f"Its latest screen, {run['name']} ({cap_words(run['capability'])}),"
+        if run["behind_live"]:
+            said.append(f"{head} was played before the simulator took in: "
+                        f"{_changes(run['behind_live'])}.")  # fmt: skip
+        if run.get("live_since"):
+            said.append(
+                (
+                    "Live has changed since it was played: "
+                    if run["behind_live"]
+                    else f"{head[:-1]}: live has changed since it was played: "
+                )
+                + f"{_changes(run['live_since'])}; its figures are of the earlier engine."
+            )
+    else:
+        said.append(
+            f"Its latest screen, {run['name']}, was played with nothing from live outstanding"
+            + (
+                "."
+                if engine
+                else (
+                    " (the notes list no live-engine change)."
+                    if noted
+                    else " (no notes file: live's changes are not listed)."
+                )
+            )
+        )
+    return {"level": level, "title": "Behind live", "text": " ".join(said)}
+
+
 def capability_flags(
     mine: Sequence[Mapping[str, Any]],
     latest: str | None,
@@ -1091,8 +1168,9 @@ def capability_flags(
 ) -> list[dict[str, Any]]:
     """A ruleset's three capability flags: whether its figures span more than one capability
     (a watch, saying which run sits where); whether its latest screen was played on an engine
-    behind live (a watch, naming the changes); and whether a tune reads a screen of another
-    capability (a problem)."""
+    behind live or live has changed since (a watch, naming the changes), or a tune started
+    behind live (a problem); and whether a tune reads a screen of another capability (a
+    problem)."""
     out = []
     groups: dict[str, tuple[Mapping[str, Any], list[str]]] = {}
     unknown = []
@@ -1132,47 +1210,7 @@ def capability_flags(
                 "is not known.",
             }
         )
-    run = by_name.get(latest) if latest else None
-    if run is None:
-        out.append({"level": OK, "title": "Behind live", "text": "No screen yet."})
-    elif run.get("behind_live") is None:
-        out.append(
-            {
-                "level": WATCH,
-                "title": "Behind live",
-                "text": f"Its latest screen, {latest}, records no version or start, so whether "
-                "live had moved is not known.",
-            }
-        )
-    elif run["behind_live"]:
-        out.append(
-            {
-                "level": WATCH,
-                "title": "Behind live",
-                "text": f"Its latest screen, {latest} ({cap_words(run['capability'])}), was "
-                "played before the simulator took in: "
-                + "; ".join(f"{e['issue']} {e['title']} ({e['date']})" for e in run["behind_live"])
-                + ".",
-            }
-        )
-    else:
-        out.append(
-            {
-                "level": OK,
-                "title": "Behind live",
-                "text": f"Its latest screen, {latest}, was played with nothing from live "
-                "outstanding"
-                + (
-                    "."
-                    if engine
-                    else (
-                        " (the notes list no live-engine change)."
-                        if noted
-                        else " (no notes file: live's changes are not listed)."
-                    )
-                ),
-            }
-        )
+    out.append(_behind_flag(mine, by_name.get(latest) if latest else None, engine, noted))
     tunes = [x for x in mine if x["kind"] == "tune"]
     if tunes:
         bad = []
@@ -1451,6 +1489,7 @@ def build(
         rv = (run.get("versions") or {}).get("replay")
         run["capability"] = capability_of(rv)
         run["behind_live"] = behind_live(run.get("started_at"), rv, engine)
+        run["live_since"] = live_since(run.get("started_at"), rv, engine)
     by_name = {run["name"]: run for run in runs}
     timeline = _span(runs)
 
@@ -1588,7 +1627,7 @@ def build(
         "tunes": tune_list,
         "seasons": seasons,
         "traces": trace_list,
-        "capabilities": _capabilities(engine, timeline, notes is not None),
+        "capabilities": _capabilities(engine, timeline, notes is not None, runs),
         "notes": None if notes is None else dict(notes),
         "viewer": {"title": "Season", "words": VIEWER, "note": VIEWER_NOTE},
         "generated": dict(generated) | {"lacks": sorted(dict.fromkeys(lacks))},
@@ -1596,11 +1635,16 @@ def build(
 
 
 def _capabilities(
-    engine: Sequence[Mapping[str, Any]], span: Mapping[str, str] | None, noted: bool
+    engine: Sequence[Mapping[str, Any]],
+    span: Mapping[str, str] | None,
+    noted: bool,
+    runs: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """The simulator's capabilities as the page shows them: the log (each mark placed on the
     runs' time line), the live engine's changes (placed too), the capability now, the last
-    update of any kind, and what the simulator is behind live in."""
+    update of any kind, what the simulator is behind live in, and ``earlier``: the runs whose
+    figures are of an engine live has left (behind it when they started, or live changed
+    since), with ``of`` the runs that record a version."""
     now = cap.current()
     latest = cap.latest()
     behind = [
@@ -1614,6 +1658,10 @@ def _capabilities(
         "current": None if now is None else now.payload(),
         "latest": None if latest is None else latest.payload(),
         "behind": behind,
+        "earlier": [
+            r["name"] for r in runs if (r.get("behind_live") or []) + (r.get("live_since") or [])
+        ],
+        "of": sum(1 for r in runs if r.get("behind_live") is not None),
         "kinds": dict(cap.KINDS),
         "noted": noted,
     }

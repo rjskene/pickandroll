@@ -3129,6 +3129,9 @@ that stepped none) and `takes_in`, the live engine's changes it brought in, by i
 - **A run's capability** is its `replay_version` and the last mark at or below it that steps the
   replay's version (`capabilities.at`). A mark with no version is dated only, so a run's version
   cannot place it; the lab draws it on the time line by its day.
+- **One zone for days: Central.** A mark's date is the Central day its PR merged, the notes
+  date live's changes the same way, and a run's start is read as its Central day
+  (`capabilities.central_day`, the US rule written out so the core reads no zone database).
 
 ## The lab (`sim/lab/`, `cli.cmd_lab`, PR lab)
 
@@ -3349,10 +3352,13 @@ shown: the page is the lead's, on the box, and a trace lives under `data/` only.
 `engine` section:
 
 - **each run** shows the capability it was played on (its `replay_version` and the log's last
-  mark at or below it; "no recorded version" when it records none) and what it was behind live
-  in: the live changes dated before the day (UTC) it started that its version had not taken in;
+  mark at or below it; "no recorded version" when it records none), what it was behind live in
+  (`behind_live`: the live changes its version had not taken in, dated before the Central day it
+  started) and what live changed since (`live_since`: the same, dated on or after that day): in
+  either case its figures are of an engine live has left;
 - **now**: Overview's strip "The simulator's capabilities" says the current capability, the last
-  update of any kind and when, and what the simulator is behind live in;
+  update of any kind and when, what the simulator is behind live in, and which runs' figures
+  are of an engine live has left;
 - **"Is the seat getting better?"**: each stage says the capability its run was played on, and
   a line says so when the stages were played on more than one;
 - **shifts**: where two screens of one ruleset, one after the other, were played on different
@@ -3363,11 +3369,14 @@ shown: the page is the lead's, on the box, and a trace lives under `data/` only.
   draw);
 - **three flags**, a ruleset at a time, with the others on Checks: **capabilities**, a watch
   when its runs were played on more than one capability (saying which run sits where) or none
-  records a version; **behind live**, a watch when its latest screen was played on an engine
-  behind live (naming the changes) or records no version, ok otherwise (and it says when the
-  notes list no live change); **tune's screen**, a problem when a tune reads a screen played on
-  another capability (the tune's own record says the screen's version when it differs);
-- **Runs**: a column with each run's capability and what it was behind; on the time line one
+  records a version; **behind live**, a problem when a tune started behind live (it tuned an
+  engine live had left), a watch when its latest screen was played before the simulator took a
+  live change in, or live has changed since it was played (its figures are of the earlier
+  engine), or it records no version, and ok otherwise (saying when the notes list no live
+  change); **tune's screen**, a problem when a tune reads a screen played on another capability
+  (the tune's own record says the screen's version when it differs);
+- **Runs**: a column with each run's capability, what it was behind and what live changed
+  since; on the time line one
   line a day the simulator changed, through every run's track, with the day's count of marks
   above it (a tap lists them), and a diamond for a change to the live engine; under it the
   capability log as a table, newest first, and the live engine's changes with what took each in;
@@ -3377,7 +3386,8 @@ shown: the page is the lead's, on the box, and a trace lives under `data/` only.
 **`lab --check`** builds the model once and prints a line a section, counts and words only:
 what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
 the traces by their check's level, the capabilities (now, the last update, the versions the runs
-were played on, what the simulator is behind live in), the seasons' ledger, the notes, the
+were played on, what the simulator is behind live in, the runs of an engine live has left), the
+seasons' ledger, the notes, the
 explainer and what is not recorded. Then it exits.
 
 ## The trace (`sim/trace.py`, `cli.cmd_trace`, PR trace)

@@ -15,6 +15,10 @@ played on (the lab reads this log).
   version: it is dated, and a run's version cannot place it.
 - ``takes_in`` names the live engine's changes a mark brought in, by issue: it closes those
   changes in the lead's notes (their ``engine`` section).
+- One zone for days: Central. A mark's ``date`` is the Central day its PR merged (a merge late
+  in the evening is the next day in UTC), the notes date live's changes the same way, and the
+  lab compares them with the Central day a run started (:func:`central_day`). The US rule is
+  written out here, not read from a zone database, so the module stays free of I/O.
 
 Words only: no figure of a real run, and no number in a title or words (a version, an issue
 and a date are fields). Pure: no I/O.
@@ -25,7 +29,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 #: A mark's kinds, with their words.
@@ -247,9 +251,9 @@ LOG: tuple[Mark, ...] = (
         replay_version=21,
     ),
     Mark(
-        "pr-492", "2026-11-23", 492, "measure", "The trace",
+        "pr-490", "2026-11-23", 490, "measure", "The trace",
         "One path of one pair played again with a recorder, day by day; a pair's record keeps "
-        "each path's seat and league shape.",
+        "each path's outcomes.",
     ),
 )  # fmt: skip
 
@@ -283,6 +287,41 @@ def current(log: Sequence[Mark] = LOG) -> Mark | None:
 def latest(log: Sequence[Mark] = LOG) -> Mark | None:
     """The last update of any kind: the log's last mark."""
     return log[-1] if log else None
+
+
+def _sunday(year: int, month: int, nth: int) -> date:
+    """The ``nth`` Sunday of ``month``."""
+    first = date(year, month, 1)
+    return first + timedelta(days=(6 - first.weekday()) % 7 + 7 * (nth - 1))
+
+
+def central_offset(t: datetime) -> timedelta:
+    """Central time's offset from UTC at ``t`` (aware): the US rule since 2007, daylight time
+    from two in the morning on March's second Sunday to two in the morning on November's
+    first, five hours behind UTC then and six otherwise."""
+    u = t.astimezone(UTC)
+    start = datetime.combine(_sunday(u.year, 3, 2), datetime.min.time(), UTC) + timedelta(hours=8)
+    end = datetime.combine(_sunday(u.year, 11, 1), datetime.min.time(), UTC) + timedelta(hours=7)
+    return timedelta(hours=-5) if start <= u < end else timedelta(hours=-6)
+
+
+def central_day(t: datetime) -> str:
+    """The Central day (YYYY-MM-DD) of ``t`` (aware)."""
+    return (t.astimezone(UTC) + central_offset(t)).date().isoformat()
+
+
+def central_midnight(day: str) -> datetime | None:
+    """The start of Central day ``day``, in UTC; None for a text that is not a date. A change
+    of the clocks falls at two in the morning, so midnight is one of the two offsets."""
+    try:
+        d = date.fromisoformat(day)
+    except (TypeError, ValueError):
+        return None
+    for hours in (5, 6):
+        u = datetime.combine(d, datetime.min.time(), UTC) + timedelta(hours=hours)
+        if central_offset(u) == timedelta(hours=-hours):
+            return u
+    return None  # never: one of the two holds
 
 
 def problems(log: Sequence[Mark] = LOG) -> list[str]:
@@ -335,6 +374,9 @@ __all__ = [
     "WORDS_MAX",
     "Mark",
     "at",
+    "central_day",
+    "central_midnight",
+    "central_offset",
     "current",
     "last",
     "latest",

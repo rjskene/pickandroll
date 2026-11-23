@@ -365,6 +365,12 @@ def check_lines(m: dict[str, Any]) -> list[str]:
                 else "no live-engine change in the notes"
             )
         )
+        + (
+            f"; {len(caps['earlier'])} of {caps.get('of', 0)} run(s) with a version are of an "
+            "engine live has left: " + ", ".join(caps["earlier"])
+            if caps.get("earlier")
+            else ""
+        )
     )
     lines.append(
         f"seasons: {len(m['seasons'])} in the ledger ("

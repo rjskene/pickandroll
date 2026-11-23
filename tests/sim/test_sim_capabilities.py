@@ -75,9 +75,27 @@ def test_the_capability_a_run_was_played_on():
     for nothing in (None, 0, True, "21", 2.5):
         assert cap.at(nothing) is None
     assert cap.current().replay_version == cli.REPLAY_VERSION
-    assert cap.latest() is cap.LOG[-1]
+    assert cap.latest() is cap.LOG[-1] and cap.latest().pr == 490
     # a mark that took a live change in closes it
     assert cap.taken_in("#424").id == "replay-20"
     assert cap.taken_in("#485") is None
     p = cap.at(20).payload()
     assert p["takes_in"] == ["#424"] and p["screen_version"] == 6 and p["kind"] == "engine"
+
+
+def test_days_are_central_by_the_us_rule():
+    from datetime import UTC, datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    chicago = ZoneInfo("America/Chicago")
+    t = datetime(2025, 1, 1, tzinfo=UTC)
+    while t < datetime(2028, 1, 1, tzinfo=UTC):  # every half hour of three years, clocks too
+        assert cap.central_offset(t) == t.astimezone(chicago).utcoffset(), t
+        assert cap.central_day(t) == t.astimezone(chicago).date().isoformat(), t
+        t += timedelta(minutes=30)
+    for day in ("2026-03-08", "2026-03-09", "2026-11-01", "2026-11-02", "2026-11-23"):
+        got = cap.central_midnight(day)
+        assert got.astimezone(chicago).replace(tzinfo=None) == datetime.fromisoformat(day)
+    assert cap.central_midnight("23 Nov") is None
+    # a merge late on a Central evening is the next day in UTC: the log keeps the Central day
+    assert cap.central_day(datetime(2026, 11, 20, 3, 30, tzinfo=UTC)) == "2026-11-19"
