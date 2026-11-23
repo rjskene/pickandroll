@@ -757,6 +757,12 @@ out, any of the Moves card's four weeks.
   starting slots or bench whom no box score of the week matched), kept until a record that read
   more of its days. The scorecard's card carries it, the Progress view's league table shows it
   with the days read, and the Monday markdown sums it over the public leagues.
+  A sit the recommended lineup made (#482) is sat, not lost: every fresh solve of this week's
+  lineup records today's sits in the league's season folder (`sits.json`, a day's players with
+  when each was first sat, the gain and the categories then), in every league, the
+  suggestions-only one included, since the executor's log does not tell a sit from another bench
+  move. `lost_games` leaves a recorded sit out, and the record's `lineup` gains `sat`, the games
+  that would otherwise have counted as lost; the Progress view's tooltip names them.
 - **Payload.** For an executor to consume later, every recommended day is slot by slot in the
   league's slot order with Yahoo player ids (`recommended: [{slot, player}]`, the bench beside
   it), and Yahoo's as read the same way with when and from which page it was read. Then the held

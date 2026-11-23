@@ -2883,6 +2883,9 @@ class SeasonService:
         out = self.moves_cache.get(key, make)
         if out is None:
             raise HTTPException(404, f"week {week} of league {league} has no lineup to show")
+        if out.get("this_week"):
+            # The day's sits on record, for the weekly record to tell from games lost (#482).
+            season_lineup.record_sits(season_dir(self.data_dir, league), out, today, self.clock())
         return {"league": league, **out}
 
     def _day_activation(self, league: str, today: date) -> dict[int, int]:
@@ -3057,7 +3060,9 @@ class SeasonService:
                 folder / SNAPSHOTS, week, parts.get("transactions")
             )
             box = season_scorecard.BoxScores.at(self.data_dir, today)
-            lineup = season_lineup.week_lost(season, week, box)
+            lineup = season_lineup.week_lost(
+                season, week, box, season_lineup.sits_read(season_dir(self.data_dir, league))
+            )
             self._save_ids(box)
             new = season_record.assemble(
                 league,

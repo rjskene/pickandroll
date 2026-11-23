@@ -19,10 +19,14 @@ lineup read after the day, the cached box scores saying who played.
 
 from __future__ import annotations
 
+import json
+import os
+import threading
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from ..season import Player, Season
@@ -84,10 +88,16 @@ def final_reads(
     return out
 
 
-def week_lost(season: Season, week: Week, box: BoxScores) -> dict[str, Any] | None:
+def week_lost(
+    season: Season,
+    week: Week,
+    box: BoxScores,
+    sat: Mapping[date, Collection[int]] | None = None,
+) -> dict[str, Any] | None:
     """My games lost to the lineup over ``week`` (``season.lineup.week_lost``), from the
     lineups read after their day and the cached box scores: a player played when his line
-    there is not empty. None when the league has no team of mine."""
+    there is not empty. ``sat`` are each day's recommended sits as recorded (:func:`sits_read`,
+    #482): sat, not lost. None when the league has no team of mine."""
     s = season.settings
     team = s.my_team_id
     if team is None:
@@ -114,7 +124,57 @@ def week_lost(season: Season, week: Week, box: BoxScores) -> dict[str, Any] | No
         day: [(sp.slot, sp.player.yahoo_id, sp.player.positions) for sp in spots]
         for day, spots in reads.items()
     }
-    return lu.week_lost(week.days(), lineups, played, wk.starting_slots(s.roster), espn)
+    return lu.week_lost(week.days(), lineups, played, wk.starting_slots(s.roster), espn, sat)
+
+
+#: Each day's recommended sits as the day's solves made them (#482), in the league's season
+#: folder: what tells a sit from a game lost once the day is over, in every league, the
+#: suggestions-only one included.
+SITS_FILE = "sits.json"
+_sits_lock = threading.Lock()
+
+
+def record_sits(folder: Path, lineup: Mapping[str, Any], today: date, at: datetime) -> list[int]:
+    """Record today's recommended sit from the Lineup view's payload (``lineup``, this week's),
+    the players added to the day's record, if any: a day's record is every player a solve of
+    that day sat, each with when he was first sat and the sit's gain and categories then. Written
+    only when a player is new to it, whole to a temporary file and moved into place."""
+    day = next((d for d in lineup.get("days", []) if d["date"] == today.isoformat()), None)
+    sit = (day or {}).get("sits")
+    if day is None or day["past"] or not sit:
+        return []
+    path = folder / SITS_FILE
+    with _sits_lock:
+        body = _read_sits(path)
+        seen = body.setdefault(today.isoformat(), [])
+        known = {k for entry in seen for k in entry["players"]}
+        new = [k for k in sit["players"] if k not in known]
+        if not new:
+            return []
+        seen.append({"at": at.isoformat(), **sit, "players": new, "with": sit["players"]})
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(body, indent=1) + "\n")
+        os.replace(tmp, path)
+    return new
+
+
+def sits_read(folder: Path) -> dict[date, frozenset[int]]:
+    """Each day's recorded recommended sits (:func:`record_sits`), by day."""
+    return {
+        date.fromisoformat(day): frozenset(k for entry in seen for k in entry["players"])
+        for day, seen in _read_sits(folder / SITS_FILE).items()
+    }
+
+
+def _read_sits(path: Path) -> dict[str, list[dict[str, Any]]]:
+    """The sits record, empty when there is none or it does not read: a record lost only counts
+    those games as lost again, as before #482."""
+    try:
+        body = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return body if isinstance(body, dict) else {}
 
 
 def begun_teams(tips: Mapping[str, str] | None, now: datetime) -> frozenset[str]:

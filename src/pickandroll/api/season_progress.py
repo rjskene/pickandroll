@@ -91,6 +91,8 @@ def week_row(card: Mapping[str, Any]) -> dict[str, Any]:
         "lineup_lost": lineup.get("lost") if lineup.get("days_read") else None,
         "lineup_days_read": lineup.get("days_read") or 0,
         "lineup_days": lineup.get("days") or 0,
+        # The games the recommended lineup sat on purpose (#482): sat, not lost.
+        "lineup_sat": lineup.get("sat") or 0,
     }
 
 
@@ -106,6 +108,7 @@ def _lineup(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "lost": sum(counted) if counted else None,
         "days_read": sum(r["lineup_days_read"] for r in rows),
         "days": sum(r["lineup_days"] for r in rows),
+        "sat": sum(r.get("lineup_sat", 0) for r in rows),
     }
 
 
