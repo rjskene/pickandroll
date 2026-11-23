@@ -27,6 +27,8 @@ from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import trace as tr
 from pickandroll.sim.engine import mv
+from pickandroll.sim.lab import records as lab_records
+from pickandroll.sim.lab import trace_view
 from pickandroll.sim.state import Waiting, initial
 from tests.sim.sim_league import KNOBS, arm, make_data_dir, make_setup, replay_of
 
@@ -276,6 +278,17 @@ def test_a_trace_of_a_screen_s_row_checks_itself_on_the_path_s_outcomes(data):
             mv.HELD
         )
         assert got["arms"][side]["end"]["outcome"]["rank"] == got["outcomes"][side]["rank"]
+    # the lab's Season tab plays it (PR viewer): read as a trace, its view built whole
+    assert lab_records.not_a_trace(got) is None
+    v = trace_view.view(name, got)
+    json.dumps(v, allow_nan=False)
+    assert len(v["days"]) == len(got["arms"]["a"]["days"])
+    assert [j["day"] for j in v["jumps"]] == [
+        i for i, d in enumerate(got["arms"]["a"]["days"]) if d["date"] in got["differ"]["days"]
+    ]
+    for d, x in zip(v["days"], got["arms"]["a"]["days"], strict=True):
+        assert sorted(r[0] for r in d["sides"]["a"]["roster"]) == sorted(r[0] for r in x["roster"])
+    assert v["end"]["a"]["rank"] == got["outcomes"]["a"]["rank"]
 
 
 def test_a_record_without_paths_outcomes_is_checked_on_its_world_and_seat(data):

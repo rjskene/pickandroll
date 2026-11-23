@@ -11,6 +11,10 @@ process and asks nothing of anywhere. Routes:
   that folder;
 - ``/api/model``: the model as JSON (``model.build``), built from the records again whenever
   they or the notes file change (``records.stamp``);
+- ``/api/traces``: the traces' lines (``trace_view.summary``), as the model lists them;
+  ``/api/trace/<name>``: one trace as the Season tab plays it (``trace_view.view``), kept until
+  its file changes; a name that is not a file of ``data/sim/traces/`` is not found, and a file
+  that is not a trace is refused by name (PR viewer);
 - ``/explainer``: the explainer's built file wrapped in a plain document, or a short page saying
   none was given;
 - ``/healthz``: ``ok``.
@@ -100,6 +104,7 @@ class Lab:
         self._lock = threading.Lock()
         self._stamp: Any = None
         self._model: dict[str, Any] | None = None
+        self._views: dict[str, tuple[Any, tuple[int, Any]]] = {}
 
     def build(self) -> dict[str, Any]:
         """The model from the records as they are now (a notes file that is refused is said in
@@ -119,6 +124,7 @@ class Lab:
             got["replays"],
             got["looks"],
             notes,
+            traces=got["traces"],
             hold_out=self.hold_out,
             confirmation=self.confirmation,
             generated={
@@ -138,6 +144,27 @@ class Lab:
             if self._model is None or now != self._stamp:
                 self._model, self._stamp = self.build(), now
             return self._model
+
+    def trace(self, name: str) -> tuple[int, Any]:
+        """One trace's view (``records.read_trace``), kept until its file changes. A name that
+        is not a trace's shape is not found before any path is made of it."""
+        if not rd.TRACE_NAME.fullmatch(name):
+            return 404, f"no trace named {name!r}"
+        f = self.data / rd.reader.TRACES_DIR / f"{name}.json"
+        try:
+            st = f.stat()
+            key: Any = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None
+        with self._lock:
+            got = self._views.get(name)
+            if key is not None and got is not None and got[0] == key:
+                return got[1]
+        out = rd.read_trace(self.data, name)
+        if key is not None and out[0] == 200:
+            with self._lock:
+                self._views = {name: (key, out)}
+        return out
 
     def explainer_page(self) -> str:
         if self.explainer is None:
@@ -209,6 +236,28 @@ def handler_for(lab: Lab) -> type[BaseHTTPRequestHandler]:
                     self._text(500, f"the model could not be built: {type(e).__name__}\n")
                 else:
                     self._send(200, body, "application/json; charset=utf-8")
+            elif path == "/api/traces":
+                try:
+                    body = json.dumps(lab.model()["traces"], default=str, allow_nan=False)
+                except Exception as e:  # noqa: BLE001
+                    self._text(500, f"the traces could not be listed: {type(e).__name__}\n")
+                else:
+                    self._send(200, body.encode(), "application/json; charset=utf-8")
+            elif path.startswith("/api/trace/"):
+                try:
+                    code, got = lab.trace(unquote(path[len("/api/trace/") :]))
+                    body = (
+                        json.dumps(got, default=str, allow_nan=False).encode()
+                        if code == 200
+                        else None
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self._text(500, f"the trace could not be read: {type(e).__name__}\n")
+                else:
+                    if body is None:
+                        self._text(code, f"{got}\n")
+                    else:
+                        self._send(200, body, "application/json; charset=utf-8")
             elif path == "/explainer":
                 self._send(200, lab.explainer_page().encode(), TYPES[".html"])
             elif path == "/healthz":
@@ -283,6 +332,19 @@ def check_lines(m: dict[str, Any]) -> list[str]:
         f"runs: {len(kinds)} ({kinds.count('screen')} screen, {kinds.count('tune')} tune, "
         f"{kinds.count('replay')} replay), {sum(len(run['pieces']) for run in m['runs'])} piece(s); "
         f"tunes in detail: {len(m['tunes'])}"
+    )
+    traces = m.get("traces") or []
+    lines.append(
+        f"traces: {len(traces)}"
+        + (
+            " ("
+            + ", ".join(
+                f"{sum(1 for t in traces if t['check']['level'] == k)} {k}" for k in md.LEVELS
+            )
+            + " by their check)"
+            if traces
+            else ""
+        )
     )
     lines.append(
         f"seasons: {len(m['seasons'])} in the ledger ("

@@ -29,8 +29,8 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 `pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
-`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, `trace`, and the lab's `lab/model`) for
-any way to a file, a process or the
+`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, `trace`, and the lab's `lab/model` and
+`lab/trace_view`) for any way to a file, a process or the
 network: none of them imports `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`,
 `http`, `requests`, `httpx`, `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only
 `run.py` uses `os`, for the worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -3106,10 +3106,11 @@ of the confirmation's pair finds is still met at the end.
         [--explainer FILE] [--check]
 
 The simulator's own small app: one page over the records on the box, for reading what was played,
-what it found and how far to trust it. Four parts: a pure model (`lab/model.py`, in the core the
-boundary test reads), the records' reader (`lab/records.py`), a stdlib HTTP server
-(`lab/server.py`), and the page (`lab/static/`: plain script and style, no build step, served
-beside the module). The season's animated view is a later PR: its tab is a card that says so.
+what it found and how far to trust it. Five parts: a pure model (`lab/model.py`, in the core the
+boundary test reads), a pure view of a trace (`lab/trace_view.py`, in the core too, PR viewer),
+the records' reader (`lab/records.py`), a stdlib HTTP server (`lab/server.py`), and the page
+(`lab/static/`: plain script and style, no build step, served beside the module; the Season
+tab's player is `season.js`).
 
 **What it never does.** It answers `GET` only; any other method gets 405. It writes nothing, plays
 nothing and starts no process (the code's commit is read from the checkout's `.git` files, not by
@@ -3125,13 +3126,18 @@ lead starts it.
 found); `/api/model` is the model as JSON (a model that fails to build answers 500 with one line
 naming the error's kind, never a dropped connection); `/explainer` is the explainer's built file
 (`--explainer`) wrapped in a plain document for the Explainer tab's frame, or a short page saying
-none was given; `/healthz` answers `ok`. Each answer carries `no-store`, `nosniff` and
-`no-referrer`.
+none was given; `/healthz` answers `ok`. `/api/traces` lists the traces as the model does, and
+`/api/trace/<name>` is one trace as the Season tab plays it (its view, kept until its file
+changes). A name that is not a trace's shape (letters, digits, `-` and `_`, as the `trace`
+command makes it) or not a file of `data/sim/traces/` is not found, before any path is made of
+it; a file there that is not JSON, not a trace or a trace of another version is refused by name
+(422). Each answer carries `no-store`, `nosniff` and `no-referrer`.
 
 **The model.** Built from the records each time a request finds them or the notes file changed
 (each file's path, modification time and size), and kept otherwise. It reads every screen's
 folder, every tune's folder, the written replays under `data/sim/runs/` (a run of another kind
-is counted and not shown), the confirmation ledger and the notes. A record that is not JSON is
+is counted and not shown), each trace's line under `data/sim/traces/` (PR viewer), the
+confirmation ledger and the notes. A record that is not JSON is
 refused by name and the rest is read. A replay writes `seasons` and `cells`; one written before
 them holds `season` and `forecasters`, and both forms are read. A time written without an offset
 is read as UTC, so runs whose times differ in that way sort and lie on one time line together.
@@ -3168,12 +3174,15 @@ and the model lists those gaps (`generated.lacks`).
   and left, the rows not played, what cleared, its pieces with their recorded start and end on
   one time line, its audit and its code. A tune also gets its own table: the search lever by
   lever, each value's mean, SE and standing, the final set, and the confirmation's cells and
-  verdict.
+  verdict. The traces have a table of their own (PR viewer): the pair and its values, the season,
+  the path and seed, the days the arms decide differently, the check, the code and when it was
+  made; a trace's name opens it on the Season tab. The lab plays nothing: the lead makes a trace
+  with the `trace` command.
 - **The seasons' ledger.** Every season a record or the notes name. Its role comes from the notes
   when they give one. Otherwise it is the code's hold-out; a season a tune confirmed on, or the
   code's confirmation season; a season a screen or a search played; or a replay's. Beside each
-  role, how many screens, searches, confirmations and replays played it and how many of the
-  ledger's looks name it. A season kept back to
+  role, how many screens, searches, confirmations, replays and traces (PR viewer) played it and
+  how many of the ledger's looks name it. A season kept back to
   confirm on is in no record until a tune confirms on it, so it comes from the notes.
 
 **The checks.** Recomputed on every build, a ruleset at a time, on its latest screen.
@@ -3195,9 +3204,10 @@ and the model lists those gaps (`generated.lacks`).
     search; a watch, naming them, when only a written replay played it or a look on the
     confirmation ledger names it (a tune's own confirmation is what the season is kept for, and
     is neither), or when one ruleset's tunes confirmed on it more than once (it was unseen only
-    the first time; two rulesets confirming once each is no watch); ok when nothing has;
-  - **hold-out**, a problem: the code's hold-out is in a run's seasons; a record that names
-    another hold-out is a watch;
+    the first time; two rulesets confirming once each is no watch), or when a trace played it
+    (PR viewer); ok when nothing has;
+  - **hold-out**, a problem: the code's hold-out is in a run's or a trace's seasons; a record
+    that names another hold-out is a watch;
   - **audit**, a problem: a breach or a voided path in a played pair.
 
   A flag about one ruleset's world (its rivals, say) is the notes' own, shown with the others and
@@ -3234,8 +3244,8 @@ file".
 assessments); Knobs (one ruleset, or the first two side by side with whether a shared row agrees
 or splits, by outcome, raw or in SEs, by lever or best first); Checks (the luck bars and the flags
 a ruleset, the seasons' ledger, the assessment log); Runs (the table, the time line, the short
-looks, the tunes); Season (the later PR's card); Openings (the proposals and the openings from the
-notes); Explainer (a frame of `/explainer` under the header). The layout holds from a wide
+looks, the traces, the tunes); Season (**The Season tab** below); Openings (the proposals and the
+openings from the notes); Explainer (a frame of `/explainer` under the header). The layout holds from a wide
 screen to a phone. A row's tip shows on hover, or on a tap on a touch screen (a tap elsewhere
 hides it). Everything drawn from a record goes through the page's escape, numbers included.
 While the tab is visible the page asks for the model about once a minute and draws again only
@@ -3243,9 +3253,59 @@ when the model was built again, keeping the reader's tab, Knobs switches and scr
 Explainer's frame is not reloaded); a tune's pieces show as they land. A model that could not be
 built leaves the last one on the page and says so in the header.
 
+**The Season tab** (PR viewer) plays a trace: one path of one pair, both arms at once, day by
+day. A picker lists the traces on the box (the pair and its values, where it came from, the
+season, the path and its check, whose level sits beside it), and one line never leaves the tab
+(it rides in the bar): one path proves nothing, a pair is judged on its record's figures over
+every path, on the Knobs page. The layout is the lead's working default (the mock's third cut);
+the user has not yet said yes to it. From the top:
+
+- **the bar**, kept on screen while the page scrolls: play and pause, the clock (the week, the
+  day, day n of N), a scrubber, three speeds, and a strip of the weeks with both arms' results
+  for the weeks played (a week's button goes to its first day). It starts playing when the tab
+  opens. A day plays in three steps, the engine's solve, the day's moves riding in, the games
+  going in, and the clock slows while a move rides so it can be seen;
+- the trace's check at its level (checked; checked on its world and seat only; drifted, with
+  what differed; not from a record), where it came from and the league;
+- **the pair**: the lever and its values A to B, every setting of the two arms' specs that
+  differs, and the ones they share folded away; then **where the arms decide differently**, the
+  trace's days whose decisions differ (the set, what was queued, the claims) as buttons that go
+  there, the first marked;
+- **the knobs in force**: one chart a key of the days' knobs that differs between the arms on
+  any day or moves through the season in either, both arms on it, a needle at the day, the
+  bracket's weeks shaded, the values at the needle beside its name. A count and its cap share a
+  chart (adds this week, adds today, the dollars left against the budget) and a cap gets none of
+  its own. The charts come from the keys, so a knob that becomes a schedule is drawn with no
+  change here; a table gives the known keys their words. One axis a chart. The keys flat and
+  equal in both arms are named in a line;
+- **each arm's move of the day**: two lanes, A above B. The roster in a steady order (a player
+  keeps his spot; one who arrives takes the spot one who left gave up), each with the day's
+  lineup slot, the day's arrivals riding in and the leavers riding out, a lit chip for a
+  player who arrived today and a dashed one for a player only that arm holds; the arm's day in
+  words (the tier and its solves, the set, what was queued and claimed with its bid, what
+  landed or was decided, what was lost, and what the queue left out and the rule that stopped
+  it); and a line saying whether the two arms did the same today;
+- **the week's matchup**: a bar a category an arm, the seat's share against its opponent (for a
+  category the lower total wins, the opponent's share), filling in as the day's games go in,
+  and both arms' scores so far, won-lost-tied. A points league's running score is not in a
+  trace (the trace names the points table, not its weights), so there the week strip carries the
+  week's result;
+- **the season's race**: the seat's place before each week for both arms against the playoff
+  line, a tile an arm, then each arm's regular-season place and record, its bracket in words and
+  any audit breach.
+
+The view (`lab/trace_view.py`) works out everything the tab draws that a trace does not hold as
+such: a category's share and lead and the score so far (the engine's own percentage and winner
+rules), the steady roster and the spots that differ, the charts and which keys get one, the
+day's words, and the places. The script draws and moves the clock and works nothing out. The
+parts stack in one column on a phone, the lanes fit its width without a sideways scroll, and the
+charts are drawn at their panel's own width so their labels keep their size. Players' names are
+shown: the page is the lead's, on the box, and a trace lives under `data/` only.
+
 **`lab --check`** builds the model once and prints a line a section, counts and words only:
 what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
-the seasons' ledger, the notes, the explainer and what is not recorded. Then it exits.
+the traces by their check's level, the seasons' ledger, the notes, the explainer and what is not
+recorded. Then it exits.
 
 ## The trace (`sim/trace.py`, `cli.cmd_trace`, PR trace)
 

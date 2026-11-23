@@ -1,14 +1,14 @@
 // SEASON SIM (#172, PR lab 2): the lab's page script driven with a stub DOM, for
-// tests/sim/test_lab.py. Usage: node lab_page_harness.js APP_JS MODEL_JSON NEXT_MODEL_JSON
+// tests/sim/test_lab.py. Usage: node lab_page_harness.js APP_JS MODEL_JSON NEXT_MODEL_JSON SEASON_JS
 // Prints one JSON object: the renders made, any exception, any "undefined" or "NaN" drawn, any
-// mark ("<x-mark") drawn unescaped, and what a refresh and a failed build did.
+// mark ("<x-mark") drawn unescaped in any element, and what a refresh and a failed build did.
 "use strict";
 const fs = require("fs");
-const [app, first, next] = process.argv.slice(2);
+const [app, first, next, season] = process.argv.slice(2);
 const models = [JSON.parse(fs.readFileSync(first, "utf8")), JSON.parse(fs.readFileSync(next, "utf8"))];
 const out = { renders: 0, problems: [], marks: [], escaped: 0, refresh: {} };
 const el = (id) => {
-  const e = { id, hidden: false, style: { setProperty() {} }, classList: { toggle() {} }, addEventListener() {}, offsetHeight: 50, offsetWidth: 100, contains: () => true, writes: 0, html: "" };
+  const e = { id, hidden: false, style: { setProperty() {} }, classList: { toggle() {} }, addEventListener() {}, setAttribute() {}, offsetHeight: 50, offsetWidth: 100, offsetLeft: 10, offsetTop: 10, clientWidth: 600, contains: () => true, writes: 0, html: "" };
   Object.defineProperty(e, "innerHTML", { get() { return this.html; }, set(v) { this.html = v; this.writes += 1; } });
   return e;
 };
@@ -19,19 +19,21 @@ global.document = { getElementById: get, querySelector: () => get("top"), docume
 global.window = { addEventListener() {}, innerWidth: 1200, innerHeight: 800, scrollY: 0, scrollTo() {} };
 global.location = { hash: "", search: "" };
 global.setInterval = (f) => { interval = f; return 1; };
+global.requestAnimationFrame = () => 1; global.cancelAnimationFrame = () => {}; global.performance = { now: () => 0 };
 let answer = { ok: true, model: models[0] };
-global.fetch = () => Promise.resolve(answer.ok
+global.fetch = (url) => url !== "/api/model" ? Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve("no trace in this harness") }) : Promise.resolve(answer.ok
   ? { ok: true, status: 200, json: () => Promise.resolve(answer.model) }
   : { ok: false, status: answer.status, text: () => Promise.resolve(answer.text) });
 const src = fs.readFileSync(app, "utf8").replace('window.addEventListener("hashchange"', 'global.__render = render; global.__K = K; global.__TIPS = TIPS; window.addEventListener("hashchange"');
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const look = (where) => {
-  const h = get("page").html + get("state").html + global.__TIPS.join("");
+  const h = Object.values(els).map((e) => e.html).join("") + global.__TIPS.join("");
   for (const w of ["undefined", "NaN", "[object Object]", "Infinity"]) if (h.includes(w)) out.problems.push(`${where}: "${w}" drawn`);
   if (h.includes("<x-mark")) out.marks.push(where);
   if (h.includes("&lt;x-mark&gt;")) out.escaped += 1;
 };
 (async () => {
+  if (season) eval(fs.readFileSync(season, "utf8"));
   eval(src);
   await tick(); await tick();
   const pages = ["overview", "knobs", "checks", "runs", "season", "openings", "explainer"];

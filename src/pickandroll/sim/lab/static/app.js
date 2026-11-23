@@ -197,8 +197,8 @@
       <div class="grid2">${listed().map(luckPanel).join("") || `<section class="panel"><p class="empty">Nothing recorded.</p></section>`}</div>
       <div class="grid2">
         <section class="panel"><h2>Seasons' ledger</h2><p class="sub">A season that has been searched cannot also confirm. The hold-out is never touched.</p><div class="tablewrap"><table>
-          <tr><th>Season</th><th>Role</th><th class="n">Screens</th><th class="n">Searches</th><th class="n">Confirmations</th><th class="n">Replays</th><th class="n">Looks</th><th>Note</th></tr>
-          ${M.seasons.map((s) => `<tr><td><b>${esc(s.words)}</b></td><td><span class="role ${esc(s.role)}">${esc(roleName[s.role] || s.role)}</span></td><td class="n">${esc(s.screens)}</td><td class="n">${esc(s.searches)}</td><td class="n">${esc(s.confirmations)}</td><td class="n">${esc(s.replays)}</td><td class="n">${esc(s.looks)}</td><td class="sub">${esc(s.note || "")}${s.from === "notes" ? "" : ` (from the ${esc(s.from)})`}</td></tr>`).join("")}
+          <tr><th>Season</th><th>Role</th><th class="n">Screens</th><th class="n">Searches</th><th class="n">Confirmations</th><th class="n">Replays</th><th class="n">Traces</th><th class="n">Looks</th><th>Note</th></tr>
+          ${M.seasons.map((s) => `<tr><td><b>${esc(s.words)}</b></td><td><span class="role ${esc(s.role)}">${esc(roleName[s.role] || s.role)}</span></td><td class="n">${esc(s.screens)}</td><td class="n">${esc(s.searches)}</td><td class="n">${esc(s.confirmations)}</td><td class="n">${esc(s.replays)}</td><td class="n">${esc(s.traces)}</td><td class="n">${esc(s.looks)}</td><td class="sub">${esc(s.note || "")}${s.from === "notes" ? "" : ` (from the ${esc(s.from)})`}</td></tr>`).join("")}
         </table></div></section>
         <section class="panel"><h2>Assessment log</h2><p class="sub">The lead's reading after each run, newest first.</p>${n ? n.assessments.map(entry).join("") || `<p class="empty">None yet.</p>` : noNotes("The log")}</section>
       </div>`;
@@ -221,6 +221,13 @@
       ${cells ? `<div class="tablewrap"><table><tr><th>Rivals</th><th>Forecaster</th><th class="n">${esc(O(m).label)}</th><th class="n">Playoff odds</th><th>Read</th></tr>${cells}</table></div>` : ""}
       ${c.verdict ? `<p class="verdict">${esc(c.verdict.words || c.verdict.state)}</p>` : ""}</section>`;
   }
+  function traceTable() {
+    const rows = M.traces.map((x) => `<tr><td><a href="#season" data-trace="${esc(x.name)}"><b>${esc(x.name)}</b></a><br><span class="sub">${esc(x.form)}${x.from ? " " + esc(x.from) : ""}${x.row ? " · " + esc(x.row) : ""}</span></td>
+      <td>${esc(x.label || "no lever")}${x.values ? `<br><span class="sub">${esc(x.values.a)} → ${esc(x.values.b)}</span>` : ""}</td><td>${esc(x.season_words || "n/a")}<br><span class="sub">${esc(x.forecaster)}</span></td>
+      <td class="n">${esc(x.path)}<br><span class="sub">seed ${esc(x.seed)}</span></td><td class="n">${esc(x.differ_days)}</td><td>${levelBadge(x.check.level)}<br><span class="sub">${esc(x.check.status)}</span></td>
+      <td><code>${esc(x.code_sha || "")}</code><br><span class="sub">${day(x.made)}</span></td></tr>`).join("");
+    return rows ? `<div class="tablewrap"><table><tr><th>Trace</th><th>Pair</th><th>Season</th><th class="n">Path</th><th class="n">Days apart</th><th>Check</th><th>Code</th></tr>${rows}</table></div>` : `<p class="empty">No trace on the box yet.</p>`;
+  }
   function runsPage() {
     const runs = M.runs, n = notes();
     const rows = runs.map((r) => {
@@ -237,11 +244,13 @@
       <section class="panel"><h2>Runs</h2>${rows ? `<div class="tablewrap"><table><tr><th>Run</th><th>Ruleset</th><th>Seasons</th><th class="n">Paths</th><th class="n">Pairs</th><th class="n">Cleared</th><th class="n">Box time</th><th>Audit</th><th>Code</th></tr>${rows}</table></div>
         <div class="gantt">${gantt}<div class="gaxis"><span>${day(span.start)}</span><span>${day(span.end)}</span></div></div>` : `<p class="empty">No run recorded.</p>`}</section>
       <section class="panel"><h2>Short looks</h2><p class="sub">One path, one seed: never a finding.</p>${n ? `<div class="tablewrap"><table><tr><th>Look</th><th>Date</th><th>What</th><th>Result</th><th>Record</th></tr>${looks}</table></div>` : noNotes("The looks")}</section>
+      <section class="panel"><h2>Traces</h2><p class="sub">One path of one pair, written day by day for the Season tab by the trace command (the lead runs it); the lab plays nothing. One path proves nothing.</p>${traceTable()}</section>
       ${M.tunes.length ? M.tunes.map(tuneTable).join("") : `<section class="panel"><h2>Tunes</h2><p class="sub">None recorded yet. Each tune will show its search, lever by lever, and its one confirmation on the unseen season.</p></section>`}`;
   }
 
   // ------------------------------------------------------------------ season, openings, explainer
-  const seasonPage = () => `<section class="panel"><h2>${esc(M.viewer.title)}</h2><p class="sub">${esc(M.viewer.words)}</p></section>`;
+  // The Season tab is season.js's: a trace played day by day (PR viewer).
+  const seasonPage = () => `<p class="lede">${esc(M.viewer.words)}</p><div id="season-view" class="sv"></div>`;
   function openingsPage() {
     const n = notes(), st = { asked: "word", planned: "ok" };
     const props = n ? n.proposals.map((p) => `<div class="item"><b>${esc(p.title)}</b><span class="badge">${esc(p.state || p.date)}</span><p>${esc(p.text)}</p></div>`).join("") : "";
@@ -269,6 +278,7 @@
     page.classList.toggle("bleed", key === "explainer");
     document.documentElement.style.setProperty("--toph", document.querySelector(".top").offsetHeight + "px");
     page.innerHTML = PAGES[key][1]();
+    if (window.SeasonView) { if (key === "season") window.SeasonView.mount(document.getElementById("season-view"), M); else window.SeasonView.stop(); }
     if (keep) window.scrollTo(0, y);
   }
   function showTip(el, x, y) {
@@ -281,6 +291,10 @@
   page.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-k]");
     if (b) { K[b.dataset.k] = b.dataset.v; render(); return; }
+    const sv = e.target.closest("button[data-sv]");
+    if (sv && window.SeasonView) { window.SeasonView.act(sv.dataset.sv, sv.dataset.v); return; }
+    const tr = e.target.closest("a[data-trace]");
+    if (tr && window.SeasonView) window.SeasonView.choose(tr.dataset.trace);
     const el = e.target.closest("[data-tip]");
     if (el) showTip(el, e.clientX, e.clientY); else tipEl.hidden = true;
   });
@@ -290,6 +304,8 @@
     if (el) showTip(el, e.clientX, e.clientY); else tipEl.hidden = true;
   });
   page.addEventListener("mouseleave", () => { tipEl.hidden = true; });
+  page.addEventListener("input", (e) => { if (e.target.dataset && e.target.dataset.sv === "scrub" && window.SeasonView) window.SeasonView.act("scrub", e.target.value); });
+  page.addEventListener("change", (e) => { if (e.target.dataset && e.target.dataset.sv === "pick" && window.SeasonView) window.SeasonView.act("pick", e.target.value); });
   window.addEventListener("hashchange", () => { if (M) render(); });
   // The model is read again about once a minute while the tab is visible, and the page is drawn
   // again only when the model was built again (the server keeps it until the records change).
@@ -306,6 +322,8 @@
         if (M && m.generated.at === M.generated.at) { if (was) header(); return; }
         const first = !M; M = m;
         if (!first && pageKey() === "explainer") { header(); return; }
+        // On the Season tab a new model changes the traces' list; the trace plays on.
+        if (!first && pageKey() === "season" && window.SeasonView) { header(); window.SeasonView.list(M); return; }
         render(!first);
       })
       .catch((e) => {

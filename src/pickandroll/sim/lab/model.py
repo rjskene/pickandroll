@@ -199,10 +199,18 @@ TIERS = {
 }
 #: A season's roles, as the notes and the ledger name them.
 ROLES = ("search", "confirm", "holdout", "current", "replay")
-#: What the season's view will be: a later PR's.
+#: What the season's view is (PR viewer): it plays a trace the ``trace`` command wrote.
 VIEWER = (
-    "A season played day by day, its matchups, standings and the seat's moves, animated. It "
-    "needs a trace of a season, which the replay does not write yet: it comes with its own PR."
+    "One path of one pair, both arms at once, played day by day from a trace: what differs "
+    "between the arms, the knobs in force, each arm's move of the day, the week's matchup and "
+    "the season's race. A trace is made by the trace command; the lab plays nothing."
+)
+
+
+#: The line the Season tab never drops (PR viewer).
+VIEWER_NOTE = (
+    "One path proves nothing: a pair is judged on its record's figures over every path, on the "
+    "Knobs page."
 )
 
 
@@ -901,13 +909,15 @@ def build(
     hold_out: int,
     confirmation: int,
     generated: Mapping[str, Any],
+    traces: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """The lab's model. ``screens`` and ``tunes``: each ``{"folder", "record", "pairs"}``, the
     folder's record and its pairs' records by file name; ``replays``: each ``{"file",
     "record"}``, a written replay's record; ``looks``: the confirmation ledger's lines;
     ``notes``: :func:`notes_of`'s, or None; ``hold_out`` and ``confirmation``: the code's two
     seasons; ``generated``: what the reader says of the build (when, the code's commit, what it
-    read and refused), kept as given."""
+    read and refused), kept as given; ``traces``: each trace's line as ``trace_view.summary``
+    makes it (PR viewer), listed, counted in the seasons' ledger and read by its two flags."""
     lacks: list[str] = []
     notes_rs = (notes or {}).get("rulesets") or {}
     runs: list[dict[str, Any]] = []
@@ -1178,9 +1188,14 @@ def build(
     # Checks in all, the seasons' ledger.
     tries = [r for r in rows if r["played"] and not r["did_nothing"]]
     all_luck = luck([r["diff"][r["measure"]]["ratio"] for r in tries])
-    seasons = _ledger(runs, tune_list, looks, notes, hold_out, confirmation)
+    trace_list = sorted(
+        (dict(t) for t in traces), key=lambda t: (-_t(t.get("made")), str(t.get("name")))
+    )
+    seasons = _ledger(runs, tune_list, looks, notes, hold_out, confirmation, trace_list)
     for rs in rulesets:
-        rs["checks"]["flags"] += _season_flags(rs["key"], runs, seasons, hold_out, looks, tune_list)
+        rs["checks"]["flags"] += _season_flags(
+            rs["key"], runs, seasons, hold_out, looks, tune_list, trace_list
+        )
         rs["checks"]["level"] = _worst(f["level"] for f in rs["checks"]["flags"])
     if not (notes or {}).get("seasons"):
         lacks.append(
@@ -1219,8 +1234,9 @@ def build(
         "timeline": timeline,
         "tunes": tune_list,
         "seasons": seasons,
+        "traces": trace_list,
         "notes": None if notes is None else dict(notes),
-        "viewer": {"title": "Season", "words": VIEWER},
+        "viewer": {"title": "Season", "words": VIEWER, "note": VIEWER_NOTE},
         "generated": dict(generated) | {"lacks": sorted(dict.fromkeys(lacks))},
     }
 
@@ -1633,11 +1649,12 @@ def _ledger(
     notes: Mapping[str, Any] | None,
     hold_out: int,
     confirmation: int,
+    traces: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """The seasons' ledger: for each season a record or the notes name, its role (the notes',
     else the hold-out's, a confirmation season's, a searched one's, else a replay's) and how
-    many screens, searches, confirmations and written replays played it, and the ledger's looks
-    at it."""
+    many screens, searches, confirmations, written replays and traces (PR viewer) played it,
+    and the ledger's looks at it."""
     noted = {s["season"]: s for s in (notes or {}).get("seasons") or []}
     seasons: set[int] = set(noted) | {hold_out, confirmation}
     count: dict[int, dict[str, int]] = {}
@@ -1645,7 +1662,15 @@ def _ledger(
     def add(t: int, what: str) -> None:
         seasons.add(t)
         count.setdefault(
-            t, {"screens": 0, "searches": 0, "confirmations": 0, "replays": 0, "looks": 0}
+            t,
+            {
+                "screens": 0,
+                "searches": 0,
+                "confirmations": 0,
+                "replays": 0,
+                "looks": 0,
+                "traces": 0,
+            },
         )[what] += 1
 
     for run in runs:
@@ -1661,10 +1686,21 @@ def _ledger(
     for line in looks:
         for t in _seasons(line.get("seasons")):
             add(t, "looks")
+    for tr_ in traces:
+        if isinstance(tr_.get("season"), int):
+            add(int(tr_["season"]), "traces")
     out = []
     for t in sorted(seasons):
         c = count.get(
-            t, {"screens": 0, "searches": 0, "confirmations": 0, "replays": 0, "looks": 0}
+            t,
+            {
+                "screens": 0,
+                "searches": 0,
+                "confirmations": 0,
+                "replays": 0,
+                "looks": 0,
+                "traces": 0,
+            },
         )
         if t in noted:
             role, note, source = noted[t]["role"], noted[t].get("note"), "notes"
@@ -1697,6 +1733,7 @@ def _season_flags(
     hold_out: int,
     looks: Sequence[Mapping[str, Any]] = (),
     tunes: Sequence[Mapping[str, Any]] = (),
+    traces: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """The two flags the seasons' ledger gives every ruleset (any ruleset's runs: a season seen
     is seen). The confirmation season's: a problem when a screen or a search played a season
@@ -1704,9 +1741,9 @@ def _season_flags(
     the confirmation ledger names one (a tune's own confirmation, the ledger's lines of design
     ``tune``, is what the season is kept for and is not one), or when this ruleset's tunes
     confirmed on it more than once (it was unseen only the first time; another ruleset's
-    confirmation is not counted here) (the lead's decisions); else ok.
-    The hold-out's: a problem when it is in any record's seasons, a watch when a record names
-    another hold-out."""
+    confirmation is not counted here) (the lead's decisions), or when a trace played one (PR
+    viewer, the lead's decision); else ok. The hold-out's: a problem when it is in any record's
+    seasons (a trace's included), a watch when a record names another hold-out."""
     confirm = [s for s in seasons if s["role"] == "confirm"]
     seen = [s for s in confirm if s["screens"] or s["searches"]]
     watched = []
@@ -1727,9 +1764,12 @@ def _season_flags(
             and int(t["confirmation"]["season"]) == s["season"]
         ]
         again = again if len(again) > 1 else []
-        if not reps and not lks and not again:
+        trs = [str(t.get("name")) for t in traces if t.get("season") == s["season"]]
+        if not reps and not lks and not again and not trs:
             continue
         said = [f"{len(reps)} written replay(s) played it ({', '.join(reps)})"] if reps else []
+        if trs:
+            said.append(f"{len(trs)} trace(s) played it ({', '.join(trs)})")
         if lks:
             said.append(f"{len(lks)} look(s) on the confirmation ledger name it ({', '.join(lks)})")
         if again:
@@ -1773,6 +1813,7 @@ def _season_flags(
             }
         )
     played = [r["name"] for r in runs if hold_out in r["seasons"]]
+    played += [str(t.get("name")) for t in traces if t.get("season") == hold_out]
     other = [r["name"] for r in runs if r.get("hold_out") not in (None, hold_out)]
     held = [
         s
