@@ -126,9 +126,9 @@ def test_a_pair_on_a_grid_plays_each_path_s_shape_and_seat(wire: Path, monkeypat
     seen = []
     real = rn.paired
 
-    def spy(setup, w, a, b, me, on_day=None):
+    def spy(setup, w, a, b, me, on_day=None, on_end=None):
         seen.append((setup.teams, setup.max_weekly_adds, me))
-        return real(setup, w, a, b, me, on_day)
+        return real(setup, w, a, b, me, on_day, on_end)
 
     monkeypatch.setattr(rn, "paired", spy)
     code, out = replay(wire, "--arms", *spec(wire, "R", "S"), "--grid", "full", "--paths", "3")
