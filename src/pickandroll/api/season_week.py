@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, tzinfo
 from pathlib import Path
@@ -309,6 +309,40 @@ def spans(
     return out
 
 
+def project_team(
+    members: Sequence[tuple[int, Player]],
+    rates: Mapping[int, wk.Rates],
+    days: Sequence[date],
+    this_week: bool,
+    schedule: Mapping[date, frozenset[str]],
+    slots: Sequence[str],
+    value: Mapping[int, float],
+    spots: int,
+    games: Mapping[int, int] | None = None,
+    points: Mapping[str, float] | None = None,
+    no_games: Collection[int] = (),
+    returns: Mapping[int, date] | None = None,
+) -> wk.TeamWeek:
+    """A team's week as every view projects it (#485): the moves' field, the season outlook and
+    the Week view. This week is the plain projection, the out rule's; a week after it plays the
+    team on a legal roster (its ``spots`` active spots, most valuable first) with each O and INJ
+    held until his return date in ``returns`` (``weekly.project_week``)."""
+    return wk.project_week(
+        members,
+        rates,
+        days,
+        schedule,
+        slots,
+        value,
+        this_week,
+        games=games,
+        points=points,
+        no_games=no_games,
+        returns=returns,
+        spots=spots,
+    )
+
+
 # --------------------------------------------------------------------------- the view
 #: The projection system the season views open on (the Matchup view's hero, the landing's
 #: matchup odds, #303).
@@ -316,8 +350,16 @@ DEFAULT_SYSTEM = "bbm"
 
 
 def week_projection(
-    season: Season, today: date, data_dir: Path, weeks_ahead: int
+    season: Season,
+    today: date,
+    data_dir: Path,
+    weeks_ahead: int,
+    returns: Mapping[int, date] | None = None,
 ) -> dict[str, Any]:
+    """The Week view: each week's games of every player, my roster's starts and this week's
+    matchup. ``returns`` are ESPN's return dates (``season_moves.espn_returns``, #485): a later
+    week plays my roster on its legal active spots with each dated O or INJ held until his date
+    (:func:`project_team`); this week is as before."""
     weeks = season.calendar.ahead(today, weeks_ahead) if season.calendar else []
     s = season.settings
     points = dict(s.points) if s.scoring == "points" and s.points else None
@@ -382,18 +424,22 @@ def week_projection(
         out["players"] = {str(k): v for k, v in rows.items()}
         return out
 
+    active_spots = wk.active_spots(s.roster)
+
     def project(roster: list[tuple[int, Player]], i: int) -> wk.TeamWeek:
-        return wk.project_week(
+        return project_team(
             roster,
             bbm.rates,
             ahead[i].days,
+            i == 0,
             season.schedule,
             slots,
             value,
-            i == 0,
+            active_spots,
             games=ahead[i].games,
             points=points,
             no_games=yahoo.zero,
+            returns=returns,
         )
 
     roster = [(sp.player.yahoo_id, sp.player) for sp in season.rosters.get(mine, ())]

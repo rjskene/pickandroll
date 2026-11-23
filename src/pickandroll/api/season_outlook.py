@@ -4,10 +4,13 @@ and what my players add to it.
 This week is the move model's own (``season_moves.build``'s week span: the week so far, the
 named opponent, the same first day), so its chip agrees with the Matchup view. A later week is
 projected the same way from its first day, with today's rosters: nobody is added or dropped,
-and an O sits out this week only (``weekly.is_out``). Its opponent is the one the league page
-shown for that week pairs me with (``Season.pairings``); a week whose pairs were never read,
-or a playoff week, is played against the field: every other team whose roster was read, its
-odds and its finals the average over them (the move model's later weeks).
+and every team, mine included, plays on a legal roster (#485, ``season_week.project_team``):
+each day its active spots go to its most valuable players who can play, an O or INJ with an
+ESPN return date held until it, an O without one back next Monday (``weekly.is_out``). Its
+opponent is the one the league page shown for that week pairs me with (``Season.pairings``); a
+week whose pairs were never read, or a playoff week, is played against the field: every other
+team whose roster was read, its odds and its finals the average over them (the move model's
+later weeks).
 
 A week counts toward the summary when it is a regular week (before
 ``Season.first_playoff_week``): its matchup odds summed are the wins expected, and a week is
@@ -69,19 +72,21 @@ def payload(
     slots = {sp.player.yahoo_id: sp.slot for sp in season.rosters.get(mine, ())}
 
     def project(team: int, span: mv.WeekSpan) -> wk.TeamWeek:
-        # As ``season_moves.build`` projects an opponent.
+        # As ``season_moves.build`` projects an opponent (#485: a later week on a legal roster).
         members = [(sp.player.yahoo_id, sp.player) for sp in season.rosters.get(team, ())]
-        return wk.project_week(
+        return sw.project_team(
             members,
             p.rates,
             span.days,
+            span.this_week,
             p.schedule,
             p.slots,
             p.value,
-            span.this_week,
+            p.spots,
             games=span.games,
             points=p.points,
             no_games=p.no_games,
+            returns=built.returns,
         )
 
     weeks = []
@@ -162,7 +167,9 @@ def _week(
 ) -> dict[str, Any]:
     """One week: my finals against each team faced (one, or the field), averaged."""
     cats = p.cats
-    full = mv.project_mine(p, span, chosen=chosen)
+    # My week on a legal roster too (#485): a later week holds my returning players to the
+    # active spots, as it holds every opponent's. This week the spots change nothing.
+    full = mv.project_mine(p, span, chosen=chosen, spots=p.spots)
     fm = wk.finals(full, span.so_far, cats)
 
     def against(finals: Mapping[str, wk.Final]) -> tuple[list[list[wk.CategoryOdds]], float, float]:
@@ -179,7 +186,7 @@ def _week(
         pw = full.players.get(key, wk.PlayerWeek(0, 0))
         cats_ = odds_ = 0.0
         if read and pw.started:
-            gone = mv.project_mine(p, span, gone={key: first}, chosen=chosen)
+            gone = mv.project_mine(p, span, gone={key: first}, chosen=chosen, spots=p.spots)
             _, e, w = against(wk.finals(gone, span.so_far, cats))
             cats_, odds_ = expected - e, win - w
         rows.append(

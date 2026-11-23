@@ -53,8 +53,9 @@ included.
 
 A held-slot move defers a drop; it does not avoid one (#97). The player moved comes back on
 the first day of the first week the out rule lets him play (next Monday for an O), or on his
-return date (``returns``, ESPN's) when later, and plays from then; INJ, OFS, SUSP and NA stay
-out of every horizon and cost nothing. From the day he comes back the set drops its least
+return date (``returns``, ESPN's) when later, and plays from then; an INJ with a return date
+comes back on it (#485); OFS, SUSP, NA and an INJ with none stay out of every horizon and cost
+nothing. From the day he comes back the set drops its least
 valuable active player by per-game value, him included, never one the keep rule keeps
 (:func:`comebacks`). That is an approximation: the starters' own ranking, not each choice
 re-valued. Several eligible players for fewer open slots: the latest to return goes first, roster
@@ -219,7 +220,8 @@ class MoveProblem:
     #: The weekly add limits, this week's net of the adds already made.
     limits: tuple[AddLimit, ...] = ()
     held_accepts: Mapping[str, frozenset[str]] = field(default_factory=lambda: HELD_ACCEPTS)
-    #: My players held out until a day (an O's return date, when later than next Monday).
+    #: My players held out until a day: an O's or INJ's return date (ESPN's, #485), and a pending
+    #: claim's add until his clear day (:func:`with_pending`).
     returns: Mapping[int, date] = field(default_factory=dict)
     #: The slot each of my held players sits in (``held``'s keys).
     held_slots: Mapping[int, str] = field(default_factory=dict)
@@ -610,6 +612,12 @@ class Comeback:
     returning: bool = False
 
 
+def dated(problem: MoveProblem, key: int) -> bool:
+    """Whether ``key``'s ``returns`` entry is his return date (ESPN's, #485), not a pending
+    claim's clear day (:func:`with_pending`): a later week then plays a dated O or INJ from it."""
+    return key in problem.returns and key not in problem.pending
+
+
 def comes_back(
     problem: MoveProblem, key: int, player: Player, spans: Sequence[WeekSpan]
 ) -> date | None:
@@ -621,7 +629,7 @@ def comes_back(
         if span.games is not None and key in span.games:
             out = span.games[key] <= 0
         else:
-            out = wk.is_out(player, span.this_week, key in problem.no_games)
+            out = wk.is_out(player, span.this_week, key in problem.no_games, dated(problem, key))
         days = [d for d in span.days if back is None or d >= back]
         if not out and days:
             return days[0]
@@ -1249,6 +1257,7 @@ def project_mine(
     available: Mapping[int, date] | None = None,
     chosen: Mapping[date, Collection[int]] | None = None,
     rates: Mapping[int, wk.Rates] | None = None,
+    spots: int | None = None,
 ) -> wk.TeamWeek:
     """My week over ``span`` with ``members`` (my roster, held slots included, when None), each
     player in ``gone`` stopped from his day on (a drop): his starts go to the bench. An add
@@ -1256,7 +1265,8 @@ def project_mine(
     ``chosen`` ranks a day's named starters first (the recommended lineup's crowded days, #314:
     the Matchup and Season views; the moves keep ``value``'s starters). ``rates`` are the lines
     played on (:func:`rates_with`, #435), the problem's when None; the starters' order stays
-    ``value``'s."""
+    ``value``'s. ``spots`` makes a later week's roster legal (``weekly.legal``, #485: the season
+    outlook's later weeks); the moves leave it None, their comebacks keeping the roster legal."""
     p = problem
     return wk.project_week(
         [*p.held, *p.roster] if members is None else members,
@@ -1272,6 +1282,8 @@ def project_mine(
         available_from={**p.effective, **p.returns, **(available or {})},
         gone_from=gone or {},
         chosen=chosen,
+        returns={k: d for k, d in p.returns.items() if dated(p, k)},
+        spots=spots,
     )
 
 
