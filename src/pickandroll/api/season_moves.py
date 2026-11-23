@@ -57,7 +57,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +73,7 @@ from ..season import picks as pk
 from ..season import plans as pl
 from ..season import pool as sp
 from ..season import progress as pg
+from ..season import recent as rc
 from ..season import reserve as rs
 from ..season import stream as st
 from ..season import weekly as wk
@@ -168,8 +169,15 @@ class Rated:
     value: dict[int, float]
     info: dict[str, Any]
     players: dict[int, Player]
+    #: Basketball Monster's line as read, before the recent-form blend: the keep rule's, the
+    #: scorer's and the season guard's (#486).
     bbm: sw.System
     yahoo: sw.System
+    #: The system's rates before the recent-form blend (#486): the breakout lift's line and every
+    #: rest-of-season figure's; None when nothing was blended (``rates`` are then those).
+    unblended: dict[int, wk.Rates] | None = None
+    #: The per-game values on ``unblended`` (#486): a forced drop's; None when nothing blended.
+    unblended_value: dict[int, float] | None = None
 
 
 def blend_rates(
@@ -191,17 +199,115 @@ def blend_rates(
     return out
 
 
-def system_rates(season: Season, data_dir: Path, system: str, blend: float | None = None) -> Rated:
+def recent_lines(
+    data_dir: Path, players: Mapping[int, Player], today: date
+) -> tuple[dict[int, dict[int, rc.Recent]], dict[str, Any]]:
+    """Each player's recent line (#486): the games and the per-game line of the newest 7-day and
+    14-day actual exports (``season_flags.PAST_DAYS``), by window; and what was read. An export
+    pulled more than ``season_flags.PAST_DAYS_MAX_AGE`` before ``today`` is stale: not read. One
+    that cannot be read is left out with the reason (``unreadable``), never failing the solve."""
+    windows: dict[int, dict[int, rc.Recent]] = {}
+    info: dict[str, Any] = {}
+    for days in rc.WINDOWS:
+        path = sw._latest(data_dir, (season_flags.PAST_DAYS[days],))
+        if path is None:
+            info[f"{days}d"] = None
+            continue
+        as_of = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+        info[f"{days}d"] = {"file": path.name, "as_of": as_of.isoformat()}
+        if today - as_of.date() > season_flags.PAST_DAYS_MAX_AGE:
+            info[f"{days}d"]["stale"] = True
+            continue
+        try:
+            df = sw._frame(path, season_flags._past_frame)
+            lines: dict[int, rc.Recent] = {}
+            for yid, pid in sw._match(path, df, players, data_dir).items():
+                row = df.loc[pid]
+                line = sw._per_game(row)
+                if line is not None:
+                    lines[yid] = (float(row.get("games") or 0.0), line)
+        except Exception as e:  # noqa: BLE001 - a bad export blends nothing, the solve goes on
+            info[f"{days}d"]["unreadable"] = str(e)
+            continue
+        windows[days] = lines
+    return windows, info
+
+
+def played_bbm(
+    bbm: sw.System,
+    data_dir: Path,
+    players: Mapping[int, Player],
+    knobs: Mapping[str, Any] | None,
+    today: date | None,
+) -> tuple[sw.System, dict[str, Any] | None]:
+    """Basketball Monster's line blended toward recent form (#486, ``season.recent``) under the
+    league's ``knobs``, and what the blend read; ``bbm`` itself and None when the blend is off
+    (``rate_shrink`` 0, or no ``today``). With every export stale or missing nothing is blended,
+    and the info says why."""
+    k = rc.knobs_of(knobs)
+    if today is None or k[rc.SHRINK] <= 0 or not bbm.rates:
+        return bbm, None
+    windows, read = recent_lines(data_dir, players, today)
+    rates, used = rc.blend(bbm.rates, windows, k[rc.SHRINK], k[rc.GAMES])
+    info: dict[str, Any] = {**k, "windows": read, "players": len(used), "status": "blended"}
+    if not windows:
+        stale = [f"{w['file']} ({w['as_of'][:10]})" for w in read.values() if w and w.get("stale")]
+        bad = [w["file"] for w in read.values() if w and "unreadable" in w]
+        why = []
+        if stale:
+            why.append(f"export stale ({', '.join(stale)})")
+        if bad:
+            why.append(f"export unreadable ({', '.join(bad)})")
+        info["status"] = f"no blend: {'; '.join(why)}" if why else "no blend: no export"
+    elif not used:
+        info["status"] = "no blend: no player in the exports"
+    if not used:
+        return bbm, info
+    return sw.System(rates, bbm.info, bbm.zero), info
+
+
+def system_rates(
+    season: Season,
+    data_dir: Path,
+    system: str,
+    blend: float | None = None,
+    knobs: Mapping[str, Any] | None = None,
+    today: date | None = None,
+) -> Rated:
     """The rates of ``system``: Basketball Monster's; Yahoo's next seven days for the
     available players with Basketball Monster's line for everyone else; or the ``blend`` of the
     two (#152), Yahoo's share ``blend`` for each player Yahoo projects, each per-game value the
-    same mix of the two systems' own."""
+    same mix of the two systems' own.
+
+    With ``knobs`` and ``today``, Basketball Monster's line is first blended toward each player's
+    recent form (#486, :func:`played_bbm`); Yahoo's seven-day line is near-term already and stays
+    as read. ``Rated.bbm`` keeps the line as read, and ``Rated.unblended`` the system's rates
+    before the blend."""
     s = season.settings
     players = sw.season_players(season)
-    bbm = sw.bbm_system(data_dir, players)
+    read = sw.bbm_system(data_dir, players)
     yahoo = sw.yahoo_system(season)
     points = dict(s.points) if s.scoring == "points" and s.points else None
     cats = tuple(s.cats)
+    bbm, recent = played_bbm(read, data_dir, players, knobs, today)
+    rates, value, info = _system(system, blend, bbm, yahoo, cats, points)
+    unblended = unblended_value = None
+    if bbm is not read:
+        unblended, unblended_value, _ = _system(system, blend, read, yahoo, cats, points)
+    if recent is not None:
+        info = {**info, "recent": recent}
+    return Rated(rates, value, info, players, read, yahoo, unblended, unblended_value)
+
+
+def _system(
+    system: str,
+    blend: float | None,
+    bbm: sw.System,
+    yahoo: sw.System,
+    cats: tuple[str, ...],
+    points: dict[str, float] | None,
+) -> tuple[dict[int, wk.Rates], dict[int, float], dict[str, Any]]:
+    """:func:`system_rates`' rates, values and info on Basketball Monster's line ``bbm``."""
     if system == "blend":
         w = pg.BLEND if blend is None else float(blend)
         rates = {**bbm.rates, **blend_rates(bbm.rates, yahoo.rates, w)}
@@ -229,7 +335,7 @@ def system_rates(season: Season, data_dir: Path, system: str, blend: float | Non
         rates = dict(bbm.rates)
         value = wk.per_game_values(bbm.rates, cats, points)
         info = dict(bbm.info)
-    return Rated(rates, value, info, players, bbm, yahoo)
+    return rates, value, info
 
 
 def espn_returns(data_dir: Path, members: list[mv.Member]) -> dict[int, date]:
@@ -318,7 +424,7 @@ def build(
         knobs["blend"] = pg.BLEND
     points = dict(s.points) if s.scoring == "points" and s.points else None
     cats = tuple(s.cats)
-    rated = system_rates(season, data_dir, system, knobs["blend"])
+    rated = system_rates(season, data_dir, system, knobs["blend"], knobs, today)
     rates, value, info, yahoo = rated.rates, rated.value, rated.info, rated.yahoo
     players = rated.players
     matchup, read_at = sw.matchup_read(season, mine)
@@ -423,6 +529,10 @@ def build(
         claims=claims,
         # A one-win league's moves rank on the matchup odds (#397).
         one_win=s.one_win,
+        # The rest of the season on the line before the recent-form blend (#486).
+        season_rates=rated.unblended,
+        # A forced drop is a permanent cut: chosen on the values before the blend (#486).
+        drop_value=rated.unblended_value,
     )
     names = {t.team_id: t.name for t in season.teams}
     horizons = {
@@ -489,7 +599,14 @@ def build(
             problem = replace(problem, kept=rule.kept | problem.pending)
     real = replace(base, kept=mv.keep_rule(base).kept) if pending or made else None
     # The breakout lift (#435), on the roster the claims and the picks leave.
-    lifts = lf.lifts(flags or {}, problem.rates, (c for c, _ in problem.candidates), knobs)
+    # Its line is the system's before the recent-form blend (#486): the lift moves toward the
+    # recent minutes itself.
+    lifts = lf.lifts(
+        flags or {},
+        rated.unblended if rated.unblended is not None else problem.rates,
+        (c for c, _ in problem.candidates),
+        knobs,
+    )
     if lifts:
         marginal = mv.marginal_of(problem, int(lf.knobs_of(knobs)[lf.MARGINAL]))
         problem = replace(problem, lifted=lifts, marginal=marginal)

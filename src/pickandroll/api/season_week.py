@@ -355,11 +355,14 @@ def week_projection(
     data_dir: Path,
     weeks_ahead: int,
     returns: Mapping[int, date] | None = None,
+    played: Callable[[System, Mapping[int, Player]], System] | None = None,
 ) -> dict[str, Any]:
     """The Week view: each week's games of every player, my roster's starts and this week's
     matchup. ``returns`` are ESPN's return dates (``season_moves.espn_returns``, #485): a later
     week plays my roster on its legal active spots with each dated O or INJ held until his date
-    (:func:`project_team`); this week is as before."""
+    (:func:`project_team`); this week is as before. ``played`` turns Basketball Monster's line
+    into the one the weeks play (``season_moves.played_bbm``, the recent-form blend, #486); the
+    players' rate rows show the line as read."""
     weeks = season.calendar.ahead(today, weeks_ahead) if season.calendar else []
     s = season.settings
     points = dict(s.points) if s.scoring == "points" and s.points else None
@@ -381,7 +384,9 @@ def week_projection(
     matchup, read_at = matchup_read(season, mine)
     since = first_day(read_at, today) if matchup is not None else today
     slots = wk.starting_slots(s.roster)
-    value = wk.per_game_values(bbm.rates, cats, points)
+    # The line the weeks play (#486): Basketball Monster's, blended toward recent form.
+    line = played(bbm, players) if played is not None else bbm
+    value = wk.per_game_values(line.rates, cats, points)
     ahead = spans(season, today, data_dir, weeks_ahead, players, since)
     for sp in ahead:
         out["weeks"].append(
@@ -429,7 +434,7 @@ def week_projection(
     def project(roster: list[tuple[int, Player]], i: int) -> wk.TeamWeek:
         return project_team(
             roster,
-            bbm.rates,
+            line.rates,
             ahead[i].days,
             i == 0,
             season.schedule,
