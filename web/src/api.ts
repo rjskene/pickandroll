@@ -884,9 +884,13 @@ export type BestMove =
       label: string;
       /** The recommended move that adds most; null when none gains ``min_gain``. */
       move: BestMoveLine | null;
-      /** The recommended set's size and its gain on the horizon. */
+      /** The recommended set's size and its gain on the horizon. In the private league (#494)
+       * only the moves that pass the queue's checks count, and ``gain`` is the shown move's own
+       * (``gain_of`` "move"), null when none passes. */
       moves: number;
-      gain: number;
+      gain: number | null;
+      gain_of?: "move";
+      checks?: PrivateChecks;
       /** The week plan the queue takes in place of the three weeks' set (#332): the line above is
        * then its step that adds most this week. Null or absent when the set leads. */
       plan?: BestPlan | null;
@@ -2285,6 +2289,34 @@ export interface MovesPayload {
   /** The Basketball Monster exports the moves rest on, by kind, with their pull time (#355);
    * absent before. */
   exports?: MovesExports;
+  /** The private league's moves checked by the public queue's own checks (#494); absent for a
+   * public league. */
+  checks?: PrivateChecks;
+}
+
+/** The private league's checks (#494): the set checked (the week plan the queue takes, else the
+ * three weeks' set), its horizon and floor, and each move with why it does not pass (null when it
+ * does) and, for a week plan's later step, the day it becomes today's. ``failed``: not checked,
+ * nothing suggested, with why. */
+export interface PrivateChecks {
+  status: "checked" | "failed";
+  reason: string | null;
+  set: "three" | "week_plan" | null;
+  horizon: MoveHorizon | null;
+  floor: number | null;
+  one_win: boolean | null;
+  /** No move passes and the week's adds were not read: the push says "adds not read today". */
+  adds_unread: boolean;
+  moves: PrivateCheck[];
+}
+
+export interface PrivateCheck {
+  add: number;
+  drop: number | null;
+  from: string | null;
+  passes: boolean;
+  reason: string | null;
+  on: string | null;
 }
 
 /** One export in force (#355): its file and when it was pulled, an ISO instant. */

@@ -53,6 +53,8 @@ import type {
   OutlookSummary,
   OutlookWeek,
   PickMove,
+  PrivateCheck,
+  PrivateChecks,
   PickSkipped,
   PlanStep,
   PlayerPick,
@@ -2461,7 +2463,7 @@ export function bestGain(b: BestMove | undefined): number | null {
 /** "Add Name for Name", or "Add Name" for an open spot. */
 export function bestLine(b: Extract<BestMove, { status: "solved" }>): string {
   const m = b.move;
-  if (!m) return `no move gains ${b.min_gain}`;
+  if (!m) return (b.checks && checksNone(b.checks)) || `no move gains ${b.min_gain}`;
   const add = m.add_name ?? `player ${m.add}`;
   return m.drop == null ? `Add ${add}` : `Add ${add} for ${m.drop_name ?? `player ${m.drop}`}`;
 }
@@ -2571,6 +2573,15 @@ export function leaguesLabel(shown: Pick<SeasonSummary, "scoring">[]): string {
 export function setSummary(b: BestMove | undefined): string {
   if (!b) return "";
   if (b.status !== "solved") return "not solved yet";
+  if (b.checks) {
+    // The private league (#494): the moves that pass the queue's checks, the best one's own gain.
+    const none = checksNone(b.checks);
+    if (none) return none;
+    if (!b.moves) return `no move gains ${b.min_gain} over ${b.label}`;
+    const n = b.moves;
+    const what = b.plan ? `${n === 1 ? "1 step" : `${n} steps`} of the week plan ${n === 1 ? "clears" : "clear"}` : `${n === 1 ? "1 move clears" : `${n} moves clear`}`;
+    return `${what} the checks (${checksFloor(b.checks)}); the best adds ${gainLabel(b.gain)} over ${b.label} on its own`;
+  }
   if (!b.moves) return `no move gains ${b.min_gain} over ${b.label}`;
   if (b.plan) {
     const odds = planOdds(b.plan);
@@ -2855,4 +2866,58 @@ export function pickLine(p: PlayerPick, title: (league: string) => string): stri
   const left = Object.keys(p.left);
   const tail = left.length ? `; on a team in ${left.map(title).join(", ")}` : "";
   return `${where} · ${drop} · ${bid} · until ${dayLabel(p.expires)}${p.active ? "" : " (expired)"} · set by ${p.by}${tail}`;
+}
+
+/** The private league's floor in words (#494), as the pre-tip push names it: its size in the
+ * judged measure over the judged horizon. */
+export function checksFloor(c: PrivateChecks): string {
+  const span = c.horizon === "week" ? "the week" : "the three weeks";
+  const f = c.floor ?? 0;
+  const g = (x: number) => String(Number(x.toPrecision(6)));
+  return c.one_win ? `the floor is +${g(f * 100)} points of the matchup's win odds over ${span}` : `the floor is +${g(f)} expected categories over ${span}`;
+}
+
+/** Why the private league suggests nothing (#494): not checked, the week's adds not read, or no
+ * move clearing the checks; null when a move passes or the set was empty to begin with. */
+export function checksNone(c: PrivateChecks): string | null {
+  if (c.status !== "checked") return `not checked (${c.reason ?? "no reason given"}): no suggestion`;
+  if (!c.moves.length || c.moves.some((m) => m.passes)) return null;
+  if (c.adds_unread) return "adds not read today";
+  return `no move clears the checks: ${checksFloor(c)}`;
+}
+
+/** A move's check in the private league (#494), by its add and drop; undefined for a public
+ * league or a move the checks did not see. */
+export function checkOf(c: PrivateChecks | undefined, add: number, drop: number | null): PrivateCheck | undefined {
+  return c?.moves.find((m) => m.add === add && (m.drop ?? null) === (drop ?? null));
+}
+
+/** A private league's row the moves view greys (#494), by the set it is shown in: in the set the
+ * checks take, a move they refuse; in any other set, a move that is not among the suggestions;
+ * every row when the checks were not made. Undefined for a public league or a suggested move. */
+export function refusedOf(c: PrivateChecks | undefined, set: MoveHorizon | "week_plan" | "other", add: number, drop: number | null): PrivateCheck | undefined {
+  if (!c) return undefined;
+  const not = (reason: string): PrivateCheck => ({ add, drop, from: null, passes: false, reason, on: null });
+  if (c.status !== "checked") return not(`not checked (${c.reason ?? "no reason given"})`);
+  const x = checkOf(c, add, drop);
+  if (set === c.set) return x && !x.passes ? x : undefined;
+  if (x?.passes) return undefined;
+  return not(`not among today's suggestions: ${c.set === "week_plan" ? "the week plan" : "the three weeks' set"} is the one checked`);
+}
+
+/** Why a private league's move does not pass, as the moves view greys it: a week plan's later
+ * step with the day it becomes today's, else the queue's reason. */
+export function checkReason(x: PrivateCheck): string {
+  if (x.on) return `a later step of the week plan: today's on ${weekdayLabel(x.on)}`;
+  return x.reason ?? "";
+}
+
+/** The private league's checks above its moves (#494): how many of the set pass, the floor, and
+ * that the others are greyed with why. */
+export function checksNote(c: PrivateChecks): string {
+  if (c.status !== "checked") return `Suggestions ${checksNone(c)}.`;
+  const n = c.moves.filter((m) => m.passes).length;
+  const of = c.set === "week_plan" ? `${c.moves.length === 1 ? "step" : "steps"} of the week plan` : `${c.moves.length === 1 ? "move" : "moves"} of the three weeks' set`;
+  const rest = n < c.moves.length ? "; the others are greyed with why" : "";
+  return `${n} of the ${c.moves.length} ${of} ${n === 1 ? "passes" : "pass"} the queue's checks and ${n === 1 ? "is" : "are"} suggested (${checksFloor(c)})${rest}.`;
 }

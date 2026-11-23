@@ -129,6 +129,9 @@ import {
   type AvailableSortKey,
   type Horizon,
   type PositionFilter,
+  checkReason,
+  checksNote,
+  refusedOf,
 } from "../season";
 import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, SEASON_VIEWS, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId, type SeasonViewId } from "../keys";
 import { useDrawer, useHotkeys, useViews } from "../useKeys";
@@ -1030,6 +1033,11 @@ function Moves({
         </p>
       ))}
       {rankedLine(m.measure) && <p className="muted small">{rankedLine(m.measure)}</p>}
+      {m.checks && (
+        <p className="accent small" title="your private league is suggestions only: its moves pass the public queue's own checks (the floor on each move's horizon, the season guard, the re-add rule, the keep rule's drops, the add reserve, the adds left), and nothing is ever clicked there">
+          {checksNote(m.checks)}
+        </p>
+      )}
       {reasons.map((r) => (
         <p key={r} className="accent small">
           {cap(r)}.
@@ -1185,8 +1193,10 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
             </tr>
           </thead>
           <tbody>
-            {set.moves.map((x) => (
-              <tr key={x.add} className="pick" onClick={() => onPick(x)}>
+            {set.moves.map((x) => {
+              const refused = refusedOf(m.checks, h, x.add, x.drop);
+              return (
+              <tr key={x.add} className={`pick${refused ? " refused" : ""}`} onClick={() => onPick(x)} title={refused ? `not suggested: ${checkReason(refused)}` : undefined}>
                 <td className="strong">
                   {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
                   {x.lift && (
@@ -1195,6 +1205,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
                       {liftText(x.lift)}
                     </span>
                   )}
+                  {refused && <div className="dim small">{checkReason(refused)}</div>}
                 </td>
                 <BasisCell x={x} name={name} />
                 <td className="dim">{dayLabel(x.from)}</td>
@@ -1217,7 +1228,8 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
                   {x.price_keep == null ? "" : x.price_keep.toFixed(2)}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -1289,11 +1301,14 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
           </tr>
         </thead>
         <tbody>
-          {plan.steps.map((x) => (
-            <tr key={`${x.from}-${x.add}`}>
+          {plan.steps.map((x) => {
+            const refused = refusedOf(m.checks, "other", x.add, x.drop);
+            return (
+            <tr key={`${x.from}-${x.add}`} className={refused ? "refused" : undefined} title={refused ? `not suggested: ${checkReason(refused)}` : undefined}>
               <td className="dim wrap">{stepDay(x.from)}</td>
               <td className="strong wrap">
                 {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
+                {refused && <div className="dim small">{checkReason(refused)}</div>}
               </td>
               <td className="wrap">{name(x.drop)}</td>
               <td className={`num ${gainTone(x.marginal.week, m.search.min_gain)}`}>{moveGain(x.marginal.week, m.measure)}</td>
@@ -1302,7 +1317,8 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
                 {rosLabel(x.ros, s.scoring)}
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       <p className="muted small">{planNote(plan, name)}</p>
@@ -1327,7 +1343,7 @@ function WeekPlansBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: 
         Week plans for {horizonName(m, "week")}
       </span>
       {plans.map((w, i) => {
-        const body = <WeekPlanTable w={w} m={m} s={s} name={name} />;
+        const body = <WeekPlanTable w={w} m={m} s={s} name={name} queued={wp.queue === wp.plans.indexOf(w)} />;
         const head = weekPlanHead(w, wp.plans.indexOf(w), wp.queue === wp.plans.indexOf(w));
         const ros = w.ros ? ` · ${rosLabel(w.ros, s.scoring)} to the season's end` : "";
         return i === 0 ? (
@@ -1352,7 +1368,7 @@ function WeekPlansBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: 
   );
 }
 
-function WeekPlanTable({ w, m, s, name }: { w: WeekPlan; m: MovesPayload; s: SeasonView; name: Namer }) {
+function WeekPlanTable({ w, m, s, name, queued }: { w: WeekPlan; m: MovesPayload; s: SeasonView; name: Namer; queued: boolean }) {
   return (
     <>
       {w.steps.length > 0 && (
@@ -1376,11 +1392,13 @@ function WeekPlanTable({ w, m, s, name }: { w: WeekPlan; m: MovesPayload; s: Sea
           <tbody>
             {w.steps.map((x) => {
               const basis = addBasis(x, name);
+              const refused = refusedOf(m.checks, queued ? "week_plan" : "other", x.add, x.drop);
               return (
-                <tr key={`${x.from}-${x.add}`}>
+                <tr key={`${x.from}-${x.add}`} className={refused ? "refused" : undefined} title={refused ? `not suggested: ${checkReason(refused)}` : undefined}>
                   <td className="dim wrap">{stepDay(x.from)}</td>
                   <td className="strong wrap">
                     {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
+                    {refused && <div className="dim small">{checkReason(refused)}</div>}
                   </td>
                   <td className="wrap" title={basis.title}>
                     {basis.cell}

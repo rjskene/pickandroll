@@ -1821,7 +1821,9 @@ def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
     follows), with the set's gain; or, when a week plan leads, its step that adds most this week,
     with the plan's gain, and in ``plan`` its matchup odds against the three weeks' set's, its
     three weeks and its season. For the row's panel the whole set on that horizon, each move with
-    its basis and held move, the room, and the names of every player they mention."""
+    its basis and held move, the room, and the names of every player they mention. The private
+    league's payload carries ``checks`` (#494, ``season_private``): its line and set keep only
+    the moves that pass them, and its ``gain`` is the shown move's own (``gain_of``)."""
     wp = payload.get("week_plans") or {}
     chosen = None if wp.get("queue") is None else wp["plans"][wp["queue"]]
     key = "week" if chosen else "three" if built.horizons["three"]["weeks"] else "week"
@@ -1833,6 +1835,12 @@ def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
         if chosen
         else payload["recommended"][key]
     )
+    # The private league (#494): only the moves that pass the queue's own checks, the best of
+    # them its line, and its gain that move's own, the filtered list having no set gain.
+    checks = payload.get("checks")
+    if checks is not None:
+        ok = {(int(m["add"]), m["drop"]) for m in checks["moves"] if m["passes"]}
+        rec = {**rec, "moves": [m for m in rec["moves"] if (int(m["add"]), m["drop"]) in ok]}
     p = built.problem
     names = {k: player.name for k, player in (*p.roster, *p.held, *p.candidates)}
     lines = [
@@ -1864,14 +1872,18 @@ def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
             "from": best["from"],
             "gain": best["marginal"][key],
         }
-    return {
+    if checks is not None:
+        gain = None if move is None else move["gain"]
+    else:
+        gain = rec["gain"][key]
+    out = {
         "status": "solved",
         "system": built.system["key"],
         "horizon": key,
         "label": built.horizons[key]["label"],
         "move": move,
         "moves": len(rec["moves"]),
-        "gain": rec["gain"][key],
+        "gain": gain,
         "plan": {
             "matchup": chosen["matchup"],
             "against": wp["judged"]["set"]["matchup"],
@@ -1885,6 +1897,10 @@ def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
         "room": room,
         "names": {str(k): names[k] for k in named if k is not None and k in names},
     }
+    if checks is not None:
+        # ``gain`` is the shown move's own (``gain_of``), and the checks ride along for the panel.
+        out |= {"gain_of": "move", "checks": checks}
+    return out
 
 
 def _cats(ev: mv.Evaluator, key: str, moves: list[mv.Move]) -> dict[str, dict[str, Any]]:
