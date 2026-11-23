@@ -10,7 +10,9 @@ exactly; the recommended set is a search (``season.moves``), priced by re-solves
 candidates whose best single move gains most.
 
 A player of mine listed O is held out past next Monday when ESPN's injury report gives a later
-return date (#97): the day a held-slot move's deferred drop is charged from.
+return date (#97): the day a held-slot move's deferred drop is charged from. Since #485 every
+team's O and INJ players get ESPN's date, and a later week plays each opponent on a legal roster
+(``season_week.project_team``).
 
 The keep rule (#124, ``season.moves``) reads Basketball Monster's rest-of-season per-game line
 for my players and the candidates under every system, scored by the league's scorer: Yahoo's
@@ -147,6 +149,10 @@ class Built:
     #: The add reserve and the re-cut rule on this solve (#436, ``season.reserve``); None when
     #: neither applies.
     reserve: rs.ReserveRule | None = None
+    #: ESPN's return dates for every rostered player listed O or INJ (#485): a later week holds
+    #: each team's dated players until then (``season_week.project_team``). ``problem.returns``
+    #: holds mine.
+    returns: Mapping[int, date] = field(default_factory=dict)
 
     @property
     def as_read(self) -> mv.MoveProblem:
@@ -227,8 +233,9 @@ def system_rates(season: Season, data_dir: Path, system: str, blend: float | Non
 
 
 def espn_returns(data_dir: Path, members: list[mv.Member]) -> dict[int, date]:
-    """ESPN's return dates for ``members`` listed O, matched by name and team."""
-    out_ = [(k, p) for k, p in members if p.status in wk.OUT_THIS_WEEK]
+    """ESPN's return dates for ``members`` listed O or INJ (``weekly.DATED``, #485), matched by
+    name and team."""
+    out_ = [(k, p) for k, p in members if p.status in wk.DATED]
     path = season_flags.injuries_path(data_dir)
     if not out_ or not path.exists():
         return {}
@@ -323,20 +330,29 @@ def build(
     if not ahead or (over and len(ahead) < 2):
         return None
     slots = wk.starting_slots(s.roster)
+    slot_count = Counter(s.roster)
+    active_spots = wk.active_spots(s.roster)
+    # Every team's return dates, read once (#485): mine go on the problem, all on the Built.
+    returns = espn_returns(
+        data_dir,
+        [(sp.player.yahoo_id, sp.player) for spots in season.rosters.values() for sp in spots],
+    )
 
     def project(team: int, i: int) -> wk.TeamWeek:
         members = [(sp.player.yahoo_id, sp.player) for sp in season.rosters.get(team, ())]
-        return wk.project_week(
+        return sw.project_team(
             members,
             rates,
             ahead[i].days,
+            i == 0,
             season.schedule,
             slots,
             value,
-            i == 0,
+            active_spots,
             games=ahead[i].games,
             points=points,
             no_games=yahoo.zero,
+            returns=returns,
         )
 
     other = matchup.opponent_of(mine) if matchup is not None else None
@@ -362,7 +378,6 @@ def build(
     roster = tuple((sp.player.yahoo_id, sp.player) for sp in spots if sp.slot not in mv.HELD)
     held = tuple((sp.player.yahoo_id, sp.player) for sp in spots if sp.slot in mv.HELD)
     held_slots = {sp.player.yahoo_id: sp.slot for sp in spots if sp.slot in mv.HELD}
-    slot_count = Counter(s.roster)
     # A held player whose status cleared is activated on the first day: his slot is open.
     taken = Counter(
         sp.slot
@@ -389,7 +404,7 @@ def build(
     problem = mv.MoveProblem(
         roster=roster,
         held=held,
-        spots=sum(n for k, n in slot_count.items() if k not in mv.HELD),
+        spots=active_spots,
         held_open={k: n for k, n in held_open.items() if n > 0},
         candidates=candidates,
         effective=effective,
@@ -403,7 +418,7 @@ def build(
         no_games=yahoo.zero,
         horizons={"week": (week_span,), "three": later},
         limits=limits,
-        returns=espn_returns(data_dir, [*roster, *held]),
+        returns={k: returns[k] for k in on_roster if k in returns},
         held_slots=held_slots,
         claims=claims,
         # A one-win league's moves rank on the matchup odds (#397).
@@ -525,6 +540,7 @@ def build(
         tuple(skipped),
         unpicked,
         reserve,
+        returns,
     )
 
 

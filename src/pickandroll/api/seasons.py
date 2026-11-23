@@ -679,9 +679,18 @@ class SeasonService:
         return {
             **_summary(season, is_public, bool(parts), self.job(league)),
             **_view(season, today),
-            "week_projection": week_projection(season, today, self.data_dir, WEEKS_AHEAD),
+            "week_projection": week_projection(
+                season, today, self.data_dir, WEEKS_AHEAD, self._returns(season)
+            ),
             **flag_view,
         }
+
+    def _returns(self, season: Season) -> dict[int, date]:
+        """ESPN's return dates for every rostered player of ``season`` listed O or INJ (#485)."""
+        members = [
+            (sp.player.yahoo_id, sp.player) for spots in season.rosters.values() for sp in spots
+        ]
+        return season_moves.espn_returns(self.data_dir, members)
 
     # ------------------------------------------------------------------ breakout flags
     def _flags(
