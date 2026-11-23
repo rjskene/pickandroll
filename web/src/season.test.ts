@@ -7,6 +7,7 @@ import type {
   MatchupTeamLines,
   AvailableRow,
   BestMove,
+  PrivateChecks,
   BestSetLine,
   FlagConfig,
   FlagSignal,
@@ -96,6 +97,10 @@ import {
   placeTone,
   setLine,
   setSummary,
+  checkOf,
+  checkReason,
+  checksNote,
+  refusedOf,
   toggleExpanded,
   placeLabel,
   myRecordLabel,
@@ -1483,6 +1488,50 @@ test("the set reads in a line: together, one move, none, or not solved", () => {
   assert.equal(setSummary(solved("1", null)), "no move gains 0.01 over weeks 2-4 against the field");
   assert.equal(setSummary({ league: "1", status: "not_solved", system: "bbm" }), "not solved yet");
   assert.equal(setSummary(undefined), "");
+});
+
+test("the private league's line and set name the checks, the floor and the move's own gain (#494)", () => {
+  const b = solved("1", 0.25) as Extract<BestMove, { status: "solved" }>;
+  const check = (add: number, drop: number | null, reason: string | null, on: string | null = null) => ({ add, drop, from: "2026-11-24", passes: reason == null, reason, on });
+  const checks: PrivateChecks = {
+    status: "checked",
+    reason: null,
+    set: "three",
+    horizon: "three",
+    floor: 0.03,
+    one_win: true,
+    adds_unread: false,
+    moves: [check(1, 2, null), check(3, 4, "below the noise floor"), check(5, null, "season-costly")],
+  };
+  const floor = "the floor is +3 points of the matchup's win odds over the three weeks";
+  assert.equal(setSummary({ ...b, checks, gain_of: "move" }), `1 move clears the checks (${floor}); the best adds +0.25 over weeks 2-4 against the field on its own`);
+  assert.equal(checksNote(checks), `1 of the 3 moves of the three weeks' set passes the queue's checks and is suggested (${floor}); the others are greyed with why.`);
+  const none = { ...checks, moves: checks.moves.slice(1) };
+  const empty = { ...(solved("1", null) as Extract<BestMove, { status: "solved" }>), checks: none, gain: null };
+  assert.equal(setSummary(empty), `no move clears the checks: ${floor}`);
+  assert.equal(bestLine(empty), `no move clears the checks: ${floor}`);
+  assert.equal(setSummary({ ...empty, checks: { ...none, adds_unread: true } }), "adds not read today");
+  assert.equal(setSummary({ ...empty, checks: { ...none, status: "failed", reason: "KeyError: 'x'", moves: [] } }), "not checked (KeyError: 'x'): no suggestion");
+  assert.equal(checkOf(checks, 3, 4)?.reason, "below the noise floor");
+  assert.equal(checkOf(checks, 5, null)?.passes, false);
+  assert.equal(checkOf(undefined, 1, 2), undefined);
+  const later = check(7, 8, "a later step of the week plan: queued at its day's build", "2026-11-26");
+  assert.match(checkReason(later), /^a later step of the week plan: today's on Thu 26$/);
+  assert.equal(checkReason(checks.moves[1]), "below the noise floor");
+  // The moves view greys a refused move of the checked set, and any other set's move that is
+  // not suggested; a suggested move stays plain wherever it shows; a public league greys nothing.
+  assert.equal(refusedOf(checks, "three", 3, 4)?.reason, "below the noise floor");
+  assert.equal(refusedOf(checks, "three", 1, 2), undefined);
+  assert.equal(refusedOf(checks, "week", 1, 2), undefined);
+  // Each greyed row of another set names the set that was checked.
+  assert.equal(refusedOf(checks, "week", 9, 4)?.reason, "not today's suggestion (the three weeks' set is the one checked)");
+  const plan: PrivateChecks = { ...checks, set: "week_plan", horizon: "week" };
+  assert.equal(refusedOf(plan, "three", 9, 4)?.reason, "not today's suggestion (the week plan is the one checked)");
+  assert.equal(refusedOf(plan, "other", 9, 4)?.reason, "not today's suggestion (the week plan is the one checked)");
+  assert.equal(refusedOf(plan, "three", 1, 2), undefined);
+  assert.equal(refusedOf(plan, "week_plan", 3, 4)?.reason, "below the noise floor");
+  assert.equal(refusedOf(undefined, "week", 9, 4), undefined);
+  assert.match(refusedOf({ ...checks, status: "failed", reason: "x", moves: [] }, "three", 1, 2)?.reason ?? "", /^not checked/);
 });
 
 test("a set's move reads by its basis, with the kind for the panel's last column", () => {

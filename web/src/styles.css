@@ -214,6 +214,8 @@ details.qs-section > summary { cursor: pointer; }
 .qs-scroll { overflow-x: auto; }
 .qs-table td { font-size: 12px; }
 .qs-table tr.struck td:not(.acts) { opacity: 0.55; }
+/* The private league's moves the queue's checks refuse (#494): greyed with why, as the Queue screen greys. */
+.season-table tr.refused td { opacity: 0.55; }
 .qs-table td.acts { text-align: right; }
 .qs-sugg { display: grid; gap: 8px; padding: 10px 14px; border: 1.5px solid var(--accent); border-radius: 10px; background: var(--mine); font-size: 12px; }
 .shade { position: fixed; inset: 0; z-index: 29; background: rgba(11, 15, 20, 0.55); }

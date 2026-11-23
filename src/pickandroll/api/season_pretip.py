@@ -35,6 +35,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field
 
 from .season_knobs import autopilot_dir
+from .season_private import ADDS_NOT_READ, CHECKED, NONE_CLEAR
 from .season_queue import SETTINGS
 
 CENTRAL = ZoneInfo("America/Chicago")
@@ -366,14 +367,34 @@ def markdown(
     teams: Mapping[int, str | None],
     exports: Mapping[str, Mapping[str, Any] | None],
     status: str,
+    checks: Mapping[str, Any] | None = None,
 ) -> str:
-    """The push's text: the league's recommended set (or why there is none) and the inputs' line."""
+    """The push's text: the league's recommended set (or why there is none) and the inputs' line.
+    With ``checks`` (#494) ``moves`` are the ones that pass the queue's checks: the floor in force
+    is named, and when none passes the push says why (the adds not read, or no move clearing)."""
     lines = [f"League {league}, pre-tip suggestions for {day:%a %b} {day.day}:"]
     if status != "solved":
         lines.append("- not solved: no suggestion")
-    elif not moves:
-        lines.append("- no move recommended")
-    else:
+    elif checks is not None and checks.get("status") != CHECKED:
+        lines.append(f"- not checked ({checks.get('reason')}): no suggestion")
+    elif moves:
         lines += move_lines(moves, names, teams, day)
+        if checks is not None:
+            lines.append(f"- each clears the checks: {floor_text(checks)}")
+    elif checks is None or not checks.get("moves"):
+        lines.append("- no move recommended")
+    elif checks.get("adds_unread"):
+        lines.append(f"- {ADDS_NOT_READ}")
+    else:
+        lines.append(f"- {NONE_CLEAR}: {floor_text(checks)}")
     lines.append(exports_line(exports))
     return "\n".join(lines) + "\n"
+
+
+def floor_text(checks: Mapping[str, Any]) -> str:
+    """The floor in force, in words: its size in the judged measure, on the judged horizon."""
+    span = "the week" if checks.get("horizon") == "week" else "the three weeks"
+    floor = float(checks.get("floor") or 0.0)
+    if checks.get("one_win"):
+        return f"the floor is +{floor * 100:g} points of the matchup's win odds over {span}"
+    return f"the floor is +{floor:g} expected categories over {span}"

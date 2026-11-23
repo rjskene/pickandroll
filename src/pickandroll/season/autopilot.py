@@ -58,7 +58,7 @@ from __future__ import annotations
 import math
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -608,6 +608,35 @@ def queue_of(
             }
         )
     return out
+
+
+#: The private league's suggestions (#494) run :func:`queue_of` with the day's cap out of reach.
+UNCAPPED = 1_000_000
+#: The mode :func:`suggestions_of` hands :func:`queue_of`: anything but ``off``; nothing is queued.
+SUGGESTIONS = "suggestions"
+
+
+def suggestions_of(lg: LeagueDay, day: date, floor: Floor) -> list[dict[str, Any]]:
+    """The private league's suggestions of the day (#494, the user's ruling of 2026-11-23): the
+    entries :func:`queue_of` itself makes for the league, with the execution-only gates opened:
+    the private stop, the moves mode, the day's cap, the claims already open and the entries a
+    rebuild keeps (STOP is never read there). Every other check stays: the floor on each move's
+    judging horizon, the season guard, the re-add rule, the drop the keep rule protects, the add
+    reserve, a week plan's later and waiting steps, and the adds each week has left. ``floor``
+    carries no scored floor: the private league is never pooled. The user's picks (#434) are left
+    out, the suggestions being the solve's. A move passes when its ``reason`` is None; nothing
+    here is ever queued or clicked."""
+    opened = replace(
+        lg,
+        private=False,
+        mode=SUGGESTIONS,
+        cap=UNCAPPED,
+        kept=frozenset(),
+        done=0,
+        open_claims=(),
+    )
+    typical = (floor.plan, "the plan floor")
+    return [e for e in queue_of(opened, day, floor, typical, None) if e["set"] != pk.PICK]
 
 
 def reserve_reason(
