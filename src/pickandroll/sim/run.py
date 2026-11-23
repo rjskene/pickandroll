@@ -645,6 +645,10 @@ class VariantResult:
     counts: Mapping[int, Mapping[str, float | None]] = field(default_factory=dict)
     #: The audit's breaches in this variant: any one voids the path.
     breaches: tuple[audit.Breach, ...] = ()
+    #: Every week's totals at the season's end, week to team to totals (PR trace: the last day's
+    #: are in no day record); empty in a league whose bracket is not read. Nothing reads it but a
+    #: trace.
+    totals: Mapping[int, Mapping[int, Mapping[str, float]]] = field(default_factory=dict)
 
 
 def set_sent(decision: policy.Decision, state: SimState, team: int, day: date) -> set[int]:
@@ -672,10 +676,13 @@ def _record(
     held: Mapping[str, Mapping[int, Rates]] | None = None,
     holds: Mapping[int, str] | None = None,
     queued: Mapping[int, tuple[mv.Move, ...]] | None = None,
+    unqueued: Mapping[int, tuple[tuple[mv.Move, str], ...]] | None = None,
 ) -> DayRecord:
     """The day record of ``state``. ``due``: the moves that landed today (yesterday's queue, or
     in a same-day league today's, PR today); ``queued``: what the seats queued today, the
-    state's queue when None (in a same-day league it has landed, and the runner hands it)."""
+    state's queue when None (in a same-day league it has landed, and the runner hands it);
+    ``unqueued``: what the queue left out of each seat's gathered moves, with its rule (PR
+    trace)."""
     on = {t: {k for k, _ in r} for t, r in state.rosters.items()}
     return DayRecord(
         state.day,
@@ -696,6 +703,7 @@ def _record(
             if (placed := tuple(c for c in cs if c.placed == state.day))
         },
         state.resolved,
+        {t: u for t, u in (unqueued or {}).items() if u},
     )
 
 
@@ -743,6 +751,10 @@ class DayRecord:
     #: decided, in the order decided; both empty without waivers.
     claims: Mapping[int, tuple[Claim, ...]] = field(default_factory=dict)
     cleared: tuple[Resolved, ...] = ()
+    #: Each seat's gathered moves the queue left out today, with the rule that stopped each
+    #: (``policy.queue``'s ``why``, ``policy.UNQUEUED``; PR trace): a seat with none is not a key.
+    #: Read by a trace alone, and outside the no-peek check's fields.
+    unqueued: Mapping[int, tuple[tuple[mv.Move, str], ...]] = field(default_factory=dict)
 
 
 def holds_of(w: World, variant: Mapping[int, op.Strategy]) -> dict[int, str]:
@@ -863,7 +875,11 @@ def simulate(
     ``counts.SEASON``); none by
     default, and the counts are as before. A
     seat with a stake in a league whose bracket is not read is refused by name before any day
-    (ValueError), by the field: on any tier, read there or not (:func:`stake_refused`)."""
+    (ValueError), by the field: on any tier, read there or not (:func:`stake_refused`).
+
+    With an ``on_day`` (PR trace) each seat's queue is handed a ``why`` list and the day record
+    carries what it left out (``DayRecord.unqueued``); without one none is made. Either way the
+    seasons are the same."""
     n = len(variants)
     if setup.spec is None:
         for v in variants:
@@ -984,6 +1000,7 @@ def simulate(
         for vi, state in enumerate(states):
             state = replace(state, day=day)
             decided: dict[int, policy.Decision] = {}
+            unqueued: dict[int, tuple[tuple[mv.Move, str], ...]] = {}
             for team in setup.teams:
                 strat = variants[vi].get(team)
                 if strat is None or strat.kind == "static":
@@ -1003,6 +1020,7 @@ def simulate(
                     # Before today's queue: the claims open are those placed on earlier days.
                     tallies[vi].reading(team, decision.returning, state)
                 tallies[vi].decided(team, decision)
+                why: list[tuple[mv.Move, str]] | None = [] if on_day is not None else None
                 state = policy.queue(
                     state,
                     team,
@@ -1012,7 +1030,10 @@ def simulate(
                     plans[vi],
                     spots,
                     setup,
+                    why=why,
                 )
+                if why:
+                    unqueued[team] = tuple(why)
                 if decision.plan_leads:
                     # The queue took a plan (PR E): the steps of it queued today, as a free
                     # agent's add for the morning or as a claim placed.
@@ -1081,6 +1102,7 @@ def simulate(
                         },
                         holds[vi],
                         queued_today if same_day else None,
+                        unqueued,
                     )
                 )
         states = [
@@ -1094,6 +1116,7 @@ def simulate(
     for vi, state in enumerate(states):
         result = None
         summaries: dict[int, dict[str, Any]] = {}
+        totals: dict[int, dict[int, dict[str, float]]] = {}
         if setup.spec is not None:
             totals = {
                 wk_: {t: dict(x) for t, x in teams.items()} for wk_, teams in state.totals.items()
@@ -1115,6 +1138,7 @@ def simulate(
                 held_refused=state.held_refused,
                 counts=tallies[vi].rows(state),
                 breaches=tuple(b for b in auditor.breaches if b.variant == vi),
+                totals=totals,
             )
         )
     return out
@@ -1219,11 +1243,14 @@ def paired(
     b: Arm,
     me: int,
     on_day: Callable[[DayRecord], None] | None = None,
+    on_end: Callable[[VariantResult, VariantResult], None] | None = None,
 ) -> dict[str, Any]:
     """Arm A and arm B in seat ``me`` through one world: each outcome and their difference, B less
     A (``b[k] - a[k]``, None where either is None). Positive is B ahead on every metric but
     ``rank``, where lower is better and a negative difference is B finishing higher. ``on_day`` is
-    :func:`simulate`'s: A's season is variant 0, B's variant 1."""
+    :func:`simulate`'s: A's season is variant 0, B's variant 1. ``on_end`` (PR trace) is handed
+    A's and B's :class:`VariantResult` before the pair's result is made of them; it only
+    watches."""
     va = {**opponents_of(setup, a, me), me: a.seat()}
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
@@ -1237,6 +1264,8 @@ def paired(
         stash=stash_named((a, b)),
         counted=counted,
     )
+    if on_end is not None:
+        on_end(ra, rb)
     return _pair_result(setup, ra, rb, me, scale)
 
 
@@ -1249,12 +1278,13 @@ def paired_apart(
     b: Arm,
     me: int,
     on_day: Callable[[DayRecord], None] | None = None,
+    on_end: Callable[[VariantResult, VariantResult], None] | None = None,
 ) -> dict[str, Any]:
     """Arm A and arm B in seat ``me``, each in a league of its own drafted apart (#172, PR D4a):
     A's season on ``setup_a`` through ``w_a``, B's on ``setup_b`` through ``w_b``, the two worlds
     on one ``(seed, path)`` so their draws stay common. The keys :func:`paired` returns, with
     nothing shared between the two (``shared`` is B's own). ``on_day`` gets A's days as variant 0
-    and B's as variant 1."""
+    and B's as variant 1, and ``on_end`` A's and B's results (:func:`paired`'s)."""
     va = {**opponents_of(setup_a, a, me), me: a.seat()}
     vb = {**opponents_of(setup_b, b, me), me: b.seat()}
     scale = {"a": scale_on(setup_a, w_a, a, me), "b": scale_on(setup_b, w_b, b, me)}
@@ -1284,6 +1314,8 @@ def paired_apart(
         queue_counts=queued,
     )
     rb = replace(rb, breaches=tuple(replace(x, variant=1) for x in rb.breaches))
+    if on_end is not None:
+        on_end(ra, rb)
     return _pair_result(setup_a, ra, rb, me, scale)
 
 

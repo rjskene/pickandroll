@@ -237,6 +237,28 @@ def executions_of(waivers: str, rule: str = DROPPED, same_day: bool = False) -> 
     return EXECUTIONS_FAAB if waivers == "faab" else EXECUTIONS_PRIORITY
 
 
+#: Why :func:`queue` left out one of the moves it gathered (PR trace), handed to its ``why``: the
+#: day's cap was reached, the week's adds were spent, the add is not on the wire or was gathered
+#: twice, and in a waiver league the autopilot's claim rules it mirrors (``autopilot.queue_of``)
+#: by their own names. Only a trace asks; nothing decides on them.
+DAILY_CAP = "daily cap"
+WEEK_ADDS = "week's adds"
+NOT_ON_WIRE = "not on the wire"
+ADDED_TWICE = "added twice"
+DROP_CLAIMED = "DROP_CLAIMED"
+READD = "READD"
+ALREADY_CLAIMED = "ALREADY_CLAIMED"
+NO_ADDS = "NO_ADDS"
+UNQUEUED = (
+    DAILY_CAP,
+    WEEK_ADDS,
+    NOT_ON_WIRE,
+    ADDED_TWICE,
+    DROP_CLAIMED,
+    READD,
+    ALREADY_CLAIMED,
+    NO_ADDS,
+)
 #: A decided move lands this long after it is made: it takes effect then, and is charged to the
 #: week of the day it is made, as Yahoo charges a free-agent add (never the week it lands in).
 #: In a same-day league (PR today, ``Setup.same_day``) a free agent's add lands the day it is
@@ -2442,6 +2464,7 @@ def queue(
     execute_plan: bool = False,
     spots: int | None = None,
     setup: Setup | None = None,
+    why: list[tuple[mv.Move, str]] | None = None,
 ) -> SimState:
     """The moves of ``decision`` that may land tomorrow, within the day's cap and the week's
     adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans
@@ -2490,7 +2513,11 @@ def queue(
 
     In a same-day league (``setup.same_day``, PR today) a free agent's add queued today lands
     today, once every seat has decided (``run.simulate``), and a plan's step of a free agent is
-    due today; a claim is placed as before."""
+    due today; a claim is placed as before.
+
+    ``why`` (PR trace): a list that is handed each gathered move left out, with its rule
+    (:data:`UNQUEUED`), in the order gathered; at the day's cap every move after it. It only
+    watches: the state returned is the same with it or without it."""
     tomorrow = state.day + timedelta(1)
     lands = state.day + setup.lands_after if setup is not None else tomorrow
     # What the seat means to queue (:func:`gathered`): under the queue's rule a leading plan's
@@ -2582,28 +2609,41 @@ def queue(
         usual = market_typical(state.market_recent, state.day, gain)
         return rival_bid(gain, usual, dollars, setup.rival_scale, basis.noise[i]), 0.0
 
+    def left_out(m: mv.Move, rule: str) -> None:
+        if why is not None:
+            why.append((m, rule))
+
     for i, m in enumerate(moves):
         if len(kept) + len(placed) >= max(0, daily_cap):
+            for rest_ in moves[i:]:
+                left_out(rest_, DAILY_CAP)
             break
         wait = state.waivers.get(m.add) if waiting else None
         if wait is None and not continuous:
             full = used + len(kept) if this is None else charged(this.number)
             if limit is not None and full >= limit:
+                left_out(m, WEEK_ADDS)
                 continue
             if m.add in seen_adds or m.add not in state.pool:
+                left_out(m, ADDED_TWICE if m.add in seen_adds else NOT_ON_WIRE)
                 continue
             if m.drop is not None and m.drop in claimed_drops:
+                left_out(m, DROP_CLAIMED)
                 continue  # DROP_CLAIMED
             seen_adds.add(m.add)
             kept.append(mv.Move(m.add, m.drop))
             continue
         if wait is None and m.add not in state.pool:
+            left_out(m, NOT_ON_WIRE)
             continue  # under continuous waivers: an add not in the pool (a team holds him)
         if wait is not None and wait.by == team:
+            left_out(m, READD)
             continue  # READD: his own drop, still waiting
         if m.add in claimed_adds or m.add in seen_adds:
+            left_out(m, ALREADY_CLAIMED)
             continue  # ALREADY_CLAIMED
         if m.drop is not None and m.drop in claimed_drops:
+            left_out(m, DROP_CLAIMED)
             continue  # DROP_CLAIMED
         assert setup is not None
         # A dropped player's claim is decided on his clear date; under continuous waivers one on
@@ -2615,6 +2655,7 @@ def queue(
         week = setup.week_of(max(tomorrow, clears) - setup.lands_after)
         number = None if week is None else week.number
         if limit is not None and number is not None and charged(number) >= limit:
+            left_out(m, NO_ADDS)
             continue  # NO_ADDS
         seen_adds.add(m.add)
         claimed_adds.add(m.add)
