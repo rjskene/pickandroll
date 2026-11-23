@@ -372,6 +372,46 @@ def unread_weeks(adds: Mapping[str, Any] | None) -> frozenset[tuple[date, date]]
     return frozenset({weeks[0][:2]})
 
 
+def league_day(
+    league: str,
+    scoring: str,
+    entry: Mapping[str, Any],
+    mode: str,
+    season: Season,
+    rule: mv.KeepRule | None,
+    flags: Mapping[int, str],
+    today: date,
+    *,
+    cap: int,
+    left: Mapping[tuple[date, date], int | None],
+    kept: frozenset[str] = frozenset(),
+    done: int = 0,
+    open_claims: Sequence[Mapping[str, Any]] = (),
+) -> qa.LeagueDay:
+    """What the queue reads of a league for the day (:class:`season.autopilot.LeagueDay`), from
+    the day's solve ``entry``, the league's ``season`` and the keep ``rule`` the solve ran with:
+    the one reading the queue build and the private league's suggestions (#494) share."""
+    return qa.LeagueDay(
+        league=league,
+        scoring=scoring,
+        entry=entry,
+        mode=mode,
+        private=False,
+        protected=protected_of(rule),
+        availability={a.player.yahoo_id: (a.availability, a.clears) for a in season.available},
+        flags=dict(flags),
+        dropped=dropped_recently(season, today),
+        budget=budget_of(season),
+        cap=cap,
+        adds_left=left,
+        uses_faab=season.settings.uses_faab,
+        kept=kept,
+        done=done,
+        open_claims=open_claims,
+        unread=unread_weeks(entry.get("adds")),
+    )
+
+
 def funds(
     season: Season,
     claims: Iterable[Mapping[str, Any]],

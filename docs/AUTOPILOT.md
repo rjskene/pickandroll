@@ -404,7 +404,8 @@ page, from PR 2:
   clears both, and the entry names both figures and which one stopped it. Both are in expected
   categories (points in a points league). A one-win league's gains are odds (#397), but its
   floor here is left as it is: the only one-win league is the private one, which is suggestions
-  only and never enters the queue (the master's ruling on #397).
+  only and never enters the queue (the master's ruling on #397). Its suggestions are checked
+  against the engine's own floor instead, `stream.floor_of` (`PLAN_FLOOR_ODDS`, #494, below).
 - **The veto window and the execute time.** An entry executes at the later of an hour after it was
   queued and the day's execute time (07:00 Central until the user sets another on the landing
   page's Queue line, `PUT /autopilot/queue/settings`; the day's entries not executed are timed
@@ -470,6 +471,25 @@ page, from PR 2:
   its state and the veto. The moves the build left out are folded under it with their reasons.
   The private league is never queued: its recommended set is listed as suggestions to make by hand
   from `GET /seasons/{league}/best?system=bbm`, "not solved yet" before the league page solves it.
+  **Its suggestions pass the queue's own checks (#494, the user's ruling of 2026-11-23).**
+  `season.autopilot.suggestions_of` runs `queue_of` on the league's day with only the
+  execution-only gates opened: the private stop, the mode and STOP, the day's cap, the claims
+  already open and the entries a rebuild keeps. Every other check stays:
+  - the floor on each move's judging horizon (`stream.floor_of`: `PLAN_FLOOR_ODDS` in the one-win
+    league; never the scored floor, the private league being never pooled);
+  - the season guard, the re-add rule, the drop the keep rule protects and the add reserve;
+  - a week plan's later and waiting steps (no fallback to the three weeks' set);
+  - the adds each week has left.
+
+  The solve keeps the result on the private league's payload as `checks`
+  (`api/season_private.py`): the set checked, its horizon and floor, and each move with why it
+  does not pass. The landing row (`best_payload`) and the pre-tip push list only the moves that
+  pass; the row's `gain` is then its move's own (`gain_of: "move"`). The push names the floor,
+  and when nothing passes it says "no move clears the checks", or "adds not read today" when the
+  week's adds were not read. The league page's moves view greys every move that is not
+  suggested, with why: a refused move of the checked set, and any move of another set (the week
+  set, another week plan, the streaming plan). No digest line lists the private league's moves.
+  A public league's payload carries no `checks`, and its queue is built as before.
   The payload's `names` gives a name for every player the entries mention (the add, the drop, the
   held move's player), read from each league's snapshot at request time.
   **Pass results (#200).** A dry run moves no queue outcome, so the payload reads the passes from
