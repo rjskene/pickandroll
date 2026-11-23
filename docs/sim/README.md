@@ -3553,7 +3553,9 @@ its paths' outcomes (`by_path`) is compared on them too.
   played before this PR), or of a path the record voided, was compared on everything else and
   says so.
 - **drifted:** when anything differs, the command says what and stops, and writes nothing.
-  With `--drifted` it writes the trace marked drifted, with what differed.
+  With `--drifted` it writes the trace marked drifted, with what differed. A record older than
+  the take-in (replay version 21 or lower) drifts on its version, and under `--drifted` its arms
+  play the take-in's five knobs at today's defaults (live's engine), not as the record played them.
 - **not from a record:** the arms form has nothing to check on.
 
 **What a trace holds.** The run's common part (the fit's and the code's hashes, the hash seed,
