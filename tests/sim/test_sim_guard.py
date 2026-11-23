@@ -1777,7 +1777,7 @@ def test_a_season_with_a_threshold_under_off_and_under_a_stake_plays_clean(
     others = got["counts"]["rivals"]
     assert not set(SEASON_KEYS) & set(others)
     assert (others["returning_dropped"] is not None) is (rivals == "mirror")
-    key = {"season": 2024, "forecaster": "prior"}
+    key = {"season": 2024, "forecaster": "prior", "path": 0}  # a run's task key
     task = {"seat": 1, "unprojected": {"a": {}, "b": {}}}
     block = ss.paired_blocks([key], [{**got, **task}], {"a": a, "b": b}, 1, waivers=waivers)
     assert tuple(block["counts"]["note"])[-4:] == TAIL

@@ -224,8 +224,8 @@ def _pair(data: Path, a: str, b: str, mp: pytest.MonkeyPatch, *extra: str):
     results, boards = [], []
     task, drafted = ss.task_paired, rn.draft_boards
 
-    def spy_task(*t):
-        r = task(*t)
+    def spy_task(*t, **kw):
+        r = task(*t, **kw)
         results.append(r)
         return r
 
@@ -620,14 +620,14 @@ def _two_beliefs(pair_data, monkeypatch, *rule: str):
     calls = []
     real = rn.paired_apart
 
-    def spy(sa, wa, sb, wb, a, b, me, on_day=None):
+    def spy(sa, wa, sb, wb, a, b, me, on_day=None, on_end=None):
         seen = set()
 
         def keep(r):
             seen.add(r.variant)
             on_day(r)
 
-        out = real(sa, wa, sb, wb, a, b, me, keep)
+        out = real(sa, wa, sb, wb, a, b, me, keep, on_end)
         calls.append((sa is not sb, seen))
         return out
 

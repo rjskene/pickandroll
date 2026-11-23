@@ -176,7 +176,7 @@ def test_a_season_with_a_block_the_guard_off_and_a_stake_plays_clean(tier, h2h):
     )
     assert in_force(days[0], bare[0]) and in_force(days[1], bare[1])
     # The command's blocks: the note names both PRs' counts, and the payload lists the blocks.
-    key = {"season": 2024, "forecaster": "prior"}
+    key = {"season": 2024, "forecaster": "prior", "path": 0}  # a run's task key
     task = {"seat": 1, "unprojected": {"a": {}, "b": {}}}
     arms = {"a": a, "b": b}
     block = ss.paired_blocks([key], [{**got, **task}], arms, 1, waivers="faab")

@@ -29,7 +29,8 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 `pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
-`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`) for any way to a file, a process or the
+`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, `trace`, `capabilities`, and the lab's
+`lab/model` and `lab/trace_view`) for any way to a file, a process or the
 network: none of them imports `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`,
 `http`, `requests`, `httpx`, `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only
 `run.py` uses `os`, for the worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -1031,7 +1032,14 @@ roster change in one arm reshuffles nothing: common random numbers. What its sea
 forecaster a seat names. `simulate` can hand a caller a **day record** for each variant and day,
 taken after the lineup is set and before the day's lines are scored: the beliefs, the statuses and
 return dates heard, the moves that landed, each seat's decision, the queue, every team's starters
-and the state.
+and the state. With a caller to hand them to, each seat's queue is also asked why it left out
+any move it gathered (`policy.queue`'s `why`, `policy.UNQUEUED`: the day's cap, the week's adds,
+an add not on the wire or gathered twice, and in a waiver league `READD`, `DROP_CLAIMED`,
+`ALREADY_CLAIMED` and `NO_ADDS`), and the day record carries it (`unqueued`, PR trace). Without a
+caller nothing is asked, and either way the seasons are the same. `paired` and `paired_apart`
+can also hand a caller the two seasons' results before the pair's result is made of them
+(`on_end`); a result carries every week's totals at the season's end (`totals`), which no
+decision reads.
 
 `simulate` advances variants of one league through one world a day at a time: yesterday's queue
 lands (a held player whose status has cleared comes back to the bench first and the roster is
@@ -1308,7 +1316,9 @@ name whose seat reads the week, which the decision's key now keeps apart on two 
 bracket week**); 20 since the union pool as an arm's choice (PR pool), its figures version
 19's with the field left off; and 21 since a league whose free-agent adds play the same day (PR
 today, `--lineup-from today`), its figures version 20's with the rule left off (**A league whose
-adds play the same day**).
+adds play the same day**). Each step, and each of the screen's and the tune's, has its mark in
+the capability log (**The capability log**, PR capabilities): a version stepped without a mark
+fails the simulator's tests.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -1745,7 +1755,11 @@ a run that counts every category adds `h2h_note`, how its standings rank; a run 
 waivers adds `waiver_rule_note`, that every add is a claim and how the morning decides it, and in
 a FAAB run its `faab_note` says, in the one clause that differs, that every add is bid on). Beside `executions` every replay records its `measure`, what
 the format gives a seat that weighs (**The state and the policy**). A pair's
-`seat.by_path` is each path's seat (on the fixed shape, as before). The knob reads table is one
+`seat.by_path` is each path's seat (on the fixed shape, as before), and since PR trace its
+`by_path` is each path that stands with arm A's and arm B's outcomes on it, by season and
+forecaster: what a trace of one path checks itself on. It adds a key and moves no outcome, so
+`replay_version` did not move (the lead's decision); a record written before it has none, and
+every reader takes a record with it or without it. The knob reads table is one
 per arm, as before: no axis of the grid changes what a seat reads (`policy.Shape`), and a test
 says so.
 
@@ -3088,14 +3102,419 @@ claims. The estimate lists the values from the baseline, and a later pass may pl
 not list. The check before the first pair asks what a season's files say; what only a whole plan
 of the confirmation's pair finds is still met at the end.
 
+## The capability log (`sim/capabilities.py`, PR capabilities)
+
+The user's ask (2026-11-23): mark when the simulator's capabilities change, so a change in a
+result can be read as "a knob did this" or "the simulator changed", never left to guess. The log
+is a table of marks in the package, oldest first. Each mark has an `id`, the `date` it landed on
+main, its `pr`, a `kind`, a `title`, `words` (two lines at most, plain, no number), the versions
+it is the first to have (`replay_version`, `screen_version`, `tune_version`; none for a change
+that stepped none) and `takes_in`, the live engine's changes it brought in, by issue.
+
+- **Kinds**: `world` (the simulated league: its rules, the rivals, the draft, waivers), `seat`
+  (what the seat's policy can do, a knob given a reader), `engine` (a live rule the simulator
+  mirrors, taken in), `measure` (how outcomes are counted or recorded).
+- **Backfilled** from the version comments and `REPLAY_VERSION_WHY` in `cli.py`, `screen.py` and
+  `tune.py`, and main's history: one mark for each version step from the first replay to today,
+  and a mark with no version for a change that added a capability or moved what a run plays
+  without stepping one (an add's week, the executor's held-slot moves, a held move's slot, the
+  daily audit and counts, the season term, gate five's record and its kept-gain rule, the
+  trace).
+- **The rule that makes it stick.** `tests/sim/test_sim_capabilities.py` fails when
+  `REPLAY_VERSION`, `SCREEN_VERSION` or `TUNE_VERSION` is not the last one the log holds, or a
+  version from one to its last is held by no mark or by two. So a PR that steps a version (the
+  replay's history is in **The replay: what a seat knows**, the screen's and the tune's in their
+  sections) cannot merge without its mark. A change that adds a capability without a version
+  step gets a mark too, of its kind, with no version.
+- **A run's capability** is its `replay_version` and the last mark at or below it that steps the
+  replay's version (`capabilities.at`). A mark with no version is dated only, so a run's version
+  cannot place it; the lab draws it on the time line by its day.
+- **One zone for days: Central.** A mark's date is the Central day its PR merged, the notes
+  date live's changes the same way, and a run's start is read as its Central day
+  (`capabilities.central_day`, the US rule written out so the core reads no zone database).
+
+## The lab (`sim/lab/`, `cli.cmd_lab`, PR lab)
+
+    python -m pickandroll.sim [--data DIR] lab [--host H] [--port P] [--notes FILE]
+        [--explainer FILE] [--check]
+
+The simulator's own small app: one page over the records on the box, for reading what was played,
+what it found and how far to trust it. Five parts: a pure model (`lab/model.py`, in the core the
+boundary test reads), a pure view of a trace (`lab/trace_view.py`, in the core too, PR viewer),
+the records' reader (`lab/records.py`), a stdlib HTTP server (`lab/server.py`), and the page
+(`lab/static/`: plain script and style, no build step, served beside the module; the Season
+tab's player is `season.js`).
+
+**What it never does.** It answers `GET` only; any other method gets 405. It writes nothing, plays
+nothing and starts no process (the code's commit is read from the checkout's `.git` files, not by
+running `git`), and the server asks nothing of anywhere. The page's two font links (Google
+Fonts, linked as the live site links them, with system fonts behind them) are the only things
+the viewer's browser loads from elsewhere. It binds the one address it is given, loopback
+(`127.0.0.1`) by default, on port 8790 unless told otherwise; a wildcard address (`0.0.0.0`,
+`::`, an empty host) is refused by name, so serving on the tailnet means naming the box's own
+tailnet address. It simulates nothing, so it takes no guard, and it never starts itself: the
+lead starts it.
+
+**Routes.** `/` is the page and `/static/<file>` its files (a path that leaves that folder is not
+found); `/api/model` is the model as JSON (a model that fails to build answers 500 with one line
+naming the error's kind, never a dropped connection); `/explainer` is the explainer's built file
+(`--explainer`) wrapped in a plain document for the Explainer tab's frame, or a short page saying
+none was given; `/healthz` answers `ok`. `/api/traces` lists the traces as the model does, and
+`/api/trace/<name>` is one trace as the Season tab plays it (its view, kept until its file
+changes). A name that is not a trace's shape (letters, digits, `-` and `_`, as the `trace`
+command makes it) or not a file of `data/sim/traces/` is not found, before any path is made of
+it; a file there that is not JSON, not a trace or a trace of another version is refused by name
+(422). Each answer carries `no-store`, `nosniff` and `no-referrer`.
+
+**The model.** Built from the records each time a request finds them or the notes file changed
+(each file's path, modification time and size), and kept otherwise. It reads every screen's
+folder, every tune's folder, the written replays under `data/sim/runs/` (a run of another kind
+is counted and not shown), each trace's line under `data/sim/traces/` (PR viewer), the
+confirmation ledger and the notes. A record that is not JSON is
+refused by name and the rest is read. A replay writes `seasons` and `cells`; one written before
+them holds `season` and `forecasters`, and both forms are read. A time written without an offset
+is read as UTC, so runs whose times differ in that way sort and lie on one time line together.
+Nothing a record holds is shown as a list's or a mapping's repr: a shape's `slots`, its list of
+positions, is shown as their count. Every number the page shows is in the model; the script
+formats it and lays it out. What a section needs and no record holds is said as "not recorded",
+and the model lists those gaps (`generated.lacks`).
+
+- **Rulesets.** A run's ruleset is its league's rules less the rivals' (`rival_bids`,
+  `rival_scale`): runs whose leagues differ only in how the rivals bid are one ruleset. Its key
+  is `rs-` and a short hash of those rules' canonical JSON. No ruleset is named in the code: one
+  is called by its format and waivers unless the notes name it, and ordered by its first run
+  unless the notes order it. A ruleset with no screen and no tune (written replays alone) is
+  not listed on Overview or Checks; its runs stay on Runs under its name.
+- **The baseline.** Arm A of a played screen row whose `both` holds nothing but its `tier` (every
+  row records the tier it plays on there; a row that sets anything else in both arms plays
+  another baseline), the first such row in the screen's order. It is never simply the first
+  row. With none, the overview's first stage says "not recorded".
+- **Survives and did nothing.** These are the record's own, on the league's measure, in that
+  cell. A row that did nothing is no try. On another outcome, "clears one SE" is worked out from
+  that outcome's mean and SE (the mean's size above the SE), and the page says that is not the
+  screen's rule.
+- **Levers.** A table gives each lever a label and this README's words for it (`model.LEVERS`).
+  A lever not in it shows its name. Every row shows its values, a to b as the record holds them,
+  and the record's nudge text. `season_weight`'s baseline is 0 and its nudges add a weight.
+- **Performance.** Four stages a ruleset, on its league's measure: the baseline; the strongest
+  gain a screen saw upward (a screen's row, not a recommendation); the tuned set on the season
+  its search played; and the tuned set on the season it confirmed on. Without a tune the last
+  two say "not run". With one, they show the final set, the search's gain, the confirmation's
+  gain against the run's rivals and against static rivals, and the share of the search's gain
+  the confirmation kept. The search's gain is the sum of the taken steps' means; the steps share
+  paths, so it has no SE.
+- **Runs.** Each screen, tune and written replay: its ruleset, seasons, paths, seed, pairs done
+  and left, the rows not played, what cleared, its pieces with their recorded start and end on
+  one time line, its audit and its code. A tune also gets its own table: the search lever by
+  lever, each value's mean, SE and standing, the final set, and the confirmation's cells and
+  verdict. The traces have a table of their own (PR viewer): the pair and its values, the season,
+  the path and seed, the days the arms decide differently, the check, the code and when it was
+  made; a trace's name opens it on the Season tab. The lab plays nothing: the lead makes a trace
+  with the `trace` command.
+- **The seasons' ledger.** Every season a record or the notes name. Its role comes from the notes
+  when they give one. Otherwise it is the code's hold-out; a season a tune confirmed on, or the
+  code's confirmation season; a season a screen or a search played; or a replay's. Beside each
+  role, how many screens, searches, confirmations, replays and traces (PR viewer) played it and
+  how many of the ledger's looks name it. A season kept back to
+  confirm on is in no record until a tune confirms on it, so it comes from the notes.
+
+**The checks.** Recomputed on every build, a ruleset at a time, on its latest screen.
+
+- **Luck.** A try is a played cell that did something. With no real effect, a difference over
+  its SE is about normal. So about 0.317 of tries clear one SE (half each way), about 0.0455
+  clear two SE, and the bar corrected for the number of tries (the normal quantile of 0.025 over
+  that number) is cleared by luck alone 0.05 times in all, however many tries there are. The page
+  sets what was seen beside what luck alone would give.
+- **The flags.** Each is computed from the records:
+  - **one season** and **one seed**: every searched figure is from one season, or one seed;
+  - **fast tier only**: no row played on the exact tier;
+  - **shared baseline**: every pair is measured against the same baseline paths, so the rows are
+    not independent tries;
+  - **size of what cleared**: most of what cleared one SE is within two;
+  - **strict bar**: nothing clears the corrected bar;
+  - **direction**: what cleared splits both ways about as luck would;
+  - **confirmation season**, a problem: a season kept to confirm on was played by a screen or a
+    search; a watch, naming them, when only a written replay played it or a look on the
+    confirmation ledger names it (a tune's own confirmation is what the season is kept for, and
+    is neither), or when one ruleset's tunes confirmed on it more than once (it was unseen only
+    the first time; two rulesets confirming once each is no watch), or when a trace played it
+    (PR viewer); ok when nothing has;
+  - **hold-out**, a problem: the code's hold-out is in a run's or a trace's seasons; a record
+    that names another hold-out is a watch;
+  - **audit**, a problem: a breach or a voided path in a played pair.
+
+  A flag about one ruleset's world (its rivals, say) is the notes' own, shown with the others and
+  marked as the lead's.
+- **What they do not prove.** A clean set of flags says the records hold no sign of these faults.
+  It does not say a lever helps: the luck figures treat tries as independent, and a screen's rows
+  are not (the shared-baseline flag). A flag reads the records, not the simulator's code. Nothing
+  on the page is a recommendation. A tune's confirmation is the only figure meant to be
+  believed, and it is one season, played once.
+
+**The notes file** (`--notes`, JSON, the lead's). An object whose sections are all optional:
+
+- `state`: `{"running": text or null, "text": text}`, the header's line;
+- `queue`: items of `title`, `what`, `state` (`word`, `running`, `later`, `done` or `planned`),
+  and optionally `size` and `say`;
+- `assessments`: items of `date` (YYYY-MM-DD), `level` (`ok`, `watch` or `problem`) and `text`,
+  and optionally `run` and `ruleset`;
+- `looks`: items of `name`, `date`, `what`, `result`, and optionally `issue`;
+- `openings`: items of `title`, `why`, `state` (`asked`, `planned`, `idea`, `later` or `done`),
+  and optionally `cost`;
+- `proposals`: items of `date`, `title` and `text`, and optionally `state` (`asked`, `taken` or
+  `declined`);
+- `seasons`: items of `id` (a season said as 2022-23), `role` (`search`, `confirm`, `holdout`,
+  `current` or `replay`) and optionally `note`;
+- `rulesets`: by ruleset key, `{"name", "order", "flags"}`, each optional, a flag being
+  `{"level", "title", "text"}`;
+- `engine` (PR capabilities): the live engine's changes, items of `date`, `issue` (`#485`),
+  `title` and `words`, and optionally `taken_in`, the replay version that took it in, or null
+  while the simulator has not. The lead writes one for each word the master posts on #172. A
+  mark of the capability log whose `takes_in` names the issue closes it whatever the notes say.
+
+Every text must be non-empty. A section, a field or a value outside this is refused by name: the
+command will not start, and a file that turns bad while the lab runs is said in the model's
+`generated.notes` and left out. Without a notes file, the sections that need one say "no notes
+file".
+
+**The pages.** Overview (a card a ruleset, the four stages, the queue and the latest
+assessments); Knobs (one ruleset, or the first two side by side with whether a shared row agrees
+or splits, by outcome, raw or in SEs, by lever or best first); Checks (the luck bars and the flags
+a ruleset, the seasons' ledger, the assessment log); Runs (the table, the time line, the short
+looks, the traces, the tunes); Season (**The Season tab** below); Openings (the proposals and the
+openings from the notes); Explainer (a frame of `/explainer` under the header). The layout holds from a wide
+screen to a phone. A row's tip shows on hover, or on a tap on a touch screen (a tap elsewhere
+hides it). Everything drawn from a record goes through the page's escape, numbers included.
+While the tab is visible the page asks for the model about once a minute and draws again only
+when the model was built again, keeping the reader's tab, Knobs switches and scroll (the
+Explainer's frame is not reloaded); a tune's pieces show as they land. A model that could not be
+built leaves the last one on the page and says so in the header.
+
+**The Season tab** (PR viewer) plays a trace: one path of one pair, both arms at once, day by
+day. A picker lists the traces on the box (the pair and its values, where it came from, the
+season, the path and its check, whose level sits beside it), and one line never leaves the tab
+(it rides in the bar): one path proves nothing, a pair is judged on its record's figures over
+every path, on the Knobs page. The layout is the lead's working default (the mock's third cut);
+the user has not yet said yes to it. From the top:
+
+- **the bar**, kept on screen while the page scrolls: play and pause, the clock (the week, the
+  day, day n of N), a scrubber, three speeds, and a strip of the weeks with both arms' results
+  for the weeks played (a week's button goes to its first day). It starts playing when the tab
+  opens. A day plays in three steps, the engine's solve, the day's moves riding in, the games
+  going in, and the clock slows while a move rides so it can be seen;
+- the trace's check at its level (checked; checked on its world and seat only; drifted, with
+  what differed; not from a record), where it came from and the league;
+- **the pair**: the lever and its values A to B, every setting of the two arms' specs that
+  differs, and the ones they share folded away; then **where the arms decide differently**, the
+  trace's days whose decisions differ (the set, what was queued, the claims) as buttons that go
+  there, the first marked;
+- **the knobs in force**: charts are for what moves (the lead's decision). A key of the days'
+  knobs gets one when it changes through the season in either arm's own series, both arms on
+  it, a needle at the day, the bracket's weeks shaded, the values at the needle beside its
+  name in the ticks' own words (three significant digits, so a small fraction never reads as
+  zero). A key the same every day in each arm gets no chart, even where the arms differ: one
+  row above the charts says each such key's value, both arms' where they differ, marked. The
+  week's stake level gets a chart only when an arm reads it; otherwise a line says it moves
+  and neither arm reads it. A count and its cap share a chart (adds this week, adds today, the
+  dollars left against the budget) and a cap gets none of its own. The charts come from the
+  keys, so a knob that becomes a schedule is drawn with no change here; a table gives the known
+  keys their words. One axis a chart;
+- **each arm's move of the day**: two lanes, A above B. The roster in a steady order (a player
+  keeps his spot; one who arrives takes the spot of the player his own move dropped, a landed
+  add or a claim won, and only what no move names is paired by order; on the first day the
+  roster before is that day's less its landed adds plus their drops, so a move that lands on
+  day one rides too), each with the day's
+  lineup slot, the day's arrivals riding in and the leavers riding out, a lit chip for a
+  player who arrived today and a dashed one for a player only that arm holds; the arm's day in
+  words (the tier and its solves, the set, what was queued and claimed with its bid, what
+  landed or was decided, what was lost, and what the queue left out and the rule that stopped
+  it); and a line saying whether the two arms did the same today;
+- **the week's matchup**: a bar a category an arm, the seat's share against its opponent (for a
+  category the lower total wins, the opponent's share), filling in as the day's games go in,
+  and both arms' scores so far, won-lost-tied. A points league's running score is not in a
+  trace (the trace names the points table, not its weights), so there the week strip carries the
+  week's result;
+- **the season's race**: the seat's place before each week for both arms against the playoff
+  line, a tile an arm, then each arm's regular-season place and record, its bracket in words and
+  any audit breach.
+
+The view (`lab/trace_view.py`) works out everything the tab draws that a trace does not hold as
+such: a category's share and lead and the score so far (the engine's own percentage and winner
+rules), the steady roster and the spots that differ, the charts and which keys get one, the
+day's words and the legends', and the places. The script draws and moves the clock and works
+nothing out. On a wide screen the middle parts sit in two columns, each as tall as its own
+parts (the pair, then the lanes; the knobs, then the matchup); on a narrower one they stack in
+one column in the order above, the lanes fit a phone's width without a sideways scroll, and the
+charts are drawn at their panel's own width so their labels keep their size. Players' names are
+shown: the page is the lead's, on the box, and a trace lives under `data/` only.
+
+**The capabilities** (PR capabilities) are read from the capability log (below) and the notes'
+`engine` section:
+
+- **each run** shows the capability it was played on (its `replay_version` and the log's last
+  mark at or below it; "no recorded version" when it records none), what it was behind live in
+  (`behind_live`: the live changes its version had not taken in, dated before the Central day it
+  started) and what live changed since (`live_since`: the same, dated on or after that day): in
+  either case its figures are of an engine live has left;
+- **now**: Overview's strip "The simulator's capabilities" says the current capability, the last
+  update of any kind and when, what the simulator is behind live in, and which runs' figures
+  are of an engine live has left;
+- **"Is the seat getting better?"**: each stage says the capability its run was played on, and
+  a line says so when the stages were played on more than one;
+- **shifts**: where two screens of one ruleset, one after the other, were played on different
+  capabilities, what moved between them that no knob did, shown on Overview as the capability's
+  effect: the baseline cell by cell when both screens' baseline arms are the same arm (its name
+  aside), and each row both played with the same values (a row that did nothing in both is left
+  out), with whether the seed and the paths were the same too (when not, part of a shift is the
+  draw);
+- **three flags**, a ruleset at a time, with the others on Checks: **capabilities**, a watch
+  when its runs were played on more than one capability (saying which run sits where) or none
+  records a version; **behind live**, a problem when a tune started behind live (it tuned an
+  engine live had left), a watch when its latest screen was played before the simulator took a
+  live change in, or live has changed since it was played (its figures are of the earlier
+  engine), or it records no version, and ok otherwise (saying when the notes list no live
+  change); **tune's screen**, a problem when a tune reads a screen played on another capability
+  (the tune's own record says the screen's version when it differs);
+- **Runs**: a column with each run's capability, what it was behind and what live changed
+  since; on the time line one
+  line a day the simulator changed, through every run's track, with the day's count of marks
+  above it (a tap lists them), and a diamond for a change to the live engine; under it the
+  capability log as a table, newest first, and the live engine's changes with what took each in;
+- **the Season tab**: the trace's head says the version it was played on, and whether that was
+  read from its source's record.
+
+**`lab --check`** builds the model once and prints a line a section, counts and words only:
+what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
+the traces by their check's level, the capabilities (now, the last update, the versions the runs
+were played on, what the simulator is behind live in, the runs of an engine live has left), the
+seasons' ledger, the notes, the
+explainer and what is not recorded. Then it exits.
+
+## The trace (`sim/trace.py`, `cli.cmd_trace`, PR trace)
+
+A **trace** is one path of one pair played again with a recorder watching: arm A's and arm B's
+seasons on that path's draws, day by day, in one file under `data/sim/traces/`. It is the data
+the lab's season view plays. A trace is a look at one path of its season, and one path proves
+nothing: a pair is judged on its record's figures over every path (the screen's table, the
+lab's Knobs page).
+
+`python -m pickandroll.sim trace` takes one of three forms:
+
+- `--screen NAME --row KEY --path N`: a screen's played pair. Its two arms are the pair
+  record's own specs, and its world is the screen's spec's `world`, every flag back as `replay`
+  reads it.
+- `--tune NAME --row KEY --path N`: a pair of a tune's search, the same way. A tune's
+  confirmation pair is refused: a trace never plays a tune's confirmation season.
+- `--arms A B --seasons T --path N`, with the world's flags as `replay` takes them: no record,
+  so nothing to check on.
+
+From a record, a trace plays only a season that record searched (`--season` when the pair played
+more than one), names no world flag of its own (the record's world is the world), and runs under
+the record's `PYTHONHASHSEED`, or is refused. The arms form plays one season and refuses what
+`replay` refuses (the hold-out); one on the confirmation season (2025-26) is a look, one line in
+the ledger, as a written replay's is. `--forecaster` names the cell when a season has more than
+one. A trace of a name already on file is refused.
+
+**How it plays.** The pair is planned exactly as its screen or tune planned it (`screen_pair`:
+`replay_plan`, `replay_tasks`), and path N's task is the pair's own task function on that path's
+arguments (`task_paired`), handed a `watch`. Once the path's leagues are built the watch makes a
+`trace.Recorder` on them, which reads `run.paired`'s day records (`on_day`) and the two seasons'
+results (`on_end`). The recorder only reads. Besides the records it calls only pure functions:
+the week's view, the standings before a week, the week's stake, a week's result and the pace's
+factor. It draws nothing, reads no game's line and asks the engine nothing. A season played with
+it is the season played without it; a test holds that on both tiers, for the results and for
+every day record's digest.
+
+**How it checks itself.** Before any day is played, a trace from a record rebuilds the screen's
+spec from the world it was given and compares it to the record's spec, by the screen's own
+test. It also compares the replay's version, the fit's hash and the book's to the pair's, and
+path N's seat and league shape to the record's. After the path is played, a record that keeps
+its paths' outcomes (`by_path`) is compared on them too.
+
+- **checked:** a trace whose outcomes equal the record's path.
+- **world and seat only:** a trace of a record that keeps no path's outcome (both screens
+  played before this PR), or of a path the record voided, was compared on everything else and
+  says so.
+- **drifted:** when anything differs, the command says what and stops, and writes nothing.
+  With `--drifted` it writes the trace marked drifted, with what differed.
+- **not from a record:** the arms form has nothing to check on.
+
+**What a trace holds.** The run's common part (the fit's and the code's hashes, the hash seed,
+the fields), and:
+
+- the source and the check;
+- the season, the forecaster, the seed, the path, the seat, and the league's rules, shape and
+  turn;
+- the pair: its lever, its `values` (a to b), both arms' specs and knobs;
+- the path's outcomes and the season scale;
+- the league's weeks (bracket or not, the regular weeks' pairs), teams and categories;
+- the players met, by id, with their names. A trace holds real players' names, so it lives
+  under `data/` only.
+
+For each arm, each day:
+
+- the date, the week and whether it is a bracket week.
+- `knobs`: a small dict keyed by name, so a knob that later becomes a schedule is one more key.
+  It holds:
+  - the season term's weight on this week's games (`season_weight`) and on the games after it
+    (`season_weight_later`, the weight times `1 - stake x L`, `later_share`). A bracket day's
+    games count `playoff_weight` times inside the term's figure, so the weight is not one
+    number;
+  - `stake` and the week's `L` as the seat reads it, or as it would read it for an arm that
+    reads none (`reads_stake` says which);
+  - the adds this week and today against their caps;
+  - under FAAB, the dollars left and the pace's factor, None where the pace has no bound.
+- `decision`:
+  - the tier and its solves (a surrogate's day off is the tier with no solve), the set, its
+    held-slot moves, the plan's steps and whether the plan led;
+  - `past_guard` (under the arm's guard `off`, a set the guard would have refused) and the union
+    pool's refused count (at a `guard_pool`);
+  - what was queued and the claims placed with their bids, and what the queue left out and why;
+  - what landed this morning, the claims decided this morning, and what was lost.
+  - A tier that found nothing has an empty set. Why it found nothing (the guard under `block`,
+    the floor, `min_gain`) happens inside the engine's search and is not in a trace.
+- `roster`: each player and his slot in the day's lineup (a starting slot, the bench, or the
+  held slot he is in).
+- `matchup`: the opponent and both sides' totals as they stood that morning. The day's games
+  show in the next morning's.
+
+For each arm, each week:
+
+- the week's final totals and its result under the league's format;
+- every team's record and place in the standings before it.
+
+At the season's end, for each arm:
+
+- the whole league's standings, the bracket's seeds, rounds and champion;
+- the seat's outcome, counts, executed and gone moves, and any audit breach. A traced path with
+  a breach is written and the command exits with the audit's code.
+
+For the pair:
+
+- `differ`: the days the arms' decisions for the seat differ (the set, what was queued or the
+  claims placed), and the first.
+
+**What it costs.** One task of the pair: the same play the pair's own run made of that path,
+with the recorder's small share beside it. A dry run (`--dry-run`) plans and checks, plays
+nothing and writes nothing, and prints the record's own estimate of one task. The guard is given
+that estimate with a margin (`TRACE_MARGIN`), or half an hour (`TRACE_HOURS`) when no record
+holds one. The file is plain JSON, players by id with one names table. The trace has its own
+version (`TRACE_VERSION`, 2 since PR capabilities): a replay's `replay_version` is not a trace's,
+and since version 2 a trace also names the `replay_version` it was played under, so the lab can
+say which capability it shows. The lab plays versions 1 and 2; for a version 1 trace whose check
+found the code at its source's version (checked, or checked on its world and seat only) it reads
+the source run's.
+
 ## Runs
 
-Every command runs through the commands' guard: low priority, never when its span touches 04:45
-to 06:45 in the machine's local time, never while a draft room is open on the API, and a run
-expected over an hour is announced on the tracker and starts on the user's word (`--announced`
-says that has happened, and is passed only then). The no-peek check runs two seasons before it
+Every command that plays runs through the commands' guard (`lab` plays nothing and takes
+none): low priority, never when its span touches 04:45 to 06:45 in the machine's local time,
+never while a draft room is open on the API, and a run expected over an hour is announced on the
+tracker and starts on the user's word (`--announced` says that has happened, and is passed only
+then). The no-peek check runs two seasons before it
 can time one, so the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses
-it when that span touches the window.
+it when that span touches the window. A trace plays one task and times none: the guard is given
+its record's estimate of one task with a margin, or `TRACE_HOURS` (**The trace**).
 
 **A tune under a draft table names its `--confirm` season.** The default, the confirmation season
 (2025-26), cannot serve such a tune today: its log carries one draft position for every player,

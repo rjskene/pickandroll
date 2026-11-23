@@ -42,6 +42,9 @@ SCREEN_FILE = "screen.json"
 TUNES_DIR = SIM_DIR / "tunes"
 #: A tune's record in its folder.
 TUNE_FILE = "tune.json"
+#: The traces (#172, PR trace): one file a trace, one path of one pair day by day. A trace holds
+#: real players' names and lives under ``data/`` only.
+TRACES_DIR = SIM_DIR / "traces"
 #: The confirmation season's ledger (#172, PR D2): one JSON line a written run that names it.
 LEDGER = SIM_DIR / "confirmation-looks.jsonl"
 LOGS_DIR = Path("external") / "espn" / "gamelogs"
@@ -460,12 +463,14 @@ def screen_dir(data_dir: Path, name: str) -> Path:
     return _folder(data_dir, SCREENS_DIR, name, "screen")
 
 
-def _write_whole(path: Path, payload: Mapping[str, Any]) -> Path:
+def _write_whole(path: Path, payload: Mapping[str, Any], compact: bool = False) -> Path:
     """``payload`` at ``path``, whole or not at all: written beside it and moved into place, so
-    a run stopped mid-write leaves no half file a later piece would read as a result."""
+    a run stopped mid-write leaves no half file a later piece would read as a result.
+    ``compact``: no indent and no spaces, for a record read by a page rather than by eye."""
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".partial")
-    partial.write_text(json.dumps(payload, indent=1, sort_keys=True, default=str))
+    shape: dict[str, Any] = {"separators": (",", ":")} if compact else {"indent": 1}
+    partial.write_text(json.dumps(payload, sort_keys=True, default=str, **shape))
     partial.replace(path)
     return path
 
@@ -540,6 +545,24 @@ def read_tune_pair(data_dir: Path, name: str, key: str) -> dict[str, Any] | None
     return _read_whole(tune_pair_path(data_dir, name, key))
 
 
+def trace_path(data_dir: Path, name: str) -> Path:
+    """A trace's file under ``data/sim/traces/``, its name made safe as a run's is."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name)[:80] or "trace"
+    return data_dir / TRACES_DIR / f"{safe}.json"
+
+
+def read_trace(data_dir: Path, name: str) -> dict[str, Any] | None:
+    """A trace's record; None when there is none of that name."""
+    return _read_whole(trace_path(data_dir, name))
+
+
+def write_trace(data_dir: Path, name: str, record: Mapping[str, Any]) -> Path:
+    """A trace's record, whole or not at all and compact (a page reads it); the fit's hash and
+    the hold-out must be in it, as in every run's."""
+    _named(record, "a trace")
+    return _write_whole(trace_path(data_dir, name), record, compact=True)
+
+
 def write_tune_pair(data_dir: Path, name: str, key: str, payload: Mapping[str, Any]) -> Path:
     """A played pair's record, as ``replay`` would write it (:func:`write_run`'s conditions), in
     the tune's folder."""
@@ -590,6 +613,7 @@ __all__ = [
     "RUNS_DIR",
     "SCREENS_DIR",
     "SCREEN_FILE",
+    "TRACES_DIR",
     "TUNES_DIR",
     "TUNE_FILE",
     "SimReadError",
@@ -605,6 +629,7 @@ __all__ = [
     "read_looks",
     "read_screen",
     "read_screen_pair",
+    "read_trace",
     "read_tune",
     "read_tune_pair",
     "replay_lines",
@@ -612,11 +637,13 @@ __all__ = [
     "screen_dir",
     "screen_pair_path",
     "seasons_on_file",
+    "trace_path",
     "tune_dir",
     "tune_pair_path",
     "write_run",
     "write_screen",
     "write_screen_pair",
+    "write_trace",
     "write_tune",
     "write_tune_pair",
 ]
