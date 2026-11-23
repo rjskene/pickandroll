@@ -1180,7 +1180,7 @@ def build(
     all_luck = luck([r["diff"][r["measure"]]["ratio"] for r in tries])
     seasons = _ledger(runs, tune_list, looks, notes, hold_out, confirmation)
     for rs in rulesets:
-        rs["checks"]["flags"] += _season_flags(rs["key"], runs, seasons, hold_out)
+        rs["checks"]["flags"] += _season_flags(rs["key"], runs, seasons, hold_out, looks)
         rs["checks"]["level"] = _worst(f["level"] for f in rs["checks"]["flags"])
     if not (notes or {}).get("seasons"):
         lacks.append(
@@ -1691,30 +1691,60 @@ def _ledger(
 
 
 def _season_flags(
-    rk: str, runs: Sequence[Mapping[str, Any]], seasons: Sequence[Mapping[str, Any]], hold_out: int
+    rk: str,
+    runs: Sequence[Mapping[str, Any]],
+    seasons: Sequence[Mapping[str, Any]],
+    hold_out: int,
+    looks: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
-    """The two flags the seasons' ledger gives every ruleset: a season to confirm on that any
-    screen or search played (any ruleset's: a season seen is seen), and the hold-out in any
-    record's seasons or a record that names another hold-out."""
+    """The two flags the seasons' ledger gives every ruleset (any ruleset's runs: a season seen
+    is seen). The confirmation season's: a problem when a screen or a search played a season
+    kept to confirm on; else a watch, naming them, when a written replay played one or a look on
+    the confirmation ledger names one (a tune's own confirmation, the ledger's lines of design
+    ``tune``, is what the season is kept for and is not one) (the lead's decision); else ok.
+    The hold-out's: a problem when it is in any record's seasons, a watch when a record names
+    another hold-out."""
     confirm = [s for s in seasons if s["role"] == "confirm"]
     seen = [s for s in confirm if s["screens"] or s["searches"]]
+    watched = []
+    for s in confirm:
+        reps = [r["name"] for r in runs if r["kind"] == "replay" and s["season"] in r["seasons"]]
+        lks = [
+            str(line.get("name") or f"look {line.get('look')}")
+            for line in looks
+            if line.get("design") != "tune"
+            and s["season"] in _seasons(line.get("seasons", line.get("season")))
+        ]
+        if not reps and not lks:
+            continue
+        said = [f"{len(reps)} written replay(s) played it ({', '.join(reps)})"] if reps else []
+        if lks:
+            said.append(f"{len(lks)} look(s) on the confirmation ledger name it ({', '.join(lks)})")
+        watched.append(
+            f"{s['words']} is kept to confirm on: " + "; ".join(said) + ". No screen or search "
+            "has played it."
+        )
     out = []
     if seen:
         out.append(
             {
                 "level": PROBLEM,
                 "title": "Confirmation season",
-                "text": ", ".join(s["words"] for s in seen)
-                + " is kept to confirm on, and a screen or a search has played it.",
+                "text": " and ".join(s["words"] for s in seen)
+                + (" is" if len(seen) == 1 else " are")
+                + " kept to confirm on, and a screen or a search has played it.",
             }
         )
+    elif watched:
+        out.append({"level": WATCH, "title": "Confirmation season", "text": " ".join(watched)})
     elif confirm:
         out.append(
             {
                 "level": OK,
                 "title": "Confirmation season",
-                "text": ", ".join(s["words"] for s in confirm)
-                + " has not been played by any screen or search.",
+                "text": " and ".join(s["words"] for s in confirm)
+                + (" has" if len(confirm) == 1 else " have")
+                + " not been played by any screen or search.",
             }
         )
     else:

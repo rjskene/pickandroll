@@ -674,6 +674,41 @@ GENERATED = {
 }
 
 
+def test_the_confirmation_season_flag_in_its_three_states():
+    notes = md.notes_of({"seasons": [{"id": "2023-24", "role": "confirm"}]})
+    a, _ = two_screens()  # plays 2022-23
+    ok = flag(built([a], notes=notes)["rulesets"][0], "Confirmation season")
+    assert ok["level"] == "ok"
+    assert ok["text"] == "2023-24 and 2025-26 have not been played by any screen or search."
+    # a written replay on it: a watch, named
+    rep = old_replay(season=2024, name="r-on-confirm")
+    watch = flag(built([a], replays=[rep], notes=notes)["rulesets"][0], "Confirmation season")
+    assert watch["level"] == "watch"
+    assert watch["text"] == (
+        "2023-24 is kept to confirm on: 1 written replay(s) played it (r-on-confirm). "
+        "No screen or search has played it."
+    )
+    # a look on the confirmation ledger: a watch, named; a tune's own confirmation is not one
+    looks = [
+        {"look": 1, "name": "a-look", "design": "paired", "seasons": [2024]},
+        {"look": 2, "name": "t-1", "design": "tune", "seasons": [2024]},
+    ]
+    watch = flag(built([a], looks=looks, notes=notes)["rulesets"][0], "Confirmation season")
+    assert watch["level"] == "watch"
+    assert "1 look(s) on the confirmation ledger name it (a-look)" in watch["text"]
+    assert "t-1" not in watch["text"]
+    only_tune = flag(built([a], looks=looks[1:], notes=notes)["rulesets"][0], "Confirmation season")
+    assert only_tune["level"] == "ok"
+    # a screen on it is a problem, and wins over the watch
+    seen = screen("s-seen", ONE_WIN, [row("base", "pool", 0.0, season="2024")], seasons=(2024,))
+    problem = flag(
+        built([a, seen], replays=[rep], looks=looks, notes=notes)["rulesets"][0],
+        "Confirmation season",
+    )
+    assert problem["level"] == "problem"
+    assert "a screen or a search has played it" in problem["text"]
+
+
 def test_the_ledger_counts_looks_a_season():
     m = built(looks=[{"look": 1, "seasons": [2026]}, {"look": 2, "seasons": [2026]}])
     ledger = {s["season"]: s for s in m["seasons"]}

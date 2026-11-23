@@ -3181,7 +3181,9 @@ and the model lists those gaps (`generated.lacks`).
   - **strict bar**: nothing clears the corrected bar;
   - **direction**: what cleared splits both ways about as luck would;
   - **confirmation season**, a problem: a season kept to confirm on was played by a screen or a
-    search;
+    search; a watch, naming them, when only a written replay played it or a look on the
+    confirmation ledger names it (a tune's own confirmation is what the season is kept for, and
+    is neither); ok when nothing has;
   - **hold-out**, a problem: the code's hold-out is in a run's seasons; a record that names
     another hold-out is a watch;
   - **audit**, a problem: a breach or a voided path in a played pair.
