@@ -386,7 +386,7 @@ def test_a_pair_s_rows_and_its_note_hold_the_bid_s_counts_and_then_the_stash_cou
     assert all(tuple(row) == keys for row in plain["counts"].values())
     assert plain["counts"]["a"] == {m: pair["counts"]["a"][m] for m in keys}
     # The command's blocks, on the runner's results with what a task adds to one.
-    key = {"season": 2024, "forecaster": "prior"}
+    key = {"season": 2024, "forecaster": "prior", "path": 0}  # a run's task key
     task = {"seat": TEAM, "unprojected": {"a": {}, "b": {}}}
     arms = {"a": none, "b": named}
     block = ss.paired_blocks([key], [{**pair, **task}], arms, 1, waivers="faab")["counts"]

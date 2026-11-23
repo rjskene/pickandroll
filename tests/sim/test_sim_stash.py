@@ -926,7 +926,7 @@ def test_a_pair_and_a_room_carry_the_count_when_an_arm_names_a_threshold_and_onl
     assert room["breaches"] == []
     assert all(room["counts"][n]["returning_dropped"] is not None for n in "AB")
     # The command's blocks, on the runner's results with what a task adds to one.
-    key = {"season": 2024, "forecaster": "prior"}
+    key = {"season": 2024, "forecaster": "prior", "path": 0}  # a run's task key
     task = {"seat": 1, "unprojected": {"a": {}, "b": {}}}
     named = ss.paired_blocks([key], [{**pair, **task}], {"a": none, "b": share}, 1)["counts"]
     assert set(named["note"]) - set(ss.COUNTS_NOTE) == set(ct.STASH)
