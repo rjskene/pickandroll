@@ -271,6 +271,11 @@ class MoveProblem:
     #: My marginal players (#435, :func:`marginal_of`): a lifted add's drop must be one of them,
     #: or nobody.
     marginal: frozenset[int] = frozenset()
+    #: The lines the rest of the season is valued on (#486): the projection before the recent-form
+    #: blend (``season.recent``), which ``rates`` carry. A 7- or 14-day window is no signal for a
+    #: season, so the season guard and every rest-of-season figure read these
+    #: (:func:`season_line`). None: ``rates``.
+    season_rates: Mapping[int, wk.Rates] | None = None
 
 
 @dataclass(frozen=True)
@@ -1020,6 +1025,16 @@ def line_of(problem: MoveProblem, add: int, drop: int | None) -> wk.Rates | None
     if is_lifted(problem, add, drop):
         return problem.lifted[add].rates
     return problem.rates.get(add)
+
+
+def season_line(problem: MoveProblem, add: int, drop: int | None, key: int) -> wk.Rates | None:
+    """The line player ``key`` of a move adding ``add`` for ``drop`` is valued on over the rest
+    of the season (#486): a lifted add's lifted line (the lift is made on the line before the
+    blend), else the line before the recent-form blend (``season_rates``)."""
+    if key == add and is_lifted(problem, add, drop):
+        return problem.lifted[add].rates
+    lines = problem.season_rates if problem.season_rates is not None else problem.rates
+    return lines.get(key)
 
 
 def rates_with(problem: MoveProblem, moves: Iterable[Move]) -> Mapping[int, wk.Rates]:

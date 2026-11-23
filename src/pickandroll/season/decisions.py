@@ -263,6 +263,17 @@ def season_games(
     return _season_games(problem, pid, player, through + timedelta(1), counted)
 
 
+@dataclass(frozen=True)
+class Priced:
+    """A move's add and drop valued per game on one set of lines (:func:`move_projection`)."""
+
+    ok: bool
+    add: float | None
+    drop: float | None
+    add_cats: dict[str, float]
+    drop_cats: dict[str, float]
+
+
 def move_projection(
     problem: MoveProblem,
     scorer: Mapping[str, Any] | None,
@@ -289,27 +300,40 @@ def move_projection(
     start = day if day is not None else problem.effective.get(add, problem.first_day)
 
     # A lifted move's add plays on the lifted line (#435, ``moves.line_of``): the guard, the
-    # tables and the log value it alike.
+    # tables and the log value it alike. The rest of the season is valued on the line before the
+    # recent-form blend (#486, ``moves.season_line``); the horizons on the line they play.
     lines = {**({drop: problem.rates.get(drop)} if drop is not None else {})}
     lines[add] = mv.line_of(problem, add, drop)
+    season_lines = {k: mv.season_line(problem, add, drop, k) for k in lines}
 
-    def per_game(pid: int) -> float | None:
-        line = lines.get(pid)
+    def per_game(pid: int, on: Mapping[int, wk.Rates | None]) -> float | None:
+        line = on.get(pid)
         return None if line is None else round(wk.net_value(scorer, line), 4)
 
-    def by_cat(pid: int | None) -> dict[str, float]:
-        line = lines.get(pid) if pid is not None else None
+    def by_cat(pid: int | None, on: Mapping[int, wk.Rates | None]) -> dict[str, float]:
+        line = on.get(pid) if pid is not None else None
         return wk.net_values(scorer, line or {})
 
-    a, d = per_game(add), per_game(drop) if dropped is not None else None
-    a_cats, d_cats = by_cat(add), by_cat(drop if dropped is not None else None)
-    priced = a is not None and (dropped is None or d is not None)
+    def priced_on(on: Mapping[int, wk.Rates | None]) -> Priced:
+        a_, d_ = per_game(add, on), per_game(drop, on) if dropped is not None else None
+        ok = a_ is not None and (dropped is None or d_ is not None)
+        return Priced(
+            ok, a_, d_, by_cat(add, on), by_cat(drop if dropped is not None else None, on)
+        )
 
-    def valued(add_games: float, drop_games: float) -> tuple[float | None, dict[str, float] | None]:
-        if not priced:
+    played, over_season = priced_on(lines), priced_on(season_lines)
+    a, d = played.add, played.drop
+
+    def valued(
+        add_games: float, drop_games: float, on: Priced = played
+    ) -> tuple[float | None, dict[str, float] | None]:
+        if not on.ok or on.add is None:
             return None, None
-        value = round(add_games * a - drop_games * (d or 0.0), 4)
-        cats = {c: round(add_games * x - drop_games * d_cats[c], 4) for c, x in a_cats.items()}
+        value = round(add_games * on.add - drop_games * (on.drop or 0.0), 4)
+        cats = {
+            c: round(add_games * x - drop_games * on.drop_cats[c], 4)
+            for c, x in on.add_cats.items()
+        }
         return value, cats
 
     back = max(start, problem.returns.get(drop, start)) if dropped is not None else start
@@ -340,7 +364,7 @@ def move_projection(
         drop_games, drop_x = 0.0, 0.0
         if dropped is not None:
             drop_games, drop_x = _season_games(problem, drop, dropped, after, counted["drop"])
-        value, cats = valued(add_games, drop_games)
+        value, cats = valued(add_games, drop_games, over_season)
         horizons[SEASON] = {
             "from": start.isoformat(),
             "to": end.isoformat(),

@@ -1383,6 +1383,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 | `three_weight`, the three weeks' weight in a week plan's score, default 0.33 | section 2 (#332), logged with each decision | 0 to 1; no Monday rule moves it |
 | the breakout lift's weights, floors and marginal count (#435, `lift_*`), defaults 0.5/0.75/1.0, 0.10/0.15/0.25 and 3 | the moves solve (`docs/ADD_DROP.md`, "The lift"), logged with a decision only when a candidate is lifted | weights 0 to 1, floors 0 to 0.5, the count 0 to 10; read, never stepped; outside `LIVE_KNOBS` |
 | the add reserve and the re-cut rule (#436, `reserve_adds`, `reserve_release`, `reserve_price`, `recut_days`), defaults 1, Friday, the typical gain and 3 | the moves solve and the queue (`docs/ADD_DROP.md`, "The add reserve and the re-cut rule"), logged with a decision only when a rule applies | adds 0 to 3, days 0 to 14 (whole numbers), the release a weekday, the price none or 0 and above; read, never stepped; outside `LIVE_KNOBS` |
+| the recent-form blend (#486, `rate_shrink`, `rate_shrink_games`), defaults 0.5 and 4 | the moves solve and the week projection (`docs/ADD_DROP.md`, "The recent-form blend"), logged with each decision in `system.recent` | the shrink 0 to 1, the games 1 to 30; read, never stepped; outside `LIVE_KNOBS` |
 
 **The protocol.** One knob changes per week, pooled across the armed leagues; where the leagues
 allow it, half of them take the change and half keep the setting (A/B), since nine to twelve

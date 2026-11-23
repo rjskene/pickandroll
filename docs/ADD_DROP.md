@@ -1440,6 +1440,44 @@ plan and strategy weight (`reserve.both`, the `allowed` they already take):
   reserve` and `added within the re-cut days`, the entry's `reserve` giving its worth, the price
   and the days. A pick's own entry is never refused, and its add counts first.
 
+### The recent-form blend (#486)
+
+A calibration of the public leagues' week odds (weeks 2 to 5, 36 league-weeks, ODDS CALIBRATION
+#489) found them too high on average: we draft and add by the projection's value, so its
+overestimates collect on our rosters. The master ruled on 2026-11-23 that every player's
+per-game line moves toward the player's recent actual line (`season/recent.py`), mine and
+everyone else's by the same rule:
+
+- **The line.** `line = (1 − w) × projected + w × recent`, `w = rate_shrink × g / (g +
+  rate_shrink_games)`, where `g` is the player's games in the recent window. The window is the 7-day
+  export when it holds at least 3 of the player's games, else the 14-day one (`recent.window_of`). Every
+  stat blends, makes and attempts too, so a percentage moves toward the recent one weighted by
+  the attempts. A player with no recent games keeps the projected line.
+- **The exports.** The newest 7-day and 14-day Basketball Monster actual exports
+  (`season_flags.PAST_DAYS`, the breakout flag's). One pulled more than
+  `season_flags.PAST_DAYS_MAX_AGE` before the solve's day is stale and not read; with none read,
+  nothing blends.
+- **Where.** Basketball Monster's line, before the systems mix (#152); Yahoo's seven-day line is
+  near-term already and stays as read (`season_moves.system_rates`). The blended rates are the
+  moves problem's `rates`: the week and three-week horizons, the field, every search, week plan,
+  streaming plan and the strategy engine's later weeks, the starters' order, and the in-season
+  page's week projection and its odds (`season_week.week_projection`, `played`). The rows'
+  Basketball Monster line stays the one read.
+- **What stays on the line before the blend.** The keep rule (`keep_inputs` reads `Rated.bbm`),
+  the season guard and every rest-of-season figure (`decisions.move_projection`'s season horizon,
+  `ros.value`, `season_costly`, through `moves.season_line` and `MoveProblem.season_rates`), and
+  the breakout lift (#435), which moves its own line toward the recent minutes. A 7- or 14-day
+  window is no signal for a season. The trade evaluator, the draft (`api/app.py` `load_bbm`) and
+  the simulator (`sim/forecast.system_rates`, which imports nothing from `api`) never see it.
+- **The knobs**, the master's ruling as the code's defaults (`recent.DEFAULTS`): `rate_shrink` 0.5
+  (0 to 1), `rate_shrink_games` 4 (1 to 30). Like the lift's, they stay out of `LIVE_KNOBS` (the
+  simulator tunes them later, #172), and the Monday step never steps them. `rate_shrink` 0
+  blends nothing: the moves as before #486, byte for byte.
+- **The record.** The moves payload's and the decision log's `system` gains `recent`: the knobs,
+  each window's file and date (`stale` when not read), the players blended and a status:
+  `blended`, `no blend: export stale (<file> (<date>), …)`, `no blend: no export` or `no blend:
+  no player in the exports`.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a
