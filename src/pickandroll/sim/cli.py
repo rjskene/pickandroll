@@ -75,6 +75,7 @@ from . import forecast as fc
 from . import readers as reader
 from . import run as rn
 from . import screen as sc
+from . import trace as tr
 from . import tune as tn
 from . import validate as vg
 from .engine import EACH_CATEGORY, ONE_WIN, mv, wk
@@ -352,7 +353,7 @@ def world_inputs(data: Path) -> tuple[rn.WorldInputs, dict[str, Any], str, Path]
 
 #: The commands whose outcome runs through the engine's evaluator (an exact tie there can fall
 #: either way with the process's hash seed).
-SIMULATING = ("replay", "validate", "screen", "tune")
+SIMULATING = ("replay", "validate", "screen", "tune", "trace")
 HASH_SEED_NOTE = (
     "PYTHONHASHSEED is unset: at an exact tie the outcome may differ between processes (an "
     "order-dependent sum in the engine's evaluator); a run to be reproduced sets PYTHONHASHSEED=0"
@@ -1104,6 +1105,15 @@ def short_line(x: Mapping[str, Any]) -> str:
 #: picks, the rivals' spread and how an arm's seat drafts (``adp.SEAT_DRAFTS``, the draft PR);
 #: None under ``--adp none``.
 Market = tuple[Mapping[int, float], adp.Spread, str] | None
+#: A trace's hook into a pair's task (PR trace, :func:`task_paired`): handed each arm's league by
+#: its key and the seat, it returns the season's ``on_day`` and ``on_end``.
+Watch = Callable[
+    [Mapping[str, Any], int],
+    tuple[
+        Callable[[rn.DayRecord], None] | None,
+        Callable[[rn.VariantResult, rn.VariantResult], None] | None,
+    ],
+]
 
 
 def seat_draft_of(args: argparse.Namespace) -> str | None:
@@ -1419,6 +1429,7 @@ def task_paired(
     market: Market = None,
     grid: shapes.Grid = shapes.FIXED_GRID,
     league_rules: shapes.LeagueRules = shapes.PLAIN,
+    watch: Watch | None = None,
 ) -> dict[str, Any]:
     """One task of the paired design on a replay (#172, PR D2): the league drafted on the cell's
     forecaster, arm A in seat :func:`seat_of` in one season and arm B in the same seat in a
@@ -1435,7 +1446,11 @@ def task_paired(
 
     The path plays its league shape on ``grid``, and the seat is the shape's ``teams[turn mod
     n]`` (``shapes.visit``, #172, PR D4b): both arms hold one shape and one seat. Every path
-    plays the run's ``league_rules`` (PR D4c)."""
+    plays the run's ``league_rules`` (PR D4c).
+
+    ``watch`` (PR trace): handed each arm's league by its key and the seat once the path's
+    leagues are built, it returns the season's ``on_day`` and ``on_end`` (``run.paired``'s); a
+    trace's recorder. Without one the task is as it was, and with one its result is too."""
     v, setups, worlds, me = pair_league(
         season,
         lines,
@@ -1466,10 +1481,13 @@ def task_paired(
         )
         for k in pair
     }
+    on_day, on_end = (None, None) if watch is None else watch({k: setups[k] for k in pair}, me)
     if sa is sb:
-        out = rn.paired(sa, worlds[id(sa)], a, b, me)
+        out = rn.paired(sa, worlds[id(sa)], a, b, me, on_day=on_day, on_end=on_end)
     else:
-        out = rn.paired_apart(sa, worlds[id(sa)], sb, worlds[id(sb)], a, b, me)
+        out = rn.paired_apart(
+            sa, worlds[id(sa)], sb, worlds[id(sb)], a, b, me, on_day=on_day, on_end=on_end
+        )
     out["seat"] = me
     out["forecaster"] = forecaster.label
     out["unprojected"] = unprojected
@@ -3475,6 +3493,14 @@ def distinct(rows: Sequence[Mapping[str, Any]]) -> int:
     )
 
 
+#: What a pair record's ``by_path`` is (PR trace).
+BY_PATH_NOTE = (
+    "each path that stands, with arm A's and arm B's outcomes on it, by season and forecaster: "
+    "what a trace of one path of this pair checks itself on (a voided path is left out, as from "
+    "every figure); a record written before it has none"
+)
+
+
 def paired_blocks(
     keys: Sequence[Mapping[str, Any]],
     results: Sequence[Mapping[str, Any]],
@@ -3491,12 +3517,16 @@ def paired_blocks(
     :func:`counts_note`, ``run.counted_of``), each arm's season
     scale by season (its note the run's ``scoring``'s and format's, :func:`scale_note`), the
     unprojected count by cell and arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of
-    more than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b)."""
+    more than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b). Each path
+    that stands with each arm's outcomes, by season and forecaster (``by_path``, PR trace: what
+    a trace of one path checks itself on; it adds a key and moves no outcome)."""
     rows: dict[str, dict[str, list[Mapping[str, Any]]]] = {}
+    by_path: dict[str, dict[str, list[tuple[Mapping[str, Any], Mapping[str, Any]]]]] = {}
     scales: dict[str, dict[str, list[Any]]] = {}
     for key, res in zip(keys, results, strict=True):
         t, label = str(key["season"]), key["forecaster"]
         rows.setdefault(t, {}).setdefault(label, []).append(res)
+        by_path.setdefault(t, {}).setdefault(label, []).append((key, res))
         for side in PAIR:
             scales.setdefault(t, {}).setdefault(side, []).append(res["scale"][side])
 
@@ -3526,6 +3556,18 @@ def paired_blocks(
         "distinct_note": DISTINCT_NOTE,
         "difference": "b less a",
         "results": {t: {label: cell(rs) for label, rs in d.items()} for t, d in rows.items()},
+        "by_path": {
+            "note": BY_PATH_NOTE,
+            "by_season": {
+                t: {
+                    label: [
+                        {"path": int(key["path"]), "a": res["a"], "b": res["b"]} for key, res in d
+                    ]
+                    for label, d in cells.items()
+                }
+                for t, cells in by_path.items()
+            },
+        },
         "season_scale": {
             "note": scale_note(scoring, h2h),
             "by_season": {
@@ -5468,6 +5510,455 @@ def cmd_lab(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- trace
+#: The span the guard gives a trace whose estimate no record holds (the arms form): one task of
+#: the pair, the exact tier's included.
+TRACE_HOURS = 0.5
+#: What a record's own estimate of one task is multiplied by for the guard: the recorder's work
+#: and a slower hour.
+TRACE_MARGIN = 1.5
+#: What a trace is, in its record.
+TRACE_NOTE = (
+    "one path of one pair played again with a recorder watching: arm A's and arm B's seasons on "
+    "the same draws, day by day; a look at one path of its season, which proves nothing (a pair "
+    "is judged on its record's figures over every path)"
+)
+#: How a trace was checked (``check.status``): a trace of a record that keeps its paths'
+#: outcomes is checked on them; of one that keeps none, on its world, fit, versions, hash seed,
+#: seat and league shape only; one that differed and was written on ``--drifted`` is marked so;
+#: the arms form has no record to check on.
+CHECKED = "checked"
+WORLD_ONLY = "world and seat only: the record keeps no path's outcome"
+DRIFTED = "drifted"
+UNCHECKED = "not from a record"
+#: The trace's record forms, and the folder record each reads.
+TRACE_FORMS = ("screen", "tune")
+
+
+@dataclass(frozen=True)
+class TraceFrom:
+    """A trace's record: the screen's or tune's (``kind``) folder record, the pair's own record
+    of row ``key``, and what is read off them."""
+
+    kind: str
+    name: str
+    key: str
+    folder: Mapping[str, Any]
+    pair: Mapping[str, Any]
+
+    @property
+    def spec(self) -> Mapping[str, Any]:
+        return self.folder.get("spec") or {}
+
+    @property
+    def row(self) -> Mapping[str, Any]:
+        """The row's own block in the pair's record: its lever, nudge and ``values``."""
+        return self.pair.get(self.kind) or {}
+
+    def seasons(self) -> list[int]:
+        """The seasons the record searched: its world's, less a tune's confirmation season."""
+        world = self.spec.get("world") or {}
+        confirm = self.spec.get("confirm")
+        return [int(t) for t in world.get("seasons") or () if t != confirm]
+
+    def seconds(self) -> float | None:
+        """The record's own estimate of one task of the pair (a screen's by row, a tune's by
+        lever); None when it holds none."""
+        estimates = (self.folder.get("timing") or {}).get("estimates") or {}
+        e = estimates.get(self.key) or estimates.get(self.row.get("lever"))
+        return None if not e else float(e["seconds_one"])
+
+
+def world_defaults() -> argparse.Namespace:
+    """Every cell and world flag at its default, as ``replay`` would read it with none named."""
+    p = argparse.ArgumentParser(add_help=False)
+    _cell_args(p, "the record's")
+    _world_args(p)
+    _run_args(p, paths=1)
+    return p.parse_args([])
+
+
+def trace_world_args(world: Mapping[str, Any], data: Path, rooms: int | None) -> argparse.Namespace:
+    """``replay``'s flags for a screen's or a tune's world (its spec's ``world``,
+    :data:`SCREEN_WORLD`): every flag at its default, then the world's own values (its seasons
+    as ``--seasons`` names them); the pair's two arms are handed to the plan, so no file is
+    read (:func:`pair_args`)."""
+    ns = world_defaults()
+    for k in SCREEN_WORLD:
+        if k in world:
+            v = world[k]
+            setattr(ns, k, ",".join(str(t) for t in v) if k == "seasons" else v)
+    ns.data, ns.rooms, ns.workers = data, rooms, 1
+    return pair_args(ns, ns.seasons)
+
+
+def trace_from(args: argparse.Namespace) -> TraceFrom | int:
+    """The record a trace is made from, read and refused by name: a screen's or a tune's that
+    exists, a row of it that was played, never a tune's confirmation pair."""
+    kind = "screen" if args.screen is not None else "tune"
+    name = args.screen if kind == "screen" else args.tune
+    if args.row is None:
+        print(f"refused: a trace from a {kind} names its row (--row KEY)")
+        return 2
+    try:
+        if kind == "screen":
+            folder = reader.read_screen(args.data, name)
+            pair = None if folder is None else reader.read_screen_pair(args.data, name, args.row)
+        else:
+            folder = reader.read_tune(args.data, name)
+            pair = None if folder is None else reader.read_tune_pair(args.data, name, args.row)
+    except (reader.SimReadError, ValueError) as e:
+        print(f"refused: {e}")
+        return 2
+    if folder is None:
+        print(f"refused: no {kind} named {name!r} under {args.data / reader.SIM_DIR}")
+        return 2
+    if pair is None:
+        print(f"refused: the {kind} {name!r} has no played pair {args.row!r}")
+        return 2
+    if kind == "tune" and "confirmation" in (pair.get("tune") or {}):
+        print(
+            f"refused: {args.row!r} is the tune's confirmation pair: a trace never plays a "
+            "tune's confirmation season"
+        )
+        return 2
+    if pair.get("design") != "paired":
+        print(f"refused: {args.row!r} is not a pair's record")
+        return 2
+    return TraceFrom(kind, name, args.row, folder, pair)
+
+
+def trace_drift(
+    got: TraceFrom,
+    wa: argparse.Namespace,
+    plan: ReplayPlan,
+    made: ReplayTasks,
+    path: int,
+) -> list[str]:
+    """What of the record the code and the world on file no longer give, before any day is
+    played: the world's spec (the screen's own test, ``screen.spec_differs``), the replay's
+    version, the fit's and the book's hashes, and path ``path``'s seat and league shape."""
+    out: list[str] = []
+    spec = got.spec
+    rebuilt = screen_spec(wa, spec.get("arm") or {}, list(spec.get("levers") or ()), plan)
+    differs = sc.spec_differs({k: spec.get(k) for k in rebuilt}, rebuilt)
+    if differs is not None:
+        out.append(f"the {got.kind}'s spec: {differs}")
+    pair = got.pair
+    if pair.get("replay_version") != REPLAY_VERSION:
+        out.append(
+            f"replay_version: the pair was played under {pair.get('replay_version')}, the code "
+            f"is {REPLAY_VERSION}"
+        )
+    if pair.get("fit_sha") != plan.sha:
+        out.append("the fit's hash: the pair's is not the fit on file")
+    book = None if plan.book is None else plan.book[1]
+    if pair.get("book_sha") != book:
+        out.append("the price book's hash: the pair's is not the book on file")
+    v = made.visits[path]
+    seats = (pair.get("seat") or {}).get("by_path") or []
+    shapes_ = (pair.get("league") or {}).get("by_path") or []
+    seat = v.shape.ids[v.turn % v.shape.teams]
+    if path >= len(seats) or seats[path] != seat:
+        out.append(f"path {path}'s seat: the record's is not {seat}")
+    if path >= len(shapes_) or shapes_[path] != {"shape": v.index, "turn": v.turn}:
+        out.append(f"path {path}'s league shape and turn differ from the record's")
+    return out
+
+
+def recorded_outcomes(
+    pair: Mapping[str, Any], season: int, label: str, path: int
+) -> tuple[str, dict[str, Any] | None]:
+    """The pair's recorded outcomes on path ``path`` of the cell (``by_path``): (``CHECKED``,
+    them), or (:data:`WORLD_ONLY`, None) for a record that keeps none; a path the record voided
+    is said so."""
+    block = pair.get("by_path")
+    if not isinstance(block, Mapping):
+        return WORLD_ONLY, None
+    cell = ((block.get("by_season") or {}).get(str(season)) or {}).get(label) or []
+    got = next((x for x in cell if x.get("path") == path), None)
+    if got is None:
+        return "world and seat only: the record voided this path", None
+    return CHECKED, {"a": got.get("a"), "b": got.get("b")}
+
+
+def trace_task(made: ReplayTasks, season: int, label: str, path: int) -> int | None:
+    """The index of the task of ``season``'s cell of ``label`` on ``path``."""
+    want = {"season": season, "forecaster": label, "path": path}
+    return next((i for i, k in enumerate(made.keys) if dict(k) == want), None)
+
+
+def play_trace(
+    plan: ReplayPlan, made: ReplayTasks, i: int
+) -> tuple[dict[str, Any], tr.Recorder, float]:
+    """Task ``i`` of the pair played with a :class:`trace.Recorder` watching (``task_paired``'s
+    ``watch``): its result, the recorder and the seconds it took."""
+    held: dict[str, tr.Recorder] = {}
+
+    def watch(setups: Mapping[str, Any], me: int) -> tuple[Any, Any]:
+        held["rec"] = tr.Recorder(setups, me, plan.arms)
+        return held["rec"].hooks()
+
+    t0 = clock.perf_counter()
+    out = made.task(*made.tasks[i], watch=watch)
+    return out, held["rec"], clock.perf_counter() - t0
+
+
+def cmd_trace(args: argparse.Namespace) -> int:
+    ok, why = guard(0.0, rooms=args.rooms)
+    if not ok:
+        print(f"refused: {why}")
+        return 2
+    if args.path < 0:
+        print("refused: --path is a path's number, 0 or more")
+        return 2
+    got: TraceFrom | None = None
+    defaults = world_defaults()
+    if args.arms is None:
+        named = [
+            k
+            for k in SCREEN_WORLD
+            if k not in ("paths", "seed") and getattr(args, k, None) != getattr(defaults, k, None)
+        ]
+        named += [] if args.seed is None else ["seed"]
+        if named:
+            print(
+                f"refused: a trace from a record plays the record's world; it names no world "
+                f"flag (--{named[0].replace('_', '-')})"
+            )
+            return 2
+        read = trace_from(args)
+        if isinstance(read, int):
+            return read
+        got = read
+        searched = got.seasons()
+        played = [int(t) for t in got.pair.get("seasons") or ()]
+        if args.season is None and len(played) != 1:
+            print(f"refused: the pair played {len(played)} seasons: name one (--season)")
+            return 2
+        season = played[0] if args.season is None else args.season
+        if season not in searched or season not in played:
+            print(
+                f"refused: a trace from a {got.kind} plays only a season it searched "
+                f"({', '.join(str(t) for t in searched) or 'none'}), never a tune's confirmation "
+                "season"
+            )
+            return 2
+        recorded = got.pair.get("hash_seed")
+        if recorded not in (None, "random") and hash_seed() != recorded:
+            print(
+                f"refused: the pair was played under PYTHONHASHSEED={recorded}; this process "
+                f"runs under {hash_seed()}: set it to the record's"
+            )
+            return 2
+        wa = trace_world_args(got.spec.get("world") or {}, args.data, args.rooms)
+        specs = [dict(got.pair["specs"]["a"]), dict(got.pair["specs"]["b"])]
+        planned = screen_pair(wa, specs, read_season, set(), f"the pair of {got.key}")
+        if isinstance(planned, int):
+            return planned
+        plan, made = planned
+    else:
+        if args.row is not None or args.season is not None:
+            print("refused: the arms form names its season with --seasons, and no --row")
+            return 2
+        if args.seasons is None:
+            print("refused: the arms form names its one season (--seasons)")
+            return 2
+        try:
+            seasons = parse_seasons(args.seasons)
+        except ValueError:
+            seasons = []
+        if len(seasons) != 1:
+            print("refused: a trace plays one season: --seasons names one")
+            return 2
+        season = seasons[0]
+        wa = argparse.Namespace(
+            **{
+                **vars(args),
+                "seats": None,
+                "no_peek": None,
+                "paths": args.path + 1,
+                "workers": 1,
+                "seed": 1 if args.seed is None else args.seed,
+            }
+        )
+        plan_ = replay_plan(wa)
+        if isinstance(plan_, int):
+            return plan_
+        plan = plan_
+        made = replay_tasks(plan, wa)
+    labels = sorted({str(k["forecaster"]) for k in made.keys if k["season"] == season})
+    if args.forecaster is not None and args.forecaster not in labels:
+        print(f"refused: --forecaster {args.forecaster!r}: one of {', '.join(labels)}")
+        return 2
+    if args.forecaster is None and len(labels) != 1:
+        print(f"refused: the season has {len(labels)} forecasters' cells: name one (--forecaster)")
+        return 2
+    label = args.forecaster or labels[0]
+    i = trace_task(made, season, label, args.path)
+    if i is None:
+        print(f"refused: path {args.path} is not one of the pair's {made.paths} paths")
+        return 2
+    v = made.visits[args.path]
+    drift: list[str] = []
+    status, expected = UNCHECKED, None
+    seconds = None
+    if got is not None:
+        drift = trace_drift(got, wa, plan, made, args.path)
+        status, expected = recorded_outcomes(got.pair, season, label, args.path)
+        seconds = got.seconds()
+    whose = f"{got.kind} {got.name!r}, row {got.key}" if got is not None else "the arms named"
+    print(
+        f"trace: {whose}, season {season}, forecaster {label}, path {args.path} "
+        f"({v.shape.label()}, turn {v.turn})"
+    )
+    for d in drift:
+        print(f"differs from the record: {d}")
+    if drift and not args.drifted:
+        print(
+            "STOPPED: the code or the world has moved since the pair was played; nothing played "
+            "(--drifted writes the trace marked as drifted)"
+        )
+        return 1
+    hours = (
+        args.expected_hours
+        if args.expected_hours is not None
+        else TRACE_HOURS
+        if seconds is None
+        else seconds * TRACE_MARGIN / 3600
+    )
+    print(
+        "one task of the pair: "
+        + (
+            "no record holds its estimate"
+            if seconds is None
+            else f"about {seconds:.0f}s on the record's own estimate"
+        )
+        + f"; the guard is given {hours:.2f} h"
+    )
+    print(f"to check: {status}" + ("" if expected is None else " (the path's outcomes)"))
+    name = args.name or (
+        f"{got.kind}-{got.name}-{got.key}-path{args.path}"
+        if got is not None
+        else f"arms-{season}-path{args.path}"
+    )
+    target = reader.trace_path(args.data, name)
+    if target.exists():
+        print(
+            f"refused: a trace named {name!r} is on file ({target}): name this one another (--name)"
+        )
+        return 2
+    if args.dry_run:
+        print(f"dry run: nothing played, nothing written (would write {target})")
+        return 0
+    ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
+    if not ok:
+        print(f"refused: {why}")
+        return 2
+    started = datetime.now(UTC)
+    out, rec, took = play_trace(plan, made, i)
+    outcomes = {"a": out["a"], "b": out["b"]}
+    if expected is not None and outcomes != expected:
+        drift.append("the path's outcomes: the trace's are not the record's")
+        print("differs from the record: the path's outcomes")
+        if not args.drifted:
+            print(
+                "STOPPED: the code has moved since the pair was played; nothing written "
+                "(--drifted writes the trace marked as drifted)"
+            )
+            return 1
+    rules = plan.league_rules
+    payload = base_payload(
+        "trace",
+        name,
+        started,
+        plan.sha,
+        plan.fit_path,
+        plan.fit,
+        1,
+        plan.arms,
+        policy.executions_of(rules.waivers, rules.waiver_rule, rules.same_day),
+        policy.measure(rules.points is not None, rules.one_win),
+        plan.book,
+    )
+    row = {} if got is None else got.row
+    payload |= {
+        "note": TRACE_NOTE,
+        "source": {"form": "arms"}
+        if got is None
+        else {
+            "form": got.kind,
+            "name": got.name,
+            "row": got.key,
+            "pair_name": got.pair.get("name"),
+        },
+        "check": {
+            "status": DRIFTED if drift else status,
+            "drift": drift,
+            **({} if got is None else {"record_hash_seed": got.pair.get("hash_seed")}),
+        },
+        "season": season,
+        "forecaster": label,
+        "seed": wa.seed,
+        "path": args.path,
+        "league": {
+            "rules": rules.payload(),
+            "label": rules.label(),
+            "shape": v.index,
+            "turn": v.turn,
+            "shape_label": v.shape.label(),
+        },
+        "pair": {
+            "lever": row.get("lever"),
+            "nudge": row.get("nudge"),
+            "values": row.get("values"),
+            "arms": {k: arm.name for k, arm in plan.arms.items()},
+            "specs": dict(zip(PAIR, plan.specs, strict=True)),
+            "knobs": {k: dict(arm.knobs) for k, arm in plan.arms.items()},
+        },
+        "outcomes": {**outcomes, "difference": out["delta"]},
+        "scale": out.get("scale"),
+        "timing": {"seconds": round(took, 1)},
+        "confirmation": None,
+        **rec.payload(),
+    }
+    if season == CONFIRMATION:
+        look, ledger = reader.append_look(
+            args.data,
+            {
+                "started_at": payload["started_at"],
+                "name": name,
+                "design": "trace",
+                "seasons": [season],
+                "forecasters": [label],
+                "specs": {k: spec_hash(s) for k, s in zip(PAIR, plan.specs, strict=True)},
+                "fit_sha": plan.sha,
+                "code_sha": payload["code_sha"],
+            },
+        )
+        payload["confirmation"] = {
+            "season": CONFIRMATION,
+            "look": look,
+            "ledger": str(ledger),
+            "note": CONFIRMATION_NOTE,
+        }
+        print(f"confirmation season {CONFIRMATION}: look {look}, appended to {ledger}")
+    payload["finished_at"] = datetime.now(UTC).isoformat()
+    path = reader.write_trace(args.data, name, payload)
+    first = payload["differ"]["first"]
+    print(
+        f"played in {took:.1f}s: {sum(len(a['days']) for a in payload['arms'].values())} arm-days; "
+        + ("the arms decide alike every day" if first is None else f"they first differ on {first}")
+    )
+    breaches = [b for a in payload["arms"].values() for b in (a["end"] or {}).get("breaches", [])]
+    print(f"the check: {payload['check']['status']}")
+    print(f"written: {path}")
+    if breaches:
+        print(f"AUDIT: {len(breaches)} breach(es) in the traced path; the trace holds them")
+        return AUDIT_EXIT
+    return 0
+
+
 def _run_args(p: argparse.ArgumentParser, paths: int) -> None:
     p.add_argument("--paths", type=int, default=paths, help=f"paths a cell (default {paths})")
     p.add_argument("--seed", type=int, default=1, help="the run's seed (default 1)")
@@ -5801,6 +6292,66 @@ def main(argv: list[str] | None = None) -> int:
     )
     _run_args(tu, paths=SCREEN_PATHS)
     tu.set_defaults(func=cmd_tune)
+    tc = sub.add_parser(
+        "trace",
+        help="one path of one pair played again with a recorder watching: both arms' seasons day "
+        "by day, written under data/sim/traces/",
+    )
+    whence = tc.add_mutually_exclusive_group(required=True)
+    whence.add_argument(
+        "--screen",
+        default=None,
+        metavar="NAME",
+        help="a screen's pair: its arms and its world are the screen's record's",
+    )
+    whence.add_argument(
+        "--tune",
+        default=None,
+        metavar="NAME",
+        help="a tune's pair of its search (never its confirmation): its arms and world the tune's",
+    )
+    whence.add_argument(
+        "--arms",
+        type=Path,
+        nargs=2,
+        default=None,
+        metavar="SPEC",
+        help="arm A's and arm B's spec files, on the world the flags name, as replay takes them",
+    )
+    tc.add_argument("--row", default=None, metavar="KEY", help="with --screen or --tune: the pair")
+    tc.add_argument("--path", type=int, required=True, metavar="N", help="the pair's path played")
+    tc.add_argument(
+        "--season",
+        type=int,
+        default=None,
+        help="with --screen or --tune: the season, one the record searched (default the pair's "
+        "only one)",
+    )
+    tc.add_argument(
+        "--forecaster",
+        default=None,
+        help="the cell's forecaster (default the season's only one)",
+    )
+    tc.add_argument(
+        "--drifted",
+        action="store_true",
+        help="write a trace whose record the code or the world no longer gives, marked drifted "
+        "(default: stop and write nothing)",
+    )
+    _cell_args(tc, "none: with --arms one season, named")
+    _world_args(tc)
+    tc.add_argument(
+        "--seed", type=int, default=None, help="with --arms: the run's seed (default 1)"
+    )
+    tc.add_argument("--name", default=None, help="the trace's name and file")
+    tc.add_argument("--expected-hours", type=float, default=None, help="override the estimate")
+    tc.add_argument(
+        "--announced",
+        action="store_true",
+        help="a trace over an hour was announced on the tracker and the user said to start it",
+    )
+    tc.add_argument("--dry-run", action="store_true", help="plan and check, play and write nothing")
+    tc.set_defaults(func=cmd_trace)
     va = sub.add_parser(
         "validate", help="gate 5: the gain the surrogate keeps of the exact search's, on a replay"
     )

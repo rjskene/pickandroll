@@ -253,6 +253,7 @@ CORE = (
     "bid_policy",
     "tune",
     "lab.model",
+    "trace",
 )
 #: What the core never imports: files, processes, the network, stores on disk.
 NO_IO = {

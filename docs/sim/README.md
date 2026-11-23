@@ -29,8 +29,8 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 `pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
-`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, and the lab's `lab/model`) for any way to a
-file, a process or the
+`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, `trace`, and the lab's `lab/model`) for
+any way to a file, a process or the
 network: none of them imports `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`,
 `http`, `requests`, `httpx`, `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only
 `run.py` uses `os`, for the worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -1032,7 +1032,14 @@ roster change in one arm reshuffles nothing: common random numbers. What its sea
 forecaster a seat names. `simulate` can hand a caller a **day record** for each variant and day,
 taken after the lineup is set and before the day's lines are scored: the beliefs, the statuses and
 return dates heard, the moves that landed, each seat's decision, the queue, every team's starters
-and the state.
+and the state. With a caller to hand them to, each seat's queue is also asked why it left out
+any move it gathered (`policy.queue`'s `why`, `policy.UNQUEUED`: the day's cap, the week's adds,
+an add not on the wire or gathered twice, and in a waiver league `READD`, `DROP_CLAIMED`,
+`ALREADY_CLAIMED` and `NO_ADDS`), and the day record carries it (`unqueued`, PR trace). Without a
+caller nothing is asked, and either way the seasons are the same. `paired` and `paired_apart`
+can also hand a caller the two seasons' results before the pair's result is made of them
+(`on_end`); a result carries every week's totals at the season's end (`totals`), which no
+decision reads.
 
 `simulate` advances variants of one league through one world a day at a time: yesterday's queue
 lands (a held player whose status has cleared comes back to the bench first and the roster is
@@ -1746,7 +1753,11 @@ a run that counts every category adds `h2h_note`, how its standings rank; a run 
 waivers adds `waiver_rule_note`, that every add is a claim and how the morning decides it, and in
 a FAAB run its `faab_note` says, in the one clause that differs, that every add is bid on). Beside `executions` every replay records its `measure`, what
 the format gives a seat that weighs (**The state and the policy**). A pair's
-`seat.by_path` is each path's seat (on the fixed shape, as before). The knob reads table is one
+`seat.by_path` is each path's seat (on the fixed shape, as before), and since PR trace its
+`by_path` is each path that stands with arm A's and arm B's outcomes on it, by season and
+forecaster: what a trace of one path checks itself on. It adds a key and moves no outcome, so
+`replay_version` did not move (the lead's decision); a record written before it has none, and
+every reader takes a record with it or without it. The knob reads table is one
 per arm, as before: no axis of the grid changes what a seat reads (`policy.Shape`), and a test
 says so.
 
@@ -3236,6 +3247,117 @@ built leaves the last one on the page and says so in the header.
 what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
 the seasons' ledger, the notes, the explainer and what is not recorded. Then it exits.
 
+## The trace (`sim/trace.py`, `cli.cmd_trace`, PR trace)
+
+A **trace** is one path of one pair played again with a recorder watching: arm A's and arm B's
+seasons on that path's draws, day by day, in one file under `data/sim/traces/`. It is the data
+the lab's season view plays. A trace is a look at one path of its season, and one path proves
+nothing: a pair is judged on its record's figures over every path (the screen's table, the
+lab's Knobs page).
+
+`python -m pickandroll.sim trace` takes one of three forms:
+
+- `--screen NAME --row KEY --path N`: a screen's played pair. Its two arms are the pair
+  record's own specs, and its world is the screen's spec's `world`, every flag back as `replay`
+  reads it.
+- `--tune NAME --row KEY --path N`: a pair of a tune's search, the same way. A tune's
+  confirmation pair is refused: a trace never plays a tune's confirmation season.
+- `--arms A B --seasons T --path N`, with the world's flags as `replay` takes them: no record,
+  so nothing to check on.
+
+From a record, a trace plays only a season that record searched (`--season` when the pair played
+more than one), names no world flag of its own (the record's world is the world), and runs under
+the record's `PYTHONHASHSEED`, or is refused. The arms form plays one season and refuses what
+`replay` refuses (the hold-out); one on the confirmation season (2025-26) is a look, one line in
+the ledger, as a written replay's is. `--forecaster` names the cell when a season has more than
+one. A trace of a name already on file is refused.
+
+**How it plays.** The pair is planned exactly as its screen or tune planned it (`screen_pair`:
+`replay_plan`, `replay_tasks`), and path N's task is the pair's own task function on that path's
+arguments (`task_paired`), handed a `watch`. Once the path's leagues are built the watch makes a
+`trace.Recorder` on them, which reads `run.paired`'s day records (`on_day`) and the two seasons'
+results (`on_end`). The recorder only reads. Besides the records it calls only pure functions:
+the week's view, the standings before a week, the week's stake, a week's result and the pace's
+factor. It draws nothing, reads no game's line and asks the engine nothing. A season played with
+it is the season played without it; a test holds that on both tiers, for the results and for
+every day record's digest.
+
+**How it checks itself.** Before any day is played, a trace from a record rebuilds the screen's
+spec from the world it was given and compares it to the record's spec, by the screen's own
+test. It also compares the replay's version, the fit's hash and the book's to the pair's, and
+path N's seat and league shape to the record's. After the path is played, a record that keeps
+its paths' outcomes (`by_path`) is compared on them too.
+
+- **checked:** a trace whose outcomes equal the record's path.
+- **world and seat only:** a trace of a record that keeps no path's outcome (both screens
+  played before this PR), or of a path the record voided, was compared on everything else and
+  says so.
+- **drifted:** when anything differs, the command says what and stops, and writes nothing.
+  With `--drifted` it writes the trace marked drifted, with what differed.
+- **not from a record:** the arms form has nothing to check on.
+
+**What a trace holds.** The run's common part (the fit's and the code's hashes, the hash seed,
+the fields), and:
+
+- the source and the check;
+- the season, the forecaster, the seed, the path, the seat, and the league's rules, shape and
+  turn;
+- the pair: its lever, its `values` (a to b), both arms' specs and knobs;
+- the path's outcomes and the season scale;
+- the league's weeks (bracket or not, the regular weeks' pairs), teams and categories;
+- the players met, by id, with their names. A trace holds real players' names, so it lives
+  under `data/` only.
+
+For each arm, each day:
+
+- the date, the week and whether it is a bracket week.
+- `knobs`: a small dict keyed by name, so a knob that later becomes a schedule is one more key.
+  It holds:
+  - the season term's weight on this week's games (`season_weight`) and on the games after it
+    (`season_weight_later`, the weight times `1 - stake x L`, `later_share`). A bracket day's
+    games count `playoff_weight` times inside the term's figure, so the weight is not one
+    number;
+  - `stake` and the week's `L` as the seat reads it, or as it would read it for an arm that
+    reads none (`reads_stake` says which);
+  - the adds this week and today against their caps;
+  - under FAAB, the dollars left and the pace's factor, None where the pace has no bound.
+- `decision`:
+  - the tier and its solves (a surrogate's day off is the tier with no solve), the set, its
+    held-slot moves, the plan's steps and whether the plan led;
+  - `past_guard` (under the arm's guard `off`, a set the guard would have refused) and the union
+    pool's refused count (at a `guard_pool`);
+  - what was queued and the claims placed with their bids, and what the queue left out and why;
+  - what landed this morning, the claims decided this morning, and what was lost.
+  - A tier that found nothing has an empty set. Why it found nothing (the guard under `block`,
+    the floor, `min_gain`) happens inside the engine's search and is not in a trace.
+- `roster`: each player and his slot in the day's lineup (a starting slot, the bench, or the
+  held slot he is in).
+- `matchup`: the opponent and both sides' totals as they stood that morning. The day's games
+  show in the next morning's.
+
+For each arm, each week:
+
+- the week's final totals and its result under the league's format;
+- every team's record and place in the standings before it.
+
+At the season's end, for each arm:
+
+- the whole league's standings, the bracket's seeds, rounds and champion;
+- the seat's outcome, counts, executed and gone moves, and any audit breach. A traced path with
+  a breach is written and the command exits with the audit's code.
+
+For the pair:
+
+- `differ`: the days the arms' decisions for the seat differ (the set, what was queued or the
+  claims placed), and the first.
+
+**What it costs.** One task of the pair: the same play the pair's own run made of that path,
+with the recorder's small share beside it. A dry run (`--dry-run`) plans and checks, plays
+nothing and writes nothing, and prints the record's own estimate of one task. The guard is given
+that estimate with a margin (`TRACE_MARGIN`), or half an hour (`TRACE_HOURS`) when no record
+holds one. The file is plain JSON, players by id with one names table. The trace has its own version (`TRACE_VERSION`); a replay's
+`replay_version` is not a trace's.
+
 ## Runs
 
 Every command that plays runs through the commands' guard (`lab` plays nothing and takes
@@ -3244,7 +3366,8 @@ never while a draft room is open on the API, and a run expected over an hour is 
 tracker and starts on the user's word (`--announced` says that has happened, and is passed only
 then). The no-peek check runs two seasons before it
 can time one, so the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses
-it when that span touches the window.
+it when that span touches the window. A trace plays one task and times none: the guard is given
+its record's estimate of one task with a margin, or `TRACE_HOURS` (**The trace**).
 
 **A tune under a draft table names its `--confirm` season.** The default, the confirmation season
 (2025-26), cannot serve such a tune today: its log carries one draft position for every player,
