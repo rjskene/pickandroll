@@ -4,9 +4,12 @@ port, its command and its static files. No network beyond loopback, no real reco
 from __future__ import annotations
 
 import contextlib
+import copy
 import http.client
 import json
 import re
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 from statistics import NormalDist
@@ -39,7 +42,9 @@ EACH = {
     "waiver_days": 2,
     "waiver_rule": "dropped",
 }
-SHAPE = {"teams": 10, "slots": 13, "weekly_adds": 4, "playoff_teams": 4, "playoff_weeks": 3}
+#: A pair's shape as the records hold it: ``slots`` is the list of positions.
+SLOTS = ["PG", "SG", "G", "SF", "PF", "F", "C", "C", "UTIL", "UTIL", "BN", "BN", "BN"]
+SHAPE = {"teams": 10, "slots": SLOTS, "weekly_adds": 4, "playoff_teams": 4, "playoff_weeks": 3}
 
 
 # --------------------------------------------------------------------------- made-up records
@@ -568,6 +573,228 @@ def test_a_written_replay_is_a_run():
     assert m["rulesets"][0]["stages"][0]["tag"] == "not recorded"
 
 
+# --------------------------------------------------------------------------- lab 2
+#: A string drawn from a record, as Python's repr would write a list or a mapping of them.
+REPR = re.compile(r"\[['\"]|\{['\"]|['\"]\]|['\"]: ")
+
+
+def strings(x, where=""):
+    """Every string in the model, with where it is."""
+    if isinstance(x, dict):
+        for k, v in x.items():
+            yield from strings(v, f"{where}.{k}")
+    elif isinstance(x, list):
+        for i, v in enumerate(x):
+            yield from strings(v, f"{where}[{i}]")
+    elif isinstance(x, str):
+        yield where, x
+
+
+def old_replay(**more) -> dict:
+    """A written replay shaped as the one on the box (made-up values): one ``season``, its
+    ``forecasters`` a mapping, ``results`` by forecaster and seat, no ``league``."""
+    one = {o: {"mean": 1.0, "se": 0.1, "n": 4} for o in md.OUTCOMES}
+    rec = {
+        "kind": "replay",
+        "name": "r-old",
+        "season": 2023,
+        "forecasters": {"prior": {"name": "prior", "source": "made up"}},
+        "results": {"prior": {"R": one, "S": one}},
+        "specs": {"R": {"name": "R", "tier": "surrogate"}, "S": {"name": "S", "tier": "exact"}},
+        "paths": 4,
+        "seed": 7,
+        "code_sha": "fedcba9876543210",
+        "started_at": "2026-01-01T09:00:00+00:00",
+        "finished_at": "2026-01-01T09:30:00+00:00",
+        "audit": {"breaches": [], "paths_voided": 0},
+        "counts": {},
+    }
+    return {"file": "r-old.json", "record": rec | more}
+
+
+def test_the_roster_chip_counts_the_slots_and_nothing_shows_a_repr():
+    a, b = two_screens()
+    m = built([a, b], replays=[old_replay()])
+    rs = next(x for x in m["rulesets"] if x["key"] == md.ruleset_key(ONE_WIN))
+    assert "13 roster spots" in rs["chips"]
+    bad = [(w, v) for w, v in strings(m) if REPR.search(v)]
+    assert bad == []
+    # not vacuous: the word helpers are what keeps a list out
+    assert md.chips({}, {}, [SHAPE])[1] == "13 roster spots"
+    assert REPR.search(str(SLOTS))
+
+
+def test_a_replay_written_with_one_season_is_read_and_counted():
+    m = built(replays=[old_replay()])
+    run = m["runs"][0]
+    assert run["seasons"] == [2023] and run["season_words"] == ["2022-23"]
+    assert run["forecasters"] == "prior"
+    assert run["tiers"] == ["exact", "surrogate"]
+    ledger = {s["season"]: s for s in m["seasons"]}
+    assert ledger[2023]["replays"] == 1 and ledger[2023]["role"] == "replay"
+    # the newer form is still read
+    new = old_replay(name="r-new", seasons=[2022, 2023], cells={"2022": {"espn": {}}})
+    del new["record"]["season"], new["record"]["forecasters"]
+    m = built(replays=[old_replay(), new])
+    ledger = {s["season"]: s for s in m["seasons"]}
+    assert ledger[2023]["replays"] == 2 and ledger[2022]["replays"] == 1
+    assert next(r for r in m["runs"] if r["name"] == "r-new")["forecasters"] == "espn"
+
+
+def test_a_ruleset_with_no_screen_and_no_tune_is_not_listed():
+    a, _ = two_screens()
+    m = built([a], replays=[old_replay()])
+    listed = [x for x in m["rulesets"] if x["listed"]]
+    assert [x["key"] for x in listed] == [md.ruleset_key(ONE_WIN)]
+    assert listed[0]["tone"] == 0
+    other = next(x for x in m["rulesets"] if not x["listed"])
+    assert other["key"] == md.ruleset_key({}) and other["runs"] == ["r-old"]
+    assert m["rulesets"][-1] is other  # the listed come first
+    lines = sv.check_lines(m | {"generated": m["generated"] | GENERATED})
+    assert lines[1].startswith("rulesets: 2, 1 listed")
+    assert "runs only, not listed" in lines[1]
+    assert [x.split(":")[0] for x in lines if x.startswith("checks")] == [
+        f"checks {md.ruleset_key(ONE_WIN)}"
+    ]
+
+
+GENERATED = {
+    "read": {
+        "screens": 0,
+        "screen_pairs": 0,
+        "tunes": 0,
+        "tune_pairs": 0,
+        "replays": 0,
+        "other_runs": {},
+        "ledger_lines": 0,
+    },
+    "refused": [],
+    "notes": {"state": "none"},
+    "explainer": False,
+}
+
+
+def test_the_ledger_counts_looks_a_season():
+    m = built(looks=[{"look": 1, "seasons": [2026]}, {"look": 2, "seasons": [2026]}])
+    ledger = {s["season"]: s for s in m["seasons"]}
+    assert ledger[2026]["looks"] == 2
+    assert '<th class="n">Looks</th>' in (STATIC / "app.js").read_text()
+
+
+def test_times_with_and_without_an_offset_sort_together():
+    a = screen(
+        "s-naive",
+        ONE_WIN,
+        [row("base", "pool", 0.0)],
+        started="2026-01-02T10:00:00",
+        finished="2026-01-02T11:00:00",
+    )
+    b = screen(
+        "s-offset",
+        ONE_WIN,
+        [row("base", "pool", 0.0)],
+        started="2026-01-02T03:30:00-06:00",
+        finished="2026-01-02T04:00:00-06:00",
+    )
+    m = built(
+        [a, b],
+        replays=[
+            old_replay(started_at="2026-01-02T09:00:00", finished_at="2026-01-02T09:30:00+00:00")
+        ],
+    )
+    assert [r["name"] for r in m["runs"]] == ["r-old", "s-offset", "s-naive"]
+    for r in m["runs"]:
+        for piece in r["pieces"]:
+            assert piece["started_at"].endswith("+00:00") or piece["started_at"].endswith("-06:00")
+            assert 0.0 <= piece["at"][0] <= piece["at"][1] <= 1.0
+    assert m["timeline"] == {
+        "start": "2026-01-02T09:00:00+00:00",
+        "end": "2026-01-02T11:00:00+00:00",
+    }
+    assert m["runs"][1]["hours"] == pytest.approx(0.5)
+
+
+def test_a_model_that_fails_to_build_answers_500_with_its_kind(tmp_path):
+    class Broken(sv.Lab):
+        def build(self):
+            raise RuntimeError("made up")
+
+    with serving(Broken(tmp_path)) as port:
+        code, _, body = ask(port, "/api/model")
+        assert code == 500
+        assert body == b"the model could not be built: RuntimeError\n"
+        assert ask(port, "/healthz")[0] == 200  # the server stands
+
+
+MARK = "<x-mark>"
+#: The model's fields drawn from a record (or the notes), marked to find any drawn unescaped.
+MARK_STRINGS = {
+    "name", "label", "nudge", "why", "note", "cell", "forecaster", "forecasters", "code_sha",
+    "title", "what", "text", "size", "say", "result", "issue", "cost", "date", "words",
+    "standing", "status", "from",
+}  # fmt: skip
+MARK_NUMBERS = {
+    "paths", "seed", "teams", "breaches", "voided", "pairs_done", "pairs_left", "not_played",
+    "screens", "searches", "confirmations", "replays", "looks", "done", "better", "worse",
+    "pass",
+}  # fmt: skip
+MARK_LISTS = {"chips", "season_words", "seasons", "searched", "tiers"}
+MARK_MAPS = {"values", "set", "both"}
+
+
+def marked(x, key=""):
+    if key == "outcomes":  # the model's own table of outcomes, not a record's
+        return x
+    if isinstance(x, dict):
+        if key in MARK_MAPS:
+            return {k: MARK + str(v) for k, v in x.items()}
+        return {k: marked(v, k) for k, v in x.items()}
+    if isinstance(x, list):
+        if key in MARK_LISTS:
+            return [MARK + v if isinstance(v, str) else marked(v, key) for v in x]
+        return [marked(v, key) for v in x]
+    if isinstance(x, str) and key in MARK_STRINGS:
+        return MARK + x
+    if isinstance(x, int) and not isinstance(x, bool) and key in MARK_NUMBERS:
+        return MARK + str(x)
+    return x
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_the_page_draws_every_tab_escapes_every_record_value_and_keeps_its_place(tmp_path):
+    a, b = two_screens()
+    notes = md.notes_of(GOOD | {"rulesets": {}})
+    m = built([a, b], [tune("t-1", ONE_WIN)], [old_replay()], notes=notes)
+    m = marked(json.loads(json.dumps(m, default=str)))
+    first, nxt = tmp_path / "m1.json", tmp_path / "m2.json"
+    first.write_text(json.dumps(m))
+    later = copy.deepcopy(m)
+    later["generated"]["at"] = "2026-01-05T00:00:00+00:00"
+    nxt.write_text(json.dumps(later))
+    harness = Path(__file__).with_name("lab_page_harness.js")
+    got = subprocess.run(
+        ["node", str(harness), str(STATIC / "app.js"), str(first), str(nxt)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    out = json.loads(got.stdout)
+    assert out["problems"] == []
+    assert out["marks"] == []
+    assert out["renders"] > 7 and out["escaped"] > 7  # the marks were drawn, escaped
+    r = out["refresh"]
+    assert r["same_build_writes"] == 0
+    assert r["new_build_writes"] == 1
+    assert r["kept"]["hash"] == "#knobs" and r["kept"]["sort"] == "strength"
+    assert r["kept"]["unit"] == "se" and r["best_first_on"] is True
+    assert r["failed_writes"] == 0
+    assert (
+        "The model could not be built (the model could not be built: RuntimeError)"
+        in (r["failed_header"])
+    )
+
+
 # --------------------------------------------------------------------------- the notes
 GOOD = {
     "state": {"running": None, "text": "made-up state"},
@@ -836,8 +1063,26 @@ def test_nothing_is_loaded_from_elsewhere_but_the_two_font_links():
 
 
 #: The numbers app.js may hold: layout (positions, clamps, a tip's offsets, a table's five
-#: columns, a font weight), percent scaling and digits, never a run's figure.
-JS_NUMBERS = {"0", "1", "2", "3", "4", "5", "8", "14", "50", "100", "500", "0.5", "0.6", "3.8"}
+#: columns, a font weight), percent scaling and digits, the refresh's minute, never a run's
+#: figure.
+JS_NUMBERS = {
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "8",
+    "14",
+    "50",
+    "60",
+    "100",
+    "500",
+    "1000",
+    "0.5",
+    "0.6",
+    "3.8",
+}
 #: The bare numbers app.css may hold: font weights, layers, line heights, an opacity, a grid's
 #: count, row or column, and a flex share.
 CSS_NUMBERS = {"0", "0.75", "0.95", "1", "1.45", "2", "4", "5", "20", "500", "600", "700"}

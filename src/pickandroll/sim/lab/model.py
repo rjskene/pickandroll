@@ -28,7 +28,7 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from statistics import NormalDist
 from typing import Any
 
@@ -500,9 +500,10 @@ def chips(
     flag = _league_of(world)
     if shapes and len(shapes) > 1:
         out.append(f"a grid of {len(shapes)} league shapes")
-    teams = (shape or {}).get("teams", flag.get("teams"))
-    slots = (shape or {}).get("slots", flag.get("slots"))
-    adds = (shape or {}).get("weekly_adds", flag.get("adds"))
+    # A shape's ``slots`` is its list of positions: the chip counts them.
+    teams = _count((shape or {}).get("teams", flag.get("teams")))
+    slots = _count((shape or {}).get("slots", flag.get("slots")))
+    adds = _count((shape or {}).get("weekly_adds", flag.get("adds")))
     if teams is not None:
         out.append(f"{teams} teams")
     if slots is not None:
@@ -523,7 +524,7 @@ def chips(
         )
     waivers = rules.get("waivers")
     if waivers == "faab":
-        out.append(f"FAAB, ${rules.get('budget')}")
+        out.append(f"FAAB, ${_words(rules.get('budget'))}")
     elif waivers == "priority":
         out.append("waivers by priority")
     else:
@@ -532,7 +533,7 @@ def chips(
         out.append(
             "every add is a claim"
             if rules.get("waiver_rule") == "continuous"
-            else f"a dropped player waits {rules.get('waiver_days')} days"
+            else f"a dropped player waits {_words(rules.get('waiver_days'))} days"
         )
     if rules.get("lineup_from") == "today":
         out.append("an add plays the same day")
@@ -541,7 +542,7 @@ def chips(
     if po_teams is None and "playoffs" in flag and "/" in flag["playoffs"]:
         po_teams, po_weeks = flag["playoffs"].split("/", 1)
     if po_teams is not None:
-        out.append(f"{po_teams} playoff teams, {po_weeks} weeks")
+        out.append(f"{_words(po_teams)} playoff teams, {_words(po_weeks)} weeks")
     return out
 
 
@@ -772,7 +773,7 @@ def tune_summary(
             {
                 "lever": o.get("lever"),
                 "label": lever_label(str(o.get("lever"))),
-                "from": o.get("from"),
+                "from": _shown(o.get("from")),
                 "strength": _num(o.get("strength")),
                 "place": o.get("place"),
             }
@@ -808,10 +809,51 @@ def tune_summary(
 
 # --------------------------------------------------------------------------- runs
 def _when(x: Any) -> datetime | None:
+    """A record's time; one written without an offset is read as UTC (the records write theirs
+    with one), so times with and without an offset sort and subtract together."""
+    if x is None:
+        return None
     try:
-        return datetime.fromisoformat(str(x))
+        t = datetime.fromisoformat(str(x))
     except (TypeError, ValueError):
         return None
+    return t if t.tzinfo is not None else t.replace(tzinfo=UTC)
+
+
+def _iso(x: Any) -> str | None:
+    """A record's time as the page reads it: with its offset, or None when it is no time."""
+    t = _when(x)
+    return None if t is None else t.isoformat()
+
+
+def _t(x: Any) -> float:
+    """A record's time for ordering: its timestamp, or after every time when it has none."""
+    t = _when(x)
+    return math.inf if t is None else t.timestamp()
+
+
+def _words(x: Any) -> str:
+    """A record's list, mapping (its keys) or value as words, never a repr."""
+    if x is None:
+        return ""
+    if isinstance(x, Mapping):
+        return ", ".join(str(k) for k in x)
+    if isinstance(x, list | tuple | set):
+        return ", ".join(str(v) for v in x)
+    return str(x)
+
+
+def _count(x: Any) -> int | None:
+    """How many: a list's length, or a whole number as given; None otherwise."""
+    if isinstance(x, list | tuple):
+        return len(x)
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, int):
+        return x
+    if isinstance(x, str) and x.strip().isdigit():
+        return int(x)
+    return None
 
 
 def _hours(pieces: Sequence[Mapping[str, Any]]) -> float | None:
@@ -827,8 +869,8 @@ def _hours(pieces: Sequence[Mapping[str, Any]]) -> float | None:
 def _pieces(timing: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     return [
         {
-            "started_at": p.get("started_at"),
-            "finished_at": p.get("finished_at"),
+            "started_at": _iso(p.get("started_at")),
+            "finished_at": _iso(p.get("finished_at")),
             "played": len(p.get("played") or []),
             "stopped": p.get("stopped"),
             "code_sha": (p.get("code_sha") or "")[:7] or None,
@@ -838,7 +880,14 @@ def _pieces(timing: Mapping[str, Any] | None) -> list[dict[str, Any]]:
 
 
 def _seasons(xs: Any) -> list[int]:
-    return [int(t) for t in xs or [] if isinstance(t, (int, str)) and str(t).isdigit()]
+    """A record's seasons, from a list of them or one alone."""
+    if isinstance(xs, int | str):
+        xs = [xs]
+    return [
+        int(t)
+        for t in xs or []
+        if isinstance(t, int | str) and not isinstance(t, bool) and str(t).isdigit()
+    ]
 
 
 # --------------------------------------------------------------------------- the build
@@ -887,7 +936,7 @@ def build(
                 "shapes": shapes,
             },
         )
-        if started and (rs["first"] is None or str(started) < str(rs["first"])):
+        if started and _t(started) < _t(rs["first"]):
             rs["first"] = started
         if shapes and not rs["shapes"]:
             rs["shapes"] = shapes
@@ -929,7 +978,7 @@ def build(
                 "kind": "screen",
                 "ruleset": rk,
                 "seasons": _seasons(world.get("seasons")),
-                "forecasters": str(world.get("forecasters") or ""),
+                "forecasters": _words(world.get("forecasters")),
                 "paths": world.get("paths"),
                 "seed": world.get("seed"),
                 "tiers": tiers,
@@ -982,7 +1031,7 @@ def build(
                 "ruleset": rk,
                 "seasons": _seasons(world.get("seasons")),
                 "confirm": spec.get("confirm"),
-                "forecasters": str(world.get("forecasters") or ""),
+                "forecasters": _words(world.get("forecasters")),
                 "paths": world.get("paths"),
                 "seed": world.get("seed"),
                 "tiers": sorted(
@@ -1013,7 +1062,7 @@ def build(
     for r in replays:
         rec = r["record"]
         rules = (rec.get("league") or {}).get("rules") or {}
-        started = rec.get("started_at")
+        started = _iso(rec.get("started_at"))
         rk = ruleset(
             rules,
             (rec.get("league") or {}).get("label"),
@@ -1030,8 +1079,12 @@ def build(
                 "kind": "replay",
                 "design": rec.get("design"),
                 "ruleset": rk,
-                "seasons": _seasons(rec.get("seasons")),
-                "forecasters": ",".join(
+                # A replay writes ``seasons`` and ``cells``; one written before them, ``season``
+                # and ``forecasters``. Both are read.
+                "seasons": _seasons(rec.get("seasons") if "seasons" in rec else rec.get("season")),
+                "forecasters": _words(rec.get("forecasters"))
+                if rec.get("forecasters")
+                else ", ".join(
                     sorted({lab for by in (rec.get("cells") or {}).values() for lab in by})
                 ),
                 "paths": rec.get("paths"),
@@ -1052,7 +1105,7 @@ def build(
                 "pieces": [
                     {
                         "started_at": started,
-                        "finished_at": rec.get("finished_at"),
+                        "finished_at": _iso(rec.get("finished_at")),
                         "played": 1,
                         "stopped": None,
                         "code_sha": (rec.get("code_sha") or "")[:7] or None,
@@ -1072,18 +1125,24 @@ def build(
         )
         by_rs[rk]["replays"].append(name)
 
-    runs.sort(key=lambda x: str(x.get("started_at") or ""))
-    _span(runs)
+    runs.sort(key=lambda x: (_t(x.get("started_at")), str(x["name"])))
+    for run in runs:
+        run["season_words"] = [season_words(t) for t in run["seasons"]]
+    timeline = _span(runs)
 
     # Rulesets, in the notes' order, else by their first run.
     keys = sorted(
         by_rs,
         key=lambda k: (
             notes_rs.get(k, {}).get("order", 10**6),
-            str(by_rs[k]["first"] or ""),
+            _t(by_rs[k]["first"]),
             k,
         ),
     )
+    # A ruleset with no screen and no tune is not listed on Overview or Checks: its runs stay
+    # on Runs under its name. The listed come first, and take the first colours.
+    listed = [k for k in keys if by_rs[k]["screens"] or by_rs[k]["tunes"]]
+    keys = listed + [k for k in keys if k not in listed]
     rulesets = []
     shared_runs: dict[str, str] = {}
     for tone, rk in enumerate(keys):
@@ -1093,7 +1152,7 @@ def build(
         latest = screens_here[-1]["name"] if screens_here else None
         if latest:
             shared_runs[rk] = latest
-        baselines = [b for _, b in sorted(rs.get("baselines", []), key=lambda p: str(p[0] or ""))]
+        baselines = [b for _, b in sorted(rs.get("baselines", []), key=lambda p: _t(p[0]))]
         baseline = next((b for b in reversed(baselines) if b is not None), None)
         if screens_here and baseline is None:
             lacks.append(
@@ -1101,9 +1160,9 @@ def build(
                 "so no baseline"
             )
         here = [r for r in rows if r["ruleset"] == rk and r["run"] == latest]
-        rulesets.append(
-            _ruleset_card(rs, rk, tone, mine, here, baseline, notes_rs.get(rk, {}), tune_list)
-        )
+        card = _ruleset_card(rs, rk, tone, mine, here, baseline, notes_rs.get(rk, {}), tune_list)
+        card["listed"] = rk in listed
+        rulesets.append(card)
 
     # Knobs: every screen row, the domains, the rows two rulesets' latest screens share.
     domains = {
@@ -1157,6 +1216,7 @@ def build(
             "rule": LUCK,
         },
         "runs": runs,
+        "timeline": timeline,
         "tunes": tune_list,
         "seasons": seasons,
         "notes": None if notes is None else dict(notes),
@@ -1165,8 +1225,8 @@ def build(
     }
 
 
-def _span(runs: list[dict[str, Any]]) -> None:
-    """Each piece's place on the runs' common time line, from 0 to 1."""
+def _span(runs: list[dict[str, Any]]) -> dict[str, str] | None:
+    """Each piece's place on the runs' common time line, from 0 to 1; the line's two ends."""
     times = [
         t
         for run in runs
@@ -1175,7 +1235,7 @@ def _span(runs: list[dict[str, Any]]) -> None:
         if t is not None
     ]
     if not times:
-        return
+        return None
     t0, t1 = min(times), max(times)
     width = (t1 - t0).total_seconds() or 1.0
     for run in runs:
@@ -1189,6 +1249,7 @@ def _span(runs: list[dict[str, Any]]) -> None:
                     (b - t0).total_seconds() / width,
                 ]
             )
+    return {"start": t0.isoformat(), "end": t1.isoformat()}
 
 
 def _worst(levels: Any) -> str:
@@ -1302,6 +1363,7 @@ def _stages(
     out = [
         {
             "tag": "played" if base else "not recorded",
+            "id": "baseline",
             "title": "Current settings",
             "value": None if not base else base["outcomes"][m],
             "words": "the baseline"
@@ -1311,6 +1373,7 @@ def _stages(
         },
         {
             "tag": "unconfirmed" if best_up else "none",
+            "id": "screen",
             "title": "Strongest single gain, screen",
             "value": None if not best_up or not best_up.get("b") else best_up["b"][m],
             "diff": None if not best_up else best_up["diff"][m],
@@ -1328,6 +1391,7 @@ def _stages(
         out.append(
             {
                 "tag": "not run" if tune is None else "in progress",
+                "id": "searched",
                 "title": "Tuned set, searched season",
                 "value": None,
                 "words": "what a tune finds on the seasons it searches",
@@ -1337,6 +1401,7 @@ def _stages(
         out.append(
             {
                 "tag": "not run" if tune is None else "in progress",
+                "id": "unseen",
                 "title": "Tuned set, unseen season",
                 "value": None,
                 "words": "a season no search has seen, played once: the figure that counts",
@@ -1348,6 +1413,7 @@ def _stages(
     out.append(
         {
             "tag": "searched",
+            "id": "searched",
             "title": "Tuned set, searched season",
             "value": g["search"],
             "set": tune["final"]["set"],
@@ -1367,6 +1433,7 @@ def _stages(
     out.append(
         {
             "tag": "played" if conf["status"] == "played" else "not played",
+            "id": "unseen",
             "title": "Tuned set, unseen season",
             "value": None if run_gain is None else {"mean": run_gain["mean"], "se": run_gain["se"]},
             "static": g["confirm"].get("static"),

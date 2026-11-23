@@ -3111,7 +3111,8 @@ tailnet address. It simulates nothing, so it takes no guard, and it never starts
 lead starts it.
 
 **Routes.** `/` is the page and `/static/<file>` its files (a path that leaves that folder is not
-found); `/api/model` is the model as JSON; `/explainer` is the explainer's built file
+found); `/api/model` is the model as JSON (a model that fails to build answers 500 with one line
+naming the error's kind, never a dropped connection); `/explainer` is the explainer's built file
 (`--explainer`) wrapped in a plain document for the Explainer tab's frame, or a short page saying
 none was given; `/healthz` answers `ok`. Each answer carries `no-store`, `nosniff` and
 `no-referrer`.
@@ -3120,7 +3121,11 @@ none was given; `/healthz` answers `ok`. Each answer carries `no-store`, `nosnif
 (each file's path, modification time and size), and kept otherwise. It reads every screen's
 folder, every tune's folder, the written replays under `data/sim/runs/` (a run of another kind
 is counted and not shown), the confirmation ledger and the notes. A record that is not JSON is
-refused by name and the rest is read. Every number the page shows is in the model; the script
+refused by name and the rest is read. A replay writes `seasons` and `cells`; one written before
+them holds `season` and `forecasters`, and both forms are read. A time written without an offset
+is read as UTC, so runs whose times differ in that way sort and lie on one time line together.
+Nothing a record holds is shown as a list's or a mapping's repr: a shape's `slots`, its list of
+positions, is shown as their count. Every number the page shows is in the model; the script
 formats it and lays it out. What a section needs and no record holds is said as "not recorded",
 and the model lists those gaps (`generated.lacks`).
 
@@ -3128,7 +3133,8 @@ and the model lists those gaps (`generated.lacks`).
   `rival_scale`): runs whose leagues differ only in how the rivals bid are one ruleset. Its key
   is `rs-` and a short hash of those rules' canonical JSON. No ruleset is named in the code: one
   is called by its format and waivers unless the notes name it, and ordered by its first run
-  unless the notes order it.
+  unless the notes order it. A ruleset with no screen and no tune (written replays alone) is
+  not listed on Overview or Checks; its runs stay on Runs under its name.
 - **The baseline.** Arm A of a played screen row whose `both` holds nothing but its `tier` (every
   row records the tier it plays on there; a row that sets anything else in both arms plays
   another baseline), the first such row in the screen's order. It is never simply the first
@@ -3155,7 +3161,8 @@ and the model lists those gaps (`generated.lacks`).
 - **The seasons' ledger.** Every season a record or the notes name. Its role comes from the notes
   when they give one. Otherwise it is the code's hold-out; a season a tune confirmed on, or the
   code's confirmation season; a season a screen or a search played; or a replay's. Beside each
-  role, how many screens, searches, confirmations and replays played it. A season kept back to
+  role, how many screens, searches, confirmations and replays played it and how many of the
+  ledger's looks name it. A season kept back to
   confirm on is in no record until a tune confirms on it, so it comes from the notes.
 
 **The checks.** Recomputed on every build, a ruleset at a time, on its latest screen.
@@ -3215,7 +3222,12 @@ or splits, by outcome, raw or in SEs, by lever or best first); Checks (the luck 
 a ruleset, the seasons' ledger, the assessment log); Runs (the table, the time line, the short
 looks, the tunes); Season (the later PR's card); Openings (the proposals and the openings from the
 notes); Explainer (a frame of `/explainer` under the header). The layout holds from a wide
-screen to a phone.
+screen to a phone. A row's tip shows on hover, or on a tap on a touch screen (a tap elsewhere
+hides it). Everything drawn from a record goes through the page's escape, numbers included.
+While the tab is visible the page asks for the model about once a minute and draws again only
+when the model was built again, keeping the reader's tab, Knobs switches and scroll (the
+Explainer's frame is not reloaded); a tune's pieces show as they land. A model that could not be
+built leaves the last one on the page and says so in the header.
 
 **`lab --check`** builds the model once and prints a line a section, counts and words only:
 what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,

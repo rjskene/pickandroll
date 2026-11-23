@@ -201,8 +201,14 @@ def handler_for(lab: Lab) -> type[BaseHTTPRequestHandler]:
                 else:
                     self._send(200, f.read_bytes(), TYPES[f.suffix])
             elif path == "/api/model":
-                body = json.dumps(lab.model(), default=str, allow_nan=False).encode()
-                self._send(200, body, "application/json; charset=utf-8")
+                # A model that fails to build is a 500 with one line naming the error's kind,
+                # never a dropped connection; the page says the model could not be built.
+                try:
+                    body = json.dumps(lab.model(), default=str, allow_nan=False).encode()
+                except Exception as e:  # noqa: BLE001
+                    self._text(500, f"the model could not be built: {type(e).__name__}\n")
+                else:
+                    self._send(200, body, "application/json; charset=utf-8")
             elif path == "/explainer":
                 self._send(200, lab.explainer_page().encode(), TYPES[".html"])
             elif path == "/healthz":
@@ -243,12 +249,14 @@ def check_lines(m: dict[str, Any]) -> list[str]:
             f"refused: {len(g['refused'])}"
         ),
     ]
-    rs = m["rulesets"]
+    every = m["rulesets"]
+    rs = [x for x in every if x["listed"]]
     lines.append(
-        f"rulesets: {len(rs)}"
+        f"rulesets: {len(every)}, {len(rs)} listed"
         + "".join(
             f"; {x['key']} ({x['name']}, from the {x['named']}): {len(x['runs'])} run(s)"
-            for x in rs
+            + ("" if x["listed"] else ", runs only, not listed")
+            for x in every
         )
     )
     rows = m["knobs"]["rows"]
