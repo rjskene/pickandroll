@@ -3,8 +3,10 @@ what the decision log projected for it, my moves that week, the season to date, 
 calibration pooled across leagues.
 
 A week's projection is the decision log's last entry (#125) of the system scored whose first day
-is the week's first: a solve that saw the whole week ahead, before its first game (once a day's
-games begin, a solve's first day is the next). With no system named, the system scored is the one
+is the week's first and whose week block is that week (#488): a solve that saw the whole week
+ahead, before its first game (once a day's games begin, a solve's first day is the next; a
+Sunday-night solve stamped with Monday's first day is still the finished week's, and never opens
+the next). With no system named, the system scored is the one
 in force when the week began (#152): the knob file's system for the league that the week's first
 such entry recorded, so a change of system made on the week's Monday leaves the week projected on
 the old one for both halves, whatever is solved after it. Its week block before any move gives
@@ -17,6 +19,7 @@ Pure: the records and the log are read by ``api.season_scorecard``.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
@@ -59,15 +62,43 @@ def on_system(entry: Mapping[str, Any], system: str | None) -> bool:
     return (entry.get("system") or {}).get("key") == (system or file_system(entry))
 
 
+#: A logged week horizon's label opens with its week: "rest of week 5 against ...", or "week 4 has
+#: no days left" (a Sunday read once its games began, #209).
+_LABEL_WEEK = re.compile(r"^(?:rest of )?week (\d+)\b")
+
+
+def entry_week(entry: Mapping[str, Any]) -> int | None:
+    """The week an entry's week block is (#488): the block's own ``week``, logged since; for an
+    entry logged before, the week its week horizon's label names; None when neither says."""
+    sets = entry.get("sets") or []
+    block = (sets[0].get("week") or {}) if sets else {}
+    if block.get("week") is not None:
+        return int(block["week"])
+    label = (entry.get("horizons") or {}).get("week")
+    found = _LABEL_WEEK.match(label) if isinstance(label, str) else None
+    return int(found.group(1)) if found else None
+
+
 def projection(
     entries: Iterable[Mapping[str, Any]], week: Week, system: str | None
 ) -> Mapping[str, Any] | None:
     """The entry that projects ``week``: the last one on ``system`` whose first day is the week's
-    first and that holds a week block (a week without a named opponent has none). With None, on
-    the system in force when the week began: the one its first such entry recorded, solved on
-    the system the file then had in force."""
+    first, whose week block is that week (:func:`entry_week`, #488; an entry that names no week
+    is read as before) and that holds one (a week without a named opponent has none). A
+    Sunday-night solve is stamped with Monday's first day while its week block is the week just
+    finished: it never projects the week after, and a week whose Monday solve failed is then
+    unprojected (shown, in no sum), as intended. With None, on the system in force when the
+    week began: the one its first such entry recorded, solved on the system the file then had in
+    force."""
     start = week.start.isoformat()
-    opening = sorted((e for e in entries if e.get("first_day") == start), key=lambda e: e["at"])
+    opening = sorted(
+        (
+            e
+            for e in entries
+            if e.get("first_day") == start and entry_week(e) in (None, week.number)
+        ),
+        key=lambda e: e["at"],
+    )
     if not opening:
         return None
     if system is None:

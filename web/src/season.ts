@@ -536,12 +536,33 @@ export function defaultWeek(weeks: Pick<OutlookWeek, "week" | "this_week">[]): n
   return (weeks[0].this_week ? weeks[1] ?? weeks[0] : weeks[0]).week;
 }
 
-/** "7.3 wins expected in the 19 regular weeks left", then the leans of the named weeks and
- * the weeks against the field; no wins when no week has odds (no roster faced read). */
-export function outlookSummary(s: OutlookSummary): string[] {
+/** The format the outlook's summary is read in: a points league, a categories league's
+ * head-to-head (#397), or a categories league whose format was not read (null or absent). */
+export type OutlookFormat = Pick<SeasonSummary, "scoring" | "h2h">;
+
+/** Whether the summary shows the categories expected beside the wins (#488): in an
+ * each-category league, whose standings count every category, and when the format was not read;
+ * never in a one-win or a points league, whose standings count the week's win. */
+export function outlookShowsCats(f: OutlookFormat): boolean {
+  return f.scoring === "categories" && f.h2h !== "one_win";
+}
+
+/** The summary's tooltip (#488): which figure the standings count, or that the format was not
+ * read; null where only the wins are shown. */
+export function outlookSummaryTitle(f: OutlookFormat): string | null {
+  if (!outlookShowsCats(f)) return null;
+  if (f.h2h === "each_category") return "The standings count every category: the categories expected are what they count; the wins are the weeks won outright.";
+  return "The league's format was not read: the standings count the categories if every category counts, the wins if a week is one win.";
+}
+
+/** "7.3 wins expected in the 19 regular weeks left" ("7.3 wins and 41.2 categories expected …"
+ * where the categories show, #488), then the leans of the named weeks and the weeks against the
+ * field; no figures when no week has odds (no roster faced read). */
+export function outlookSummary(s: OutlookSummary, f: OutlookFormat): string[] {
   const weeks = `${s.weeks} regular week${s.weeks === 1 ? "" : "s"} left`;
   if (s.weeks > 0 && s.unread >= s.weeks) return [`${weeks}, none with odds yet: no roster faced was read`];
-  const out = [`${s.expected_wins.toFixed(1)} wins expected in the ${weeks}`];
+  const cats = outlookShowsCats(f) ? ` and ${s.expected_cats.toFixed(1)} categories` : "";
+  const out = [`${s.expected_wins.toFixed(1)} wins${cats} expected in the ${weeks}`];
   const leans: [number, string, string][] = [
     [s.favoured, "favoured", "favoured"],
     [s.toss_up, "toss-up", "toss-ups"],

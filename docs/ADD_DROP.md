@@ -953,7 +953,11 @@ is left out (#152). The metric is docs/AUTOPILOT.md's, section 6.
 
 - **The projection.** A week's is the decision log's last entry on the system scored whose
   first day is the week's first: a solve that saw the whole week, before its first game (once a
-  day's games begin, a solve's first day is the next). Its week block before any move gives each
+  day's games begin, a solve's first day is the next) and whose week block is that week (#488:
+  the block's `week`, or for an entry logged before it the week its horizon's label names). A
+  Sunday-night solve is stamped with Monday's first day while its week block is the week just
+  finished ("week N has no days left"), so it never projects the week after; when that week's
+  Monday solve failed, the week is unprojected, as intended. Its week block before any move gives each
   category's finals and odds, the expected categories won and the odds of winning the matchup.
   A week without one is unprojected: shown, but in no sum. Week 1 is unprojected (the log began
   on Oct 22). With no system named (#152), the system scored is the one in force when the week
@@ -1637,7 +1641,9 @@ then UI to evaluate available waiver options"). The flow:
    day the matchup page was read before is in neither half and is listed above the tables.
 6. **The Season view** (#116, `s`), `GET /seasons/{league}/outlook?system=bbm|yahoo`. Every
    week left of my season. A summary line: the wins expected in the regular weeks left (their
-   matchup odds summed), my record today, and how many of the named weeks are favoured (60% or
+   matchup odds summed) and, where the standings count every category or the format was not
+   read, the categories expected beside them (their category odds summed, #488; the line's
+   tooltip says which figure the standings count), my record today, and how many of the named weeks are favoured (60% or
    better), toss-ups and underdogs (40% or worse). Then a strip of chips, one a week: its
    number, the opponent's name and the odds of winning it, filled green, amber or red by those
    lines, grey for a week against the field; a divider marks the playoffs. A click opens that

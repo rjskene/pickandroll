@@ -412,7 +412,9 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
         assert [x["gain"] for x in s["moves"]] == [x["marginal"] for x in rec["moves"]]
         assert (s["weight"], s["held"], s["comebacks"]) == (None, rec["held"], rec["comebacks"])
         assert s["gain"] == rec["gain"]
-        # This week before and after the set: each category's finals and odds.
+        # This week before and after the set: each category's finals and odds, and the week it
+        # is, the week horizon's own (#488: the scorecard reads it).
+        assert s["week"]["week"] == m["horizons"]["week"]["weeks"][0]
         before, after = s["week"]["before"], s["week"]["after"]
         assert set(before["cats"]) == set(after["cats"]) == set(CATS)
         for block in (before, after):

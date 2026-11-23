@@ -122,6 +122,41 @@ def test_the_projection_is_the_last_solve_that_saw_the_whole_week():
     assert sc.projection(entries[:1], WEEK2, "bbm") is None
 
 
+def on_week(e: dict[str, Any], week: int | None = None, label: str | None = None):
+    """``e`` with its week block's ``week`` (logged since #488) or, as before it, a label only."""
+    out = {**e, "sets": [{**e["sets"][0], "week": {**e["sets"][0]["week"], "week": week}}]}
+    if week is None:
+        del out["sets"][0]["week"]["week"]
+    return out | ({"horizons": {"week": label}} if label is not None else {})
+
+
+def test_a_sunday_night_solve_stamped_with_mondays_first_day_never_projects_the_next_week():
+    # #488: a solve after Sunday's games is stamped with Monday's first day, while its week
+    # block is the week just finished (#209, "week 1 has no days left").
+    sunday = entry("2026-10-26T02:19:00+00:00", "2026-10-26", 0.9)
+    logged_week = on_week(sunday, week=1)
+    label_only = on_week(sunday, label="week 1 has no days left")
+    assert sc.entry_week(logged_week) == 1 and sc.entry_week(label_only) == 1
+    assert sc.entry_week(sunday) is None
+    # Monday's solve projects week 2, by its field or, logged before it, by its label.
+    monday = entry("2026-10-26T10:00:00+00:00", "2026-10-26", 0.61)
+    for mine in (on_week(monday, week=2), on_week(monday, label="rest of week 2 against Team")):
+        assert sc.entry_week(mine) == 2
+        for sun in (logged_week, label_only):
+            assert sc.projection([sun, mine], WEEK2, "bbm")["at"] == mine["at"]
+            # A Sunday entry logged after Monday's is still not the week's.
+            late = {**sun, "at": "2026-10-26T12:00:00+00:00"}
+            assert sc.projection([mine, late], WEEK2, "bbm")["at"] == mine["at"]
+    # Monday's solve failed: the week is unprojected (shown, in no sum), as intended, rather
+    # than projected by the week before's last read.
+    for sun in (logged_week, label_only):
+        assert sc.projection([sun], WEEK2, "bbm") is None
+        card = sc.week_card(record(), [sun], 1, "bbm")
+        assert card["projected"] is None and card["actual"]["won"] == 1.0
+    # An entry naming no week is read as before.
+    assert sc.projection([sunday], WEEK2, "bbm")["at"] == sunday["at"]
+
+
 def test_with_no_system_named_a_week_is_projected_on_its_entrys_system_in_force():
     # #152: each entry records the knob file's system for its league when it was logged.
     def on(e: dict[str, Any], file_system: str) -> dict[str, Any]:
