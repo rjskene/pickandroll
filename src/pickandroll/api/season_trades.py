@@ -77,10 +77,16 @@ def review_days(s: SeasonSettings) -> int:
 
 
 def build(
-    season: Season, today: date, data_dir: Path, system: str, blend: float | None = None
+    season: Season,
+    today: date,
+    data_dir: Path,
+    system: str,
+    blend: float | None = None,
+    noise: wk.Noise | None = None,
 ) -> TradeLeague | None:
     """The league as ``season.trades`` values it, or None when the season lacks my team or its
-    weeks."""
+    weeks. ``noise`` is the league's spread (#487), the moves' own, so a trade's week before it
+    is the moves' base."""
     s = season.settings
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
@@ -132,6 +138,8 @@ def build(
         no_games=rated.yahoo.zero,
         horizons={"week": (week,), "three": later},
         value_of=wk.line_value(rated.bbm.rates, cats, points),
+        noise=noise,
+        first_day=since,
     )
     seed = tr.Evaluator(league)
     seed.project_all()

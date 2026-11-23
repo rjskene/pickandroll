@@ -1110,9 +1110,11 @@ def test_the_week_projection_gives_games_rates_and_my_matchups_odds(client):
     )
     odds = {o["cat"]: o for o in m["odds"]}
     assert list(odds) == CATS
-    assert odds["pts"]["mine"] == pytest.approx(42 + m["rest"]["4"]["pts"])
+    # The rest of the week is rounded to two places; with the games discounted for the ones
+    # missed (#487) its totals are no longer whole-game sums.
+    assert odds["pts"]["mine"] == pytest.approx(42 + m["rest"]["4"]["pts"], abs=0.01)
     assert odds["fg_pct"]["mine"] == pytest.approx(
-        (15 + m["rest"]["4"]["fgm"]) / (31 + m["rest"]["4"]["fga"])
+        (15 + m["rest"]["4"]["fgm"]) / (31 + m["rest"]["4"]["fga"]), abs=1e-4
     )
     assert all(0 <= o["p_win"] <= 1 for o in m["odds"])
     assert m["expected"] == pytest.approx(sum(o["p_win"] for o in m["odds"]), abs=1e-3)
@@ -1544,6 +1546,7 @@ def test_the_outlook_gives_every_week_left_against_its_opponent_or_the_field(cli
     their_week = season_week.project_team(
         members, p.rates, span.days, False, p.schedule, p.slots, p.value, p.spots,
         points=p.points, no_games=p.no_games, returns=built.returns,
+        noise=p.noise, today=p.first_day,
     )  # fmt: skip
     field = [t for t in season.rosters if t != 4]
     assert p.horizons["three"][0].opponents[field.index(10)] == their_week

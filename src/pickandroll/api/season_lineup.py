@@ -260,6 +260,17 @@ def recommended(
     done = wk.daily_starters(active, playing, [d for d in span.days if d < first], p.slots, p.value)
     locked = _locked(reads.get(today), begun) if today in ahead and begun else None
     theirs = span.so_far_theirs[0] if span.so_far_theirs else {}
+    # The opponent's finals carry the league's spread (#487): my starts take the same, a
+    # player's chance of missing a start the mean over the player's days left, counted from the
+    # problem's first day as the opponent's are.
+    miss = None
+    if p.noise is not None and p.noise.miss_rate > 0:
+        miss = {}
+        for k, player in active:
+            ms = p.noise.misses(
+                player.status, [d for d in playing[k] if d in ahead], p.first_day, True
+            )
+            miss[k] = sum(ms) / len(ms) if ms else 0.0
     win = lu.win_lineup(
         active,
         playing,
@@ -277,6 +288,8 @@ def recommended(
         locked={today: locked} if locked is not None else None,
         started=Counter(k for lineup in done.values() for k in lineup),
         one_win=s.one_win,
+        miss=miss,
+        cv=p.noise.rate_cv if p.noise is not None else 0.0,
     )
     days = win.days
     crowded = [
