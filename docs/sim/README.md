@@ -1398,9 +1398,11 @@ bracket week**); 20 since the union pool as an arm's choice (PR pool), its figur
 today, `--lineup-from today`), its figures version 20's with the rule left off (**A league whose
 adds play the same day**); and 22 since live's odds calibration (PR take-in), its figures
 version 21's with every change of it off (**Live's odds calibration**), while an arm that names
-none of its knobs now plays live's engine of 2026-11-23. Each step, and each of the screen's and the tune's, has its mark in
-the capability log (**The capability log**, PR capabilities): a version stepped without a mark
-fails the simulator's tests.
+none of its knobs now plays live's engine of 2026-11-23. #500 moved live to the simulator's
+split-seat table (one mixed table valued once, the rule since version 3), so no version moved for
+it. Each step, and each of the screen's and the tune's, has its mark in the capability log
+(**The capability log**, PR capabilities): a version stepped without a mark fails the
+simulator's tests.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -1509,13 +1511,15 @@ What still differs from the live route (`forecast.LIVE_DIFFERENCES`, and the pay
 
 1. The second stand-in is a season forecaster; the live second source is a line for the next
    seven days, so it moves with the week's news and schedule.
-2. Live values each source on its own table (the second's holds only the available players, so
-   its values are scaled within the available pool) and a blended player at the mix of the two;
-   the simulator values the seat's one mixed table, under `yahoo` as under `blend`.
-3. Both stand-ins learn from the same played games (each at its own weights since PR D2), so
+2. Both stand-ins learn from the same played games (each at its own weights since PR D2), so
    their beliefs close on each other as the season goes, where the two live sources stay apart
    all year: a `system` difference measured here is weighted to the early weeks.
-4. "Available" is "on no roster in the seat's own league that morning".
+3. "Available" is "on no roster in the seat's own league that morning".
+
+Live valued each source on its own table and a blended player at the mix of the two until #500;
+since then it values the seat's one mixed table once, under `yahoo` as under `blend`, the rule
+the simulator has played since replay version 3. Live came to the simulator's rule, so no version
+moved.
 
 An oracle stand-in draws from its role's own keys on the `forecast` stream (labelled
 `oracle:0.2@bbm`, `oracle:0.2@yahoo`), so two oracle stand-ins have independent errors and
