@@ -176,6 +176,8 @@ class Rated:
     #: The system's rates before the recent-form blend (#486): the breakout lift's line and every
     #: rest-of-season figure's; None when nothing was blended (``rates`` are then those).
     unblended: dict[int, wk.Rates] | None = None
+    #: The per-game values on ``unblended`` (#486): a forced drop's; None when nothing blended.
+    unblended_value: dict[int, float] | None = None
 
 
 def blend_rates(
@@ -289,12 +291,12 @@ def system_rates(
     cats = tuple(s.cats)
     bbm, recent = played_bbm(read, data_dir, players, knobs, today)
     rates, value, info = _system(system, blend, bbm, yahoo, cats, points)
-    unblended = None
+    unblended = unblended_value = None
     if bbm is not read:
-        unblended = _system(system, blend, read, yahoo, cats, points)[0]
+        unblended, unblended_value, _ = _system(system, blend, read, yahoo, cats, points)
     if recent is not None:
         info = {**info, "recent": recent}
-    return Rated(rates, value, info, players, read, yahoo, unblended)
+    return Rated(rates, value, info, players, read, yahoo, unblended, unblended_value)
 
 
 def _system(
@@ -529,6 +531,8 @@ def build(
         one_win=s.one_win,
         # The rest of the season on the line before the recent-form blend (#486).
         season_rates=rated.unblended,
+        # A forced drop is a permanent cut: chosen on the values before the blend (#486).
+        drop_value=rated.unblended_value,
     )
     names = {t.team_id: t.name for t in season.teams}
     horizons = {

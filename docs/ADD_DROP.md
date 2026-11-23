@@ -1466,8 +1466,11 @@ everyone else's by the same rule:
   Basketball Monster line stays the one read.
 - **What stays on the line before the blend.** The keep rule (`keep_inputs` reads `Rated.bbm`),
   the season guard and every rest-of-season figure (`decisions.move_projection`'s season horizon,
-  `ros.value`, `season_costly`, through `moves.season_line` and `MoveProblem.season_rates`), and
-  the breakout lift (#435), which moves its own line toward the recent minutes. A 7- or 14-day
+  `ros.value`, `season_costly`, through `moves.season_line` and `MoveProblem.season_rates`), the
+  breakout lift (#435), which moves its own line toward the recent minutes, and the drop a
+  comeback forces with the stash threshold's alternative (`moves.drop_value` on
+  `MoveProblem.drop_value`, the master's ruling of 2026-11-23: a forced drop is a permanent cut,
+  and a cold week should not choose who goes). A 7- or 14-day
   window is no signal for a season. The trade evaluator, the draft (`api/app.py` `load_bbm`) and
   the simulator (`sim/forecast.system_rates`, which imports nothing from `api`) never see it.
 - **The knobs**, the master's ruling as the code's defaults (`recent.DEFAULTS`): `rate_shrink` 0.5

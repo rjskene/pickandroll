@@ -21,6 +21,8 @@ from pickandroll.season import progress as pg
 from pickandroll.season import recent as rc
 from pickandroll.season import reserve as rs
 
+from .stash_snapshot import cases
+from .test_activation import BACK, STREAMER, WEAK, league
 from .test_lift import bump, lifted, thin_league
 from .test_moves import rates
 from .test_season import (  # noqa: F401
@@ -32,6 +34,7 @@ from .test_season import (  # noqa: F401
     projection_csv,
 )
 from .test_season_guard import built_of, drop_clocks
+from .test_stash_threshold import GRID, MONDAY
 
 
 # --------------------------------------------------------------------------- the blend
@@ -300,3 +303,40 @@ def test_the_keep_rule_and_the_lift_read_the_line_before_the_blend(client, monke
     lift_on, lift_off = seen["lift"][0], seen["lift"][-1]
     assert len(seen["keep"]) == 2 and len(seen["lift"]) == 2
     assert keep_on == keep_off and lift_on == lift_off
+
+
+# --------------------------------------------------------------------------- the forced drop
+def test_a_cold_week_never_chooses_the_drop_a_comeback_forces():
+    """The master's ruling of 2026-11-23: a forced drop is a permanent cut, chosen on the
+    values before the blend. ``test_activation``'s league: the streamer has the lowest
+    per-game value and goes when the cleared player comes back."""
+    p = league()
+    [c] = mv.comebacks(p, "week", ())
+    assert (c.player, c.drop) == (BACK, STREAMER)
+    # A cold week on a player the keep rule does not keep: lowest on the blended values.
+    cold = {**p.value, WEAK: 0.1}
+    blended_only = replace(p, value=cold)
+    assert mv.comebacks(blended_only, "week", ())[0].drop == WEAK
+    # With the values before the blend beside them, the choice is the one with the blend off.
+    hot_and_cold = replace(p, value=cold, drop_value=p.value)
+    [c] = mv.comebacks(hot_and_cold, "week", ())
+    assert (c.player, c.drop) == (BACK, STREAMER)
+    assert mv.drop_value(hot_and_cold, WEAK) == p.value[WEAK]
+    assert mv.drop_value(p, WEAK) == p.value[WEAK]
+
+
+def test_the_stash_thresholds_alternative_is_chosen_before_the_blend():
+    """``guarded_pool``'s ``instead`` (#373), the player who would go in a returning player's
+    place, reads the values before the blend: scrambled week values change nothing."""
+    moved = 0
+    for p in cases().values():
+        pool = [k for k, _ in p.roster] + [k for k, _ in p.held]
+        scrambled = {k: -v for k, v in p.value.items()}
+        for t in GRID:
+            q = replace(p, stash_threshold=t)
+            plain = mv.guarded_pool(q, pool, MONDAY)
+            kept = replace(q, value=scrambled, drop_value=q.value)
+            assert mv.guarded_pool(kept, pool, MONDAY) == plain
+            moved += mv.guarded_pool(replace(q, value=scrambled), pool, MONDAY) != plain
+    # The scramble does move some pool when the week values choose: the test has teeth.
+    assert moved > 0
