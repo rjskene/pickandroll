@@ -1180,7 +1180,7 @@ def build(
     all_luck = luck([r["diff"][r["measure"]]["ratio"] for r in tries])
     seasons = _ledger(runs, tune_list, looks, notes, hold_out, confirmation)
     for rs in rulesets:
-        rs["checks"]["flags"] += _season_flags(rs["key"], runs, seasons, hold_out, looks)
+        rs["checks"]["flags"] += _season_flags(rs["key"], runs, seasons, hold_out, looks, tune_list)
         rs["checks"]["level"] = _worst(f["level"] for f in rs["checks"]["flags"])
     if not (notes or {}).get("seasons"):
         lacks.append(
@@ -1696,12 +1696,15 @@ def _season_flags(
     seasons: Sequence[Mapping[str, Any]],
     hold_out: int,
     looks: Sequence[Mapping[str, Any]] = (),
+    tunes: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """The two flags the seasons' ledger gives every ruleset (any ruleset's runs: a season seen
     is seen). The confirmation season's: a problem when a screen or a search played a season
     kept to confirm on; else a watch, naming them, when a written replay played one or a look on
     the confirmation ledger names one (a tune's own confirmation, the ledger's lines of design
-    ``tune``, is what the season is kept for and is not one) (the lead's decision); else ok.
+    ``tune``, is what the season is kept for and is not one), or when this ruleset's tunes
+    confirmed on it more than once (it was unseen only the first time; another ruleset's
+    confirmation is not counted here) (the lead's decisions); else ok.
     The hold-out's: a problem when it is in any record's seasons, a watch when a record names
     another hold-out."""
     confirm = [s for s in seasons if s["role"] == "confirm"]
@@ -1715,11 +1718,25 @@ def _season_flags(
             if line.get("design") != "tune"
             and s["season"] in _seasons(line.get("seasons", line.get("season")))
         ]
-        if not reps and not lks:
+        again = [
+            t["name"]
+            for t in tunes
+            if t["ruleset"] == rk
+            and t["confirmation"]["status"] == "played"
+            and t["confirmation"]["season"] is not None
+            and int(t["confirmation"]["season"]) == s["season"]
+        ]
+        again = again if len(again) > 1 else []
+        if not reps and not lks and not again:
             continue
         said = [f"{len(reps)} written replay(s) played it ({', '.join(reps)})"] if reps else []
         if lks:
             said.append(f"{len(lks)} look(s) on the confirmation ledger name it ({', '.join(lks)})")
+        if again:
+            said.append(
+                f"this ruleset's tunes confirmed on it {len(again)} times ({', '.join(again)}): "
+                "it was unseen only the first time"
+            )
         watched.append(
             f"{s['words']} is kept to confirm on: " + "; ".join(said) + ". No screen or search "
             "has played it."

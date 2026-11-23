@@ -709,6 +709,20 @@ def test_the_confirmation_season_flag_in_its_three_states():
     assert "a screen or a search has played it" in problem["text"]
 
 
+def test_a_second_confirmation_by_one_ruleset_on_one_season_is_a_watch():
+    notes = md.notes_of({"seasons": [{"id": "2023-24", "role": "confirm"}]})
+    a, b = two_screens()
+    once = built([a], [tune("t-1", ONE_WIN)], notes=notes)
+    assert flag(once["rulesets"][0], "Confirmation season")["level"] == "ok"
+    twice = built([a], [tune("t-1", ONE_WIN), tune("t-2", ONE_WIN)], notes=notes)
+    f = flag(twice["rulesets"][0], "Confirmation season")
+    assert f["level"] == "watch"
+    assert "this ruleset's tunes confirmed on it 2 times (t-1, t-2)" in f["text"]
+    # two rulesets each confirming once on it: ok for both
+    each = built([a, b], [tune("t-1", ONE_WIN), tune("t-2", EACH)], notes=notes)
+    assert {flag(x, "Confirmation season")["level"] for x in each["rulesets"]} == {"ok"}
+
+
 def test_the_ledger_counts_looks_a_season():
     m = built(looks=[{"look": 1, "seasons": [2026]}, {"look": 2, "seasons": [2026]}])
     ledger = {s["season"]: s for s in m["seasons"]}
