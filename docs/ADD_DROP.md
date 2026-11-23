@@ -1455,8 +1455,9 @@ everyone else's by the same rule:
   the attempts. A player with no recent games keeps the projected line.
 - **The exports.** The newest 7-day and 14-day Basketball Monster actual exports
   (`season_flags.PAST_DAYS`, the breakout flag's). One pulled more than
-  `season_flags.PAST_DAYS_MAX_AGE` before the solve's day is stale and not read; with none read,
-  nothing blends.
+  `season_flags.PAST_DAYS_MAX_AGE` before the solve's day is stale and not read, and one that
+  cannot be read is left out (`unreadable`, never a failed solve); with none read, nothing
+  blends.
 - **Where.** Basketball Monster's line, before the systems mix (#152); Yahoo's seven-day line is
   near-term already and stays as read (`season_moves.system_rates`). The blended rates are the
   moves problem's `rates`: the week and three-week horizons, the field, every search, week plan,
@@ -1475,8 +1476,8 @@ everyone else's by the same rule:
   blends nothing: the moves as before #486, byte for byte.
 - **The record.** The moves payload's and the decision log's `system` gains `recent`: the knobs,
   each window's file and date (`stale` when not read), the players blended and a status:
-  `blended`, `no blend: export stale (<file> (<date>), …)`, `no blend: no export` or `no blend:
-  no player in the exports`.
+  `blended`, `no blend: export stale (<file> (<date>), …)`, `no blend: export unreadable
+  (<file>)`, `no blend: no export` or `no blend: no player in the exports`.
 
 ## The trade evaluator
 

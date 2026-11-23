@@ -218,6 +218,19 @@ def test_a_stale_export_blends_nothing_and_says_so(client):  # noqa: F811
     assert json.dumps(out, sort_keys=True) == json.dumps(off, sort_keys=True)
 
 
+def test_an_unreadable_export_blends_nothing_and_the_moves_still_solve(client):  # noqa: F811
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
+    (client.data_dir / "bbm_actual_7d_totals_20261021-1400.xls").write_bytes(b"")
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    r = client.get(f"/seasons/{LEAGUE}/moves")
+    assert r.status_code == 200
+    recent = r.json()["system"]["recent"]
+    assert recent["status"] == (
+        "no blend: export unreadable (bbm_actual_7d_totals_20261021-1400.xls)"
+    )
+    assert recent["players"] == 0 and recent["windows"]["7d"]["unreadable"]
+
+
 def test_no_export_blends_nothing_and_says_so(client):  # noqa: F811
     projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})

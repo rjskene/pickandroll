@@ -202,7 +202,8 @@ def recent_lines(
 ) -> tuple[dict[int, dict[int, rc.Recent]], dict[str, Any]]:
     """Each player's recent line (#486): the games and the per-game line of the newest 7-day and
     14-day actual exports (``season_flags.PAST_DAYS``), by window; and what was read. An export
-    pulled more than ``season_flags.PAST_DAYS_MAX_AGE`` before ``today`` is stale: not read."""
+    pulled more than ``season_flags.PAST_DAYS_MAX_AGE`` before ``today`` is stale: not read. One
+    that cannot be read is left out with the reason (``unreadable``), never failing the solve."""
     windows: dict[int, dict[int, rc.Recent]] = {}
     info: dict[str, Any] = {}
     for days in rc.WINDOWS:
@@ -215,13 +216,17 @@ def recent_lines(
         if today - as_of.date() > season_flags.PAST_DAYS_MAX_AGE:
             info[f"{days}d"]["stale"] = True
             continue
-        df = sw._frame(path, season_flags._past_frame)
-        lines: dict[int, rc.Recent] = {}
-        for yid, pid in sw._match(path, df, players, data_dir).items():
-            row = df.loc[pid]
-            line = sw._per_game(row)
-            if line is not None:
-                lines[yid] = (float(row.get("games") or 0.0), line)
+        try:
+            df = sw._frame(path, season_flags._past_frame)
+            lines: dict[int, rc.Recent] = {}
+            for yid, pid in sw._match(path, df, players, data_dir).items():
+                row = df.loc[pid]
+                line = sw._per_game(row)
+                if line is not None:
+                    lines[yid] = (float(row.get("games") or 0.0), line)
+        except Exception as e:  # noqa: BLE001 - a bad export blends nothing, the solve goes on
+            info[f"{days}d"]["unreadable"] = str(e)
+            continue
         windows[days] = lines
     return windows, info
 
@@ -244,10 +249,14 @@ def played_bbm(
     rates, used = rc.blend(bbm.rates, windows, k[rc.SHRINK], k[rc.GAMES])
     info: dict[str, Any] = {**k, "windows": read, "players": len(used), "status": "blended"}
     if not windows:
-        stale = [f"{w['file']} ({w['as_of'][:10]})" for w in read.values() if w]
-        info["status"] = (
-            f"no blend: export stale ({', '.join(stale)})" if stale else "no blend: no export"
-        )
+        stale = [f"{w['file']} ({w['as_of'][:10]})" for w in read.values() if w and w.get("stale")]
+        bad = [w["file"] for w in read.values() if w and "unreadable" in w]
+        why = []
+        if stale:
+            why.append(f"export stale ({', '.join(stale)})")
+        if bad:
+            why.append(f"export unreadable ({', '.join(bad)})")
+        info["status"] = f"no blend: {'; '.join(why)}" if why else "no blend: no export"
     elif not used:
         info["status"] = "no blend: no player in the exports"
     if not used:
