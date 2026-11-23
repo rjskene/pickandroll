@@ -18,8 +18,15 @@ from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN
 from tests.sim.sim_league import KNOBS
 
-#: The baseline's knobs: the tests' own, the plan floors and the cap at the engine's defaults.
-BASE_KNOBS = {**KNOBS, "plan_floor_cats": 0.1, "plan_floor_points": 0.01, "daily_cap": 2}
+#: The baseline's knobs: the tests' own, the plan floors and the cap at the engine's defaults,
+#: and the take-in's five at live's (PR take-in), each of whose rows nudges away from them.
+BASE_KNOBS = {
+    **KNOBS,
+    "plan_floor_cats": 0.1,
+    "plan_floor_points": 0.01,
+    "daily_cap": 2,
+    **{k: policy.KNOB_DEFAULTS[k] for k in policy.TAKEIN_KNOBS},
+}
 #: A one-win categories league with nothing named; one that counts every category, by FAAB, with
 #: the two sources' stand-ins named; a points league; a points league by FAAB.
 ONE = policy.Shape()
@@ -70,7 +77,7 @@ def to(spec, lever, shape=EVERY, ctx=RICH) -> dict[str, Any]:
 
 def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
     return (
-        {k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]}
+        {k for k in policy.KNOBS if policy.knob(a.knobs, k) != policy.knob(b.knobs, k)}
         | {f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)}
         | {k for k in (*ARM_KEYS, *policy.SEASON_FIELDS) if getattr(a, k) != getattr(b, k)}
         | {n for n in BID_NAMES if sc.value_of(a, n) != sc.value_of(b, n)}
@@ -79,7 +86,7 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
 
 # --------------------------------------------------------------------------- the list
 def test_the_list_is_written_in_the_code_and_is_the_brief_s():
-    assert sc.SCREEN_VERSION == 6
+    assert sc.SCREEN_VERSION == 7
     assert sc.NAMES == (
         "protection_floor",
         "daily_cap",
@@ -103,6 +110,11 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         "stake",
         *BID_NAMES,
         "guard_pool",
+        "later_weeks",
+        "rate_shrink",
+        "rate_shrink_games",
+        "rate_cv",
+        "miss_rate",
     )
     exact = {lever.name for lever in sc.LEVERS if lever.tier == "exact"}
     assert exact == {
@@ -123,15 +135,19 @@ def test_the_list_is_written_in_the_code_and_is_the_brief_s():
         key, *sub = name.removeprefix(sc.BID).split(".")
         assert key in bp.KEYS and (not sub or sub[0] in (*bp.PACE_KEYS, *bp.SHADE_KEYS)), name
     # A plan floor is on the list twice (PR E): beside the set, and under queue with rows of
-    # its own; every other lever once. No two rows of the list start their keys alike.
+    # its own; so are rate_cv (PR take-in: the spread off, both its knobs) and later_weeks (all
+    # of the take-in off); every other lever once. No two rows of the list start their keys
+    # alike.
     twice = [lever.name for lever in sc.LEVERS if lever.key]
-    assert twice == ["plan_floor_cats", "plan_floor_points"]
+    assert twice == ["plan_floor_cats", "plan_floor_points", "rate_cv", "later_weeks"]
     assert [lever.key for lever in sc.LEVERS if lever.key] == [
         "plan_floor_cats-queue",
         "plan_floor_points-queue",
+        "noise",
+        "all",
     ]
     stems = [lever.key or lever.name for lever in sc.LEVERS]
-    assert len(stems) == len(set(stems)) == len(sc.NAMES) + 2
+    assert len(stems) == len(set(stems)) == len(sc.NAMES) + 4
 
 
 def test_with_plan_is_a_spec_key_and_not_a_lever_of_a_season():
@@ -168,6 +184,9 @@ def test_every_nudge_of_the_list_builds_a_valid_arm_in_a_league_that_reads_it():
                 assert sc.read_why(r.lever, a, [shape]) is None
                 assert rn.same_seat(a, b, [shape]) is None
                 extra = {"blend"} if r.key == "system-blend" else set()
+                # The spread off and all off move more than their lever (PR take-in).
+                if r.key in ("noise-off", "all-off"):
+                    extra = set(sc.NOISE_OFF if r.key == "noise-off" else sc.ALL_OFF) - {r.lever}
                 # A move to or from queue leaves the plan switches to the rule: the spec that
                 # executes queue names neither, whatever the other arm's are.
                 if r.lever == "executes" and policy.QUEUE in (a.executes, b.executes):

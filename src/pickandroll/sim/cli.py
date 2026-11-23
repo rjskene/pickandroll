@@ -952,9 +952,10 @@ def forecasts_of(
     arms: Mapping[str, rn.Arm],
 ) -> dict[str, Mapping[int, Mapping[str, float]]]:
     """The beliefs' projections the arms name on one path, by label: each arm's system on the
-    two stand-ins (``forecast.system_rates``, a split label's available side), and the first
-    stand-in's own whenever an arm's label is split (:func:`splits_of`: its rostered side);
-    none without stand-ins."""
+    two stand-ins (``forecast.system_rates``, a split label's available side), and both
+    stand-ins' own whenever an arm's label is split (:func:`splits_of`: the first is its
+    rostered side; the second tells which available players it projects, and under ``blend``
+    its own belief is mixed in, :func:`seconds_of`, #172, PR take-in); none without stand-ins."""
     if sources is None:
         return {}
     first = projection_of(sources[0], fixed, lines, seed, path, shape)
@@ -964,8 +965,9 @@ def forecasts_of(
         if arm.forecaster is not None and arm.forecaster not in out:
             system, blend = str(arm.knobs["system"]), arm.knobs["blend"]
             out[arm.forecaster] = fc.system_rates(system, blend, first, second)
-    if splits_of(sources, arms) and sources[0].label not in out:
-        out[sources[0].label] = first
+    if splits_of(sources, arms):
+        out.setdefault(sources[0].label, first)
+        out.setdefault(sources[1].label, second)
     return out
 
 
@@ -977,6 +979,25 @@ def splits_of(sources: Sources | None, arms: Mapping[str, rn.Arm]) -> dict[str, 
         return {}
     return {
         arm.forecaster: sources[0].label
+        for arm in arms.values()
+        if arm.forecaster is not None and str(arm.knobs["system"]) in fc.SPLIT
+    }
+
+
+def seconds_of(
+    sources: Sources | None, arms: Mapping[str, rn.Arm]
+) -> dict[str, tuple[str, float | None]]:
+    """Each split label the arms hold (:func:`splits_of`) and its second stand-in's label with,
+    under ``blend``, its share (``forecast.share_of``; None under ``yahoo``): the blend toward
+    recent form leaves a line of the second's as read, and mixes the first's blended line with
+    the second's own belief under ``blend`` (``run.World.blended_on``, #172, PR take-in)."""
+    if sources is None:
+        return {}
+    return {
+        arm.forecaster: (
+            sources[1].label,
+            fc.share_of(str(arm.knobs["system"]), arm.knobs["blend"]),
+        )
         for arm in arms.values()
         if arm.forecaster is not None and str(arm.knobs["system"]) in fc.SPLIT
     }
@@ -1319,6 +1340,7 @@ def task_replay(
         forecasts=forecasts,
         split=splits_of(sources, arms),
         weights_of=weights,
+        seconds=seconds_of(sources, arms),
     )
     held = {t: arms[name].forecaster for t, name in rn.rotate(seats, setup.teams, v.turn).items()}
     unprojected = rn.unprojected(setup, w, held)
@@ -1384,6 +1406,7 @@ def pair_league(
             forecasts=forecasts,
             split=splits_of(sources, arms),
             weights_of=weights,
+            seconds=seconds_of(sources, arms),
         )
 
     setups = pair_setups(
@@ -1548,8 +1571,11 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 20 since the union pool as an arm's choice (#172, PR
-#: pool), 19 since the bracket's rounds (#172, PR bracket), 18
+#: The replay's version in its payload: 22 since the live engine's odds calibration (#172, PR
+#: take-in: the field's later weeks on a legal roster with return dates, the line blended toward
+#: recent form, the week's spread widened, each a knob, all off the version before, outcome for
+#: outcome), 21 since same-day adds (PR today), 20 since the union pool as an arm's choice
+#: (#172, PR pool), 19 since the bracket's rounds (#172, PR bracket), 18
 #: since the bid policy (#172, PR F2), 17 since the
 #: queue's rule (#172, PR E), 16 since the season guard as an arm's choice and the
 #: week's stake (the guard PR), 15 since the stash threshold (#172, PR G), 14 since the
@@ -1569,8 +1595,21 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 21
+REPLAY_VERSION = 22
 REPLAY_VERSION_WHY = (
+    "22: the live engine's odds calibration of 2026-11-23 taken in (#485, #486, #487), each "
+    "change a knob of the arm with live's value by default, an arm that names none playing "
+    "live's engine: later_weeks (legal, live's: every team's later weeks on its whole roster, "
+    "held slots included, each player held to his told return date and each day's active "
+    "spots to the most valuable who can play; uncapped, the rule before: the active players, "
+    "no cap, no return date); rate_shrink and rate_shrink_games, the engine's blend of the "
+    "seat's beliefs toward the recent 7- and 14-day lines it has seen, which the problem's "
+    "near horizons, every team's projected week and the seat's lineup read, every "
+    "rest-of-season figure, the keep rule and a forced drop staying on the beliefs as read; "
+    "rate_cv and miss_rate, the engine's widened week spread, in every team's projected week "
+    "and the seat's own weeks in the search; a mirror rival takes the arm's five, a market "
+    "rival none; with later_weeks uncapped and the three rates at 0 the figures are version "
+    "21's. "
     "21: a league whose free-agent adds play the same day: a league rule of the run, "
     "lineup_from (--lineup-from, tomorrow by default, today); under today a free agent's add "
     "decided on a day lands that day, once every seat has decided on the morning's wire and "
@@ -2058,11 +2097,13 @@ def no_peek(
     market: Market = None,
     league: shapes.LeagueShape = shapes.FIXED,
     league_rules: shapes.LeagueRules = shapes.PLAIN,
+    seconds: Mapping[str, tuple[str, float | None]] | None = None,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
     league built before either (on ``projection``, the run's forecaster's on path 0, ``label``,
     believed at ``weights``; ``forecasts`` the arms' other beliefs' projections, at their own
-    ``weights_of``; ``split`` their split labels): the first difference between their day records
+    ``weights_of``; ``split`` their split labels, ``seconds`` their second stand-ins): the first
+    difference between their day records
     (None when they never part), the records compared and the audit's breaches in either run.
     ``paired``: the design the run names is the pair (``arms`` ``a`` and ``b``), path 0's seat
     taken by each arm in its own season, and both seasons' day records are compared.
@@ -2129,6 +2170,7 @@ def no_peek(
                 forecasts=forecasts,
                 split=split,
                 weights_of=weights_of,
+                seconds=seconds,
             )
 
         w = world_of(setup)
@@ -2884,6 +2926,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 None if spread is None else (tables[r.season][0].picks, spread, plan.seat_draft),
                 first,
                 league_rules,
+                seconds_of(sources, arms),
             )
         except ValueError as e:
             print(f"refused: {e}")

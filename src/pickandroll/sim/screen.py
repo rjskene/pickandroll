@@ -40,7 +40,12 @@ from . import policy
 from . import run as rn
 from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 
-#: The screen's version in its record: 6 since PR pool (one row more, ``guard_pool``, played
+#: The screen's version in its record: 7 since PR take-in (the rows of the live engine's odds
+#: calibration, each on the surrogate tier: ``later_weeks`` to its other rule; ``rate_shrink``,
+#: ``rate_cv`` and ``miss_rate`` each to 0 and to half and one and a half times the baseline's;
+#: ``rate_shrink_games`` to half and one and a half times; the spread off, ``rate_cv`` and
+#: ``miss_rate`` both to 0; and all off, the engine before the take-in), 6 since PR pool (one
+#: row more, ``guard_pool``, played
 #: on the exact tier and read only while the arm's guard blocks; and four of the union's
 #: counts among those "did nothing" sets aside), 5 since PR F2 (seven rows more, the bid
 #: policy's levers,
@@ -54,7 +59,7 @@ from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 #: construction between two arms, ``counts.APART_BY_CONSTRUCTION``), 2 since the stash
 #: threshold's lever (PR G: two rows more), 1 the list of PR H1. A change to the list, to a
 #: nudge or to a rule below is a new version, and a folder started under another is refused.
-SCREEN_VERSION = 6
+SCREEN_VERSION = 7
 #: What the Monday step multiplies a plan floor by (``season.hillclimb``'s plan rule, where the
 #: figure is written in the rule itself): the step up of the knob's own grid; the step down
 #: divides by it.
@@ -123,6 +128,28 @@ NOT_LEVERS: Mapping[str, str] = {
         "with the plan drawn in both arms"
     ),
 }
+#: The take-in's rows (PR take-in): a rate's nudges are half and one and a half times the
+#: baseline's, written before any result (the engine's Monday step has no grid for them); a
+#: rate at 0 has no such step.
+RATE_STEPS = (("half", "half the baseline's", 0.5), ("more", "one and a half times", 1.5))
+NO_RATE_STEP = "a rate at 0 has no step: the nudge multiplies"
+#: The spread off (#487): both its knobs to 0, the week's spread before it.
+NOISE_OFF: Mapping[str, Any] = {"rate_cv": 0.0, "miss_rate": 0.0}
+#: Every change of the take-in off: the field's later weeks uncapped, no blend and no spread,
+#: the simulator before the take-in (``rate_shrink_games`` is left as the baseline's: with no
+#: blend it reads nothing).
+ALL_OFF: Mapping[str, Any] = {
+    "later_weeks": policy.UNCAPPED,
+    "rate_shrink": 0.0,
+    "rate_cv": 0.0,
+    "miss_rate": 0.0,
+}
+#: What the all-off row says: its arm B is the simulator before the take-in (:func:`before`).
+ALL_OFF_NOTE = (
+    "arm B plays the simulator before the take-in: on the same seed and paths its outcomes are, "
+    "path for path, those of arm A of a row an earlier screen played on the surrogate tier from "
+    "the same baseline (screen.before reads the two records)"
+)
 #: The bar a lever survives at, for the record and the table.
 RULE = (
     "a lever survives when its paired difference (B less A) clears one standard error, either "
@@ -417,6 +444,33 @@ def _routine(base: rn.Arm, ctx: Context) -> Sequence[Step]:
     return (Step("flipped", "flipped", {f"{BID}routine": 1 - at}),)
 
 
+def _later_weeks(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+    """The field's later weeks to the other rule (PR take-in)."""
+    at = str(policy.knob(base.knobs, "later_weeks"))
+    return tuple(Step(w, f"to {w}", {"later_weeks": w}) for w in policy.LATER_WEEKS if w != at)
+
+
+def _rate(name: str, to_zero: bool) -> Callable[[rn.Arm, Context], Sequence[Step]]:
+    """A take-in rate's nudges (PR take-in): to 0 when ``to_zero``, then :data:`RATE_STEPS`
+    from the baseline's value; one the knob's bounds refuse is listed and not played."""
+
+    def steps(base: rn.Arm, ctx: Context) -> Sequence[Step]:
+        at = float(policy.knob(base.knobs, name))
+        out = [Step("0", "to 0", {name: 0.0})] if to_zero else []
+        for tag, words, times in RATE_STEPS:
+            if at <= 0:
+                out.append(Step(tag, words, unmade=NO_RATE_STEP))
+            else:
+                out.append(Step(tag, words, {name: _figure(at * times)}))
+        return tuple(out)
+
+    return steps
+
+
+def _off(change: Mapping[str, Any], words: str) -> Callable[[rn.Arm, Context], Sequence[Step]]:
+    return lambda base, ctx: (Step("off", words, dict(change)),)
+
+
 #: The list (Rule 2: written before any result), one row a lever, in the order the table prints.
 #: A floor's step is the Monday step's own grid: the protection floor's a game by scoring
 #: (``FLOOR_STEP``), a plan floor's times and divided by :data:`PLAN_STEP`, never above
@@ -548,6 +602,47 @@ LEVERS: tuple[Lever, ...] = (
         "to 30",
         _plain(lambda b, c: (Step("30", "to 30", {"guard_pool": 30}),)),
     ),
+    # The take-in's (PR take-in): the live engine's odds calibration, each change alone and
+    # all of them together off; the spread off is one change in two knobs.
+    Lever("later_weeks", "surrogate", "to the other rule", _plain(_later_weeks)),
+    Lever(
+        "rate_shrink",
+        "surrogate",
+        "to 0, and half and one and a half times",
+        _plain(_rate("rate_shrink", True)),
+    ),
+    Lever(
+        "rate_shrink_games",
+        "surrogate",
+        "half and one and a half times",
+        _plain(_rate("rate_shrink_games", False)),
+    ),
+    Lever(
+        "rate_cv",
+        "surrogate",
+        "to 0, and half and one and a half times",
+        _plain(_rate("rate_cv", True)),
+    ),
+    Lever(
+        "miss_rate",
+        "surrogate",
+        "to 0, and half and one and a half times",
+        _plain(_rate("miss_rate", True)),
+    ),
+    Lever(
+        "rate_cv",
+        "surrogate",
+        "the spread off: rate_cv and miss_rate both to 0",
+        _plain(_off(NOISE_OFF, "the spread off: rate_cv and miss_rate both to 0")),
+        key="noise",
+    ),
+    Lever(
+        "later_weeks",
+        "surrogate",
+        "all off: uncapped, and rate_shrink, rate_cv and miss_rate to 0",
+        _plain(_off(ALL_OFF, "all off: uncapped, and rate_shrink, rate_cv and miss_rate to 0")),
+        key="all",
+    ),
 )
 #: The levers' names, in the list's order (a lever on the list twice named once).
 NAMES: tuple[str, ...] = tuple(dict.fromkeys(lever.name for lever in LEVERS))
@@ -595,7 +690,7 @@ def value_of(arm: rn.Arm, name: str) -> Any:
             at = None if at is None else at[key]
         return at
     if name in policy.KNOBS:
-        return arm.knobs[name]
+        return policy.knob(arm.knobs, name)
     if name in policy.FIELDS:
         value = getattr(arm.fields, name)
         return list(value) if isinstance(value, tuple) else value
@@ -696,6 +791,8 @@ def _lever_rows(
     floor = lever.name in ("plan_floor_cats", "plan_floor_points")
     typical = (a.bid or bp.DEFAULT).three > 0
     note = PLAN_FAAB_NOTE if floor and ctx.waivers == "faab" and typical else None
+    if lever.key == "all":
+        note = ALL_OFF_NOTE
     if plain.executes == policy.QUEUE and a.executes != policy.QUEUE and a.tier != "exact":
         note = QUEUE_OFF_TIER.format(tier=a.tier)
 
@@ -840,6 +937,50 @@ def result_of(
         "outcomes_equal": outcomes,
         "did_nothing": nothing,
         "survives": not nothing and any(c["clears"] for d in cells.values() for c in d.values()),
+    }
+
+
+def before(earlier: Mapping[str, Any], all_off: Mapping[str, Any]) -> dict[str, Any]:
+    """The all-off row against the simulator before the take-in (PR take-in), from two pair
+    records (``by_path``, as ``replay`` writes a pair): ``earlier`` a pair an earlier screen
+    played on the surrogate tier from the same baseline, whose arm A is that baseline; and
+    ``all_off`` this screen's all-off pair, whose arm B is the same arm with every change of the
+    take-in off. On every path both records stand on, by season and forecaster, whether the
+    earlier arm A's outcomes are the all-off arm B's, path for path: they must be, as the
+    take-in's equality test holds on the made-up league. ``same`` counts the paths that agree,
+    ``differ`` lists the rest, and ``unmatched`` the paths only one record stands on (a voided
+    path, or another seed or cell). A record written before the trace keeps no ``by_path``:
+    nothing is compared, and ``compared`` says so."""
+
+    def paths(record: Mapping[str, Any], side: str) -> dict[tuple[str, str, int], Any] | None:
+        block = record.get("by_path")
+        if not isinstance(block, Mapping):
+            return None
+        return {
+            (t, label, int(x["path"])): x.get(side)
+            for t, cells in (block.get("by_season") or {}).items()
+            for label, xs in cells.items()
+            for x in xs
+        }
+
+    was, now = paths(earlier, "a"), paths(all_off, "b")
+    if was is None or now is None:
+        return {"compared": False, "same": 0, "differ": [], "unmatched": []}
+    both = sorted(set(was) & set(now))
+    differ = [
+        {"season": t, "forecaster": label, "path": path}
+        for t, label, path in both
+        if was[(t, label, path)] != now[(t, label, path)]
+    ]
+    unmatched = [
+        {"season": t, "forecaster": label, "path": path}
+        for t, label, path in sorted(set(was) ^ set(now))
+    ]
+    return {
+        "compared": True,
+        "same": len(both) - len(differ),
+        "differ": differ,
+        "unmatched": unmatched,
     }
 
 

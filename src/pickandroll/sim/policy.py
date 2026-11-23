@@ -11,9 +11,10 @@ morning from the state's own totals, :func:`opponent_of` reads it), where a week
 before; the runner keys a strategy that reads the week (:func:`reads_week`) on the same view (PR
 F2).
 **Every knob comes in as a
-mapping of the twelve names of** :data:`KNOBS` **(the ten the live knob file takes,
-``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two); a
-missing name raises; nothing here reads the knob file.** The season guard is
+mapping of the names of** :data:`KNOBS` **(the ten the live knob file takes,
+``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two,
+each named; then the take-in's five, :data:`TAKEIN_KNOBS`, each at live's default when not
+named); a missing name of the twelve raises; nothing here reads the knob file.** The season guard is
 ``moves.season_guard(ros)`` with ``ros`` the engine's own rest-of-season value of a move
 (``season.decisions.move_projection``) under the simulated world's beliefs, passed explicitly into
 every search.
@@ -179,9 +180,11 @@ from .engine import (
     dl,
     mv,
     pl,
+    rc,
     refused,
     sg,
     sp,
+    spr,
     st,
     typical_gain,
     wk,
@@ -296,21 +299,51 @@ GUARDED_TIERS = ("exact", "surrogate")
 #: The simulator's own knobs (#172, PR C): the season term's weight, and the weight of a game in
 #: the bracket's weeks inside it.
 SIM_KNOBS = ("season_weight", "playoff_weight")
-#: Every knob an arm names: the ten the live knob file takes, then the simulator's two.
-KNOBS = (*LIVE_KNOBS, *SIM_KNOBS)
+#: Which roster a team's later week is projected on (#172, PR take-in): ``legal``, live's since
+#: #485, every rostered player held slots included, each held to his told return date, and each
+#: day the league's active spots to the most valuable who can play (``weekly.legal``); or
+#: ``uncapped``, the simulator's rule before the take-in: the active players, no cap and no
+#: return dates. Live has no such knob: it is the simulator's own, so the change can be priced.
+LEGAL, UNCAPPED = "legal", "uncapped"
+LATER_WEEKS = (LEGAL, UNCAPPED)
+#: The live engine's knobs of the odds calibration (#489) the simulator mirrors (PR take-in), in
+#: the engine's order: the recent-form blend's two (#486, ``season.recent``) and the spread's two
+#: (#487, ``season.spread``). Live's knob file takes them outside ``LIVE_KNOBS``.
+CALIBRATION_KNOBS = (*rc.KNOBS, *spr.KNOBS)
+#: The knobs the take-in adds: the later weeks' roster, then the calibration's four. An arm that
+#: names none of them plays live's engine of 2026-11-23 (:data:`KNOB_DEFAULTS`); one that names
+#: ``later_weeks`` ``uncapped`` and the four at 0 plays the simulator before the take-in.
+TAKEIN_KNOBS = ("later_weeks", *CALIBRATION_KNOBS)
+#: Every knob an arm names: the ten the live knob file takes, the simulator's two, then the
+#: take-in's five.
+KNOBS = (*LIVE_KNOBS, *SIM_KNOBS, *TAKEIN_KNOBS)
 #: Each knob's default: the engine's own (``progress.DEFAULTS``), then no season term and a
-#: bracket game counted once. The fallback of a league without a knob file.
-KNOB_DEFAULTS: Mapping[str, Any] = {**DEFAULTS, "season_weight": 0.0, "playoff_weight": 1.0}
+#: bracket game counted once, then live's legal later weeks and the calibration's own defaults
+#: (``recent.DEFAULTS``, ``spread.DEFAULTS``). The fallback of a league without a knob file.
+KNOB_DEFAULTS: Mapping[str, Any] = {
+    **DEFAULTS,
+    "season_weight": 0.0,
+    "playoff_weight": 1.0,
+    "later_weeks": LEGAL,
+    **rc.DEFAULTS,
+    **spr.DEFAULTS,
+}
+#: The take-in's knobs at the simulator's rule before it: an arm with these plays the version
+#: before the take-in, outcome for outcome.
+TAKEIN_OFF: Mapping[str, Any] = {"later_weeks": UNCAPPED, **rc.OFF, **spr.OFF}
 #: The live knobs the engine takes None for: those whose own default is None (the blend weight,
 #: the stash threshold, the FAAB sizing).
 TAKES_NONE = frozenset(k for k in LIVE_KNOBS if DEFAULTS[k] is None)
 
 
 def knob(knobs: Mapping[str, Any], name: str) -> Any:
-    """A knob by name; every one of ``KNOBS`` must be present (None is a value)."""
+    """A knob by name; every one of the twelve must be present (None is a value), and one of the
+    take-in's five (:data:`TAKEIN_KNOBS`) not named is live's default."""
     if name not in KNOBS:
         raise KeyError(f"{name!r} is not a knob")
     if name not in knobs:
+        if name in TAKEIN_KNOBS:
+            return KNOB_DEFAULTS[name]
         raise KeyError(f"knob {name!r} missing: an arm names every knob explicitly")
     return knobs[name]
 
@@ -319,10 +352,22 @@ def knob_refused(name: str, value: Any) -> str | None:
     """Why knob ``name`` may not take ``value``; None when it may. A live knob by the engine's
     own check (``progress.refused``: its choices, a number, a whole one for a count, its minimum
     and its maximum), and None only where the engine's default is None (:data:`TAKES_NONE`); the
-    simulator's two are numbers, 0 or more. No knob takes a number that is not finite: the
+    simulator's two are numbers, 0 or more; ``later_weeks`` one of :data:`LATER_WEEKS`; the
+    calibration's four numbers within the engine's own bounds (``recent.refused``,
+    ``spread.refused``), never None. No knob takes a number that is not finite: the
     engine's check compares a number with its bounds, which a NaN passes, and the stash
     threshold, which has no maximum, is read since PR G (a NaN there keeps every returning
     player, and a record cannot hold it)."""
+    if name == "later_weeks":
+        if value not in LATER_WEEKS:
+            return f"later_weeks {value!r}: one of {', '.join(LATER_WEEKS)}"
+        return None
+    if name in CALIBRATION_KNOBS:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return f"{name} {value!r} is not a number"
+        if not math.isfinite(value):
+            return f"{name} {value!r} is not a finite number"
+        return (rc.refused if name in rc.KNOBS else spr.refused)(name, value)
     if name in SIM_KNOBS:
         if isinstance(value, bool) or not isinstance(value, int | float):
             return f"{name} {value!r} is not a number"
@@ -339,9 +384,10 @@ def knob_refused(name: str, value: Any) -> str | None:
 
 
 def check_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
-    """The twelve knobs as given, in :data:`KNOBS` order: every name present (an arm names every
-    knob explicitly; KeyError), no other name and every value allowed (:func:`knob_refused`;
-    ValueError). Each error names the knob and the reason."""
+    """The knobs as given, in :data:`KNOBS` order: every name of the twelve present (an arm names
+    each explicitly; KeyError), each of the take-in's five at live's default when not named
+    (:func:`knob`), no other name and every value allowed (:func:`knob_refused`; ValueError).
+    Each error names the knob and the reason."""
     unknown = [k for k in knobs if k not in KNOBS]
     if unknown:
         raise ValueError(f"knob {unknown[0]!r} is not a knob: one of {', '.join(KNOBS)}")
@@ -950,6 +996,42 @@ def members_of(
     return [(k, setup.players[k].player(status.get(k))) for k in keys if k in setup.players]
 
 
+def blended(
+    rates: Mapping[int, Mapping[str, float]],
+    windows: Mapping[int, Mapping[int, Any]],
+    shrink: float,
+    half: float,
+) -> Mapping[int, Mapping[str, float]]:
+    """``rates`` blended toward each player's recent line in ``windows`` (#172, PR take-in): the
+    engine's own blend (``recent.blend``, #486) at ``shrink`` and ``half``, ``rates`` itself when
+    nothing is blended. Each blended line takes its stats in the line's order, then
+    ``weekly.STATS``': the engine builds it on a set of the stats, whose order moves with the
+    hash seed, and a sum over a line must not."""
+    out, used = rc.blend(rates, windows, shrink, half)
+    if not used:
+        return rates
+    return {
+        k: {st: v[st] for st in dict.fromkeys([*rates[k], *wk.STATS]) if st in v}
+        if k in used
+        else v
+        for k, v in out.items()
+    }
+
+
+def calibration_of(knobs: Mapping[str, Any]) -> dict[str, float]:
+    """The take-in's four rates an arm's ``knobs`` hold (live's default for one not named)."""
+    return {k: float(knob(knobs, k)) for k in CALIBRATION_KNOBS}
+
+
+def blend_of(knobs: Mapping[str, Any]) -> tuple[float, float] | None:
+    """The recent-form blend ``knobs`` take (#172, PR take-in): ``rate_shrink`` and
+    ``rate_shrink_games``; None at ``rate_shrink`` 0, which blends nothing."""
+    shrink = float(knob(knobs, "rate_shrink"))
+    if shrink <= 0:
+        return None
+    return shrink, float(knob(knobs, "rate_shrink_games"))
+
+
 def stash_of(knobs: Mapping[str, Any]) -> float | None:
     """The stash threshold a seat's problem carries (#172, PR G): the arm's knob as a number,
     None when it names none. The engine reads it on the problem alone (``moves.stash_ok`` in
@@ -1050,13 +1132,31 @@ def problem_of(
     status: Mapping[int, str | None],
     returns: Mapping[int, date],
     weeks_ahead: int = WEEKS_AHEAD,
+    blended: Mapping[int, Mapping[str, float]] | None = None,
 ) -> Built | None:
     """The move problem for ``me`` on ``state.day``; None with no week left. Mirrors
     ``api.season_moves.build`` from in-memory inputs. This week is read through
     :func:`week_view`: against the pairing's opponent, or in a round of the bracket the round's
     (PR bracket), projected on the same beliefs from its active roster with both sides' totals
     so far, and against nobody for a team in no pair. Every later week is against the whole field,
-    a bracket week too, as the live route builds them."""
+    a bracket week too, as the live route builds them.
+
+    The take-in (#172), as the live build since 2026-11-23:
+
+    - ``blended`` is the seat's ``beliefs`` blended toward recent form under its knobs (#486,
+      the runner's ``World.blended_on``; None blends nothing). The near horizons read it: the
+      problem's ``rates`` and ``value``, and every team's projected week. Every rest-of-season
+      figure reads ``beliefs``, the lines before the blend: the problem's ``season_rates`` and
+      ``drop_value`` (the season horizon, the guard, a forced drop), the keep rule's inputs and
+      the scorer, as live's keep inputs and scorer read Basketball Monster's line as read.
+    - Under ``later_weeks`` ``legal`` (#485) every team's week is projected on its whole roster,
+      held slots included, as live's is; in a later week each player is held to his told return
+      date (``returns``, every team's: news the seats have heard, as live reads ESPN's for every
+      team) and each day's active spots go to the most valuable who can play. ``uncapped``
+      projects the active players alone, with no cap and no return date: the rule before.
+    - The week's spread (#487, ``spread.noise_of`` on the arm's ``rate_cv`` and ``miss_rate``):
+      every team's projected week takes it, counted in days ahead from ``state.day``, and the
+      problem carries it for the seat's own weeks in the search."""
     knobs = check_knobs(knobs)
     day = state.day
     weeks = setup.calendar.ahead(day, weeks_ahead)
@@ -1069,8 +1169,16 @@ def problem_of(
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
     cats = tuple(setup.cats)
     slots = setup.starting_slots()
-    value = wk.per_game_values(beliefs, cats, points)
-    roster_of = {t: state.active(t) for t in setup.teams}
+    near = beliefs if blended is None else blended
+    value = wk.per_game_values(near, cats, points)
+    legal = knob(knobs, "later_weeks") == LEGAL
+    if legal:
+        roster_of = {t: tuple(k for k, _ in state.rosters.get(t, ())) for t in setup.teams}
+    else:
+        roster_of = {t: state.active(t) for t in setup.teams}
+    spots = setup.spots()
+    capped = {"returns": returns, "spots": spots} if legal else {}
+    noise = spr.noise_of(calibration_of(knobs))
 
     # A points league's weeks are read as the live build reads them (``api.season_moves.build``):
     # each team's projected week carries its fantasy points (``points``), and the week so far is
@@ -1080,7 +1188,17 @@ def problem_of(
     def project(team: int, days: Sequence[date], this_week: bool) -> wk.TeamWeek:
         members = members_of(setup, roster_of.get(team, ()), status)
         return wk.project_week(
-            members, beliefs, days, setup.schedule, slots, value, this_week, points=points
+            members,
+            near,
+            days,
+            setup.schedule,
+            slots,
+            value,
+            this_week,
+            points=points,
+            **capped,
+            noise=noise,
+            today=day,
         )
 
     view = week_view(setup, state, me, this.number)
@@ -1103,7 +1221,7 @@ def problem_of(
         )
         for w in weeks[1:]
     )
-    roster = tuple(members_of(setup, roster_of[me], status))
+    roster = tuple(members_of(setup, state.active(me), status))
     held_pairs = state.held(me)
     held = tuple(members_of(setup, [k for k, _ in held_pairs], status))
     held_slots = {k: slot for k, slot in held_pairs}
@@ -1151,7 +1269,6 @@ def problem_of(
         )
         for i, w in enumerate(weeks)
     )
-    spots = setup.spots()
     pool_n = max(1, len(setup.teams) * spots)
     # One of ``build``'s fields stays at its default here, on purpose: ``cantcut`` (#222) is
     # Yahoo's can't-cut list as read off an add page, and a simulated world has none.
@@ -1163,7 +1280,7 @@ def problem_of(
         candidates=candidates,
         effective=effective,
         first_day=day,
-        rates=beliefs,
+        rates=near,
         schedule=setup.schedule,
         slots=slots,
         value=value,
@@ -1179,6 +1296,15 @@ def problem_of(
         # ``SeasonSettings.one_win`` (the format PR); a points league and one that counts every
         # category pass nothing.
         one_win=setup.one_win,
+        # The rest of the season, and a forced drop, on the lines before the blend (#486), as
+        # the live build passes them; None when nothing is blended, as live's.
+        season_rates=None if blended is None or blended is beliefs else beliefs,
+        drop_value=(
+            None
+            if blended is None or blended is beliefs
+            else wk.per_game_values(beliefs, cats, points)
+        ),
+        noise=noise,
     )
     season_value = wk.per_game_values(beliefs, cats, points, pool_n)
     dead = wk.line_value(beliefs, cats, points, pool_n)({})
@@ -2144,8 +2270,31 @@ WHEN_READ: Mapping[str, str] = {
         "is read"
     ),
     "guard_pool": "the exact tier, while the arm's guard blocks",
+    "later_weeks": (
+        "the exact or the surrogate tier, or the arm's mirror rivals: a search on odds projects "
+        "the field's later weeks"
+    ),
+    "rate_shrink": (
+        "every seat on the arm's knobs: its starters, and its moves on any tier, rank on the "
+        "blended line"
+    ),
+    "rate_shrink_games": "a rate_shrink above 0",
+    "rate_cv": (
+        "the exact or the surrogate tier, or the arm's mirror rivals: a search on odds projects "
+        "the weeks' spread"
+    ),
+    "miss_rate": (
+        "the exact or the surrogate tier, or the arm's mirror rivals: a search on odds projects "
+        "the weeks' games"
+    ),
 }
 STATIC = "a static seat makes no move"
+#: Why the ranking tier reads no knob of the odds (the season term, the take-in's later weeks and
+#: spread).
+RANKING_ODDS = "the ranking tier ranks by value times games and holds no odds"
+#: Why ``rate_shrink_games`` is not read (PR take-in): the blend's half-weight point means nothing
+#: with no blend.
+NO_BLEND = "rate_shrink is 0: there is no blend"
 #: Why ``guard_pool`` is not read off the exact tier (#172, PR pool): the union is of pools
 #: ranked by single swaps, which only the exact tier draws; and on the exact tier under the
 #: arm's guard ``off`` (the guard PR): the list is the guard's.
@@ -2207,8 +2356,8 @@ def _odds(arm: Configured, mirrored: bool) -> bool:
 
 
 def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, str]:
-    """For each of the twelve knobs, :data:`READ` when a different value can change what ``arm``'s
-    seat queues in a league of ``shape``, else the reason it cannot. A value that only changes
+    """For each knob, :data:`READ` when a different value can change what ``arm``'s seat queues or
+    starts in a league of ``shape``, else the reason it cannot. A value that only changes
     what is recorded (a plan drawn and not executed) is not read. ``mirrored``: the arm's rivals
     are its mirror (``opponents.Mirror``), the surrogate on its knobs, so what the surrogate reads
     is read too."""
@@ -2294,9 +2443,18 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     if odds:
         out["season_weight"] = READ
     elif arm.tier == "ranking":
-        out["season_weight"] = "the ranking tier ranks by value times games and holds no odds"
+        out["season_weight"] = RANKING_ODDS
     else:
         out["season_weight"] = STATIC
+    # The take-in (#172): the field's later weeks and the week's spread are read where the odds
+    # are, by the arm's own search on the exact or the surrogate tier or by its mirror rivals'.
+    # The blend wherever the arm's knobs set a lineup: the seat's starters, and its mirror
+    # rivals', rank on the blended value whatever the tier, and a seat's moves on its blended
+    # value and rates.
+    for name in ("later_weeks", *spr.KNOBS):
+        out[name] = out["season_weight"]
+    out["rate_shrink"] = READ
+    out["rate_shrink_games"] = READ if float(knob(arm.knobs, "rate_shrink")) > 0 else NO_BLEND
     if out["season_weight"] != READ:
         out["playoff_weight"] = out["season_weight"]
     elif not float(arm.knobs["season_weight"]) > 0:
