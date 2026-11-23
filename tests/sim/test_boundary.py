@@ -252,6 +252,7 @@ CORE = (
     "stake",
     "bid_policy",
     "tune",
+    "lab.model",
 )
 #: What the core never imports: files, processes, the network, stores on disk.
 NO_IO = {
@@ -274,7 +275,7 @@ OS_USES = {"pickandroll.sim.run": {"cpu_count", "nice"}}
 
 
 def core_sources() -> dict[str, str]:
-    return {f"pickandroll.sim.{m}": (SIM / f"{m}.py").read_text() for m in CORE}
+    return {f"pickandroll.sim.{m}": (SIM / f"{m.replace('.', '/')}.py").read_text() for m in CORE}
 
 
 def io_of(source: str, module: str) -> list[str]:

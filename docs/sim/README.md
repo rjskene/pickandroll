@@ -29,7 +29,8 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 `pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
-`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`) for any way to a file, a process or the
+`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, and the lab's `lab/model`) for any way to a
+file, a process or the
 network: none of them imports `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`,
 `http`, `requests`, `httpx`, `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only
 `run.py` uses `os`, for the worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -3088,12 +3089,145 @@ claims. The estimate lists the values from the baseline, and a later pass may pl
 not list. The check before the first pair asks what a season's files say; what only a whole plan
 of the confirmation's pair finds is still met at the end.
 
+## The lab (`sim/lab/`, `cli.cmd_lab`, PR lab)
+
+    python -m pickandroll.sim [--data DIR] lab [--host H] [--port P] [--notes FILE]
+        [--explainer FILE] [--check]
+
+The simulator's own small app: one page over the records on the box, for reading what was played,
+what it found and how far to trust it. Four parts: a pure model (`lab/model.py`, in the core the
+boundary test reads), the records' reader (`lab/records.py`), a stdlib HTTP server
+(`lab/server.py`), and the page (`lab/static/`: plain script and style, no build step, served
+beside the module). The season's animated view is a later PR: its tab is a card that says so.
+
+**What it never does.** It answers `GET` only; any other method gets 405. It writes nothing, plays
+nothing and starts no process (the code's commit is read from the checkout's `.git` files, not by
+running `git`), and the server asks nothing of anywhere. The page's two font links (Google
+Fonts, linked as the live site links them, with system fonts behind them) are the only things
+the viewer's browser loads from elsewhere. It binds the one address it is given, loopback
+(`127.0.0.1`) by default, on port 8790 unless told otherwise; a wildcard address (`0.0.0.0`,
+`::`, an empty host) is refused by name, so serving on the tailnet means naming the box's own
+tailnet address. It simulates nothing, so it takes no guard, and it never starts itself: the
+lead starts it.
+
+**Routes.** `/` is the page and `/static/<file>` its files (a path that leaves that folder is not
+found); `/api/model` is the model as JSON; `/explainer` is the explainer's built file
+(`--explainer`) wrapped in a plain document for the Explainer tab's frame, or a short page saying
+none was given; `/healthz` answers `ok`. Each answer carries `no-store`, `nosniff` and
+`no-referrer`.
+
+**The model.** Built from the records each time a request finds them or the notes file changed
+(each file's path, modification time and size), and kept otherwise. It reads every screen's
+folder, every tune's folder, the written replays under `data/sim/runs/` (a run of another kind
+is counted and not shown), the confirmation ledger and the notes. A record that is not JSON is
+refused by name and the rest is read. Every number the page shows is in the model; the script
+formats it and lays it out. What a section needs and no record holds is said as "not recorded",
+and the model lists those gaps (`generated.lacks`).
+
+- **Rulesets.** A run's ruleset is its league's rules less the rivals' (`rival_bids`,
+  `rival_scale`): runs whose leagues differ only in how the rivals bid are one ruleset. Its key
+  is `rs-` and a short hash of those rules' canonical JSON. No ruleset is named in the code: one
+  is called by its format and waivers unless the notes name it, and ordered by its first run
+  unless the notes order it.
+- **The baseline.** Arm A of a played screen row whose `both` holds nothing but its `tier` (every
+  row records the tier it plays on there; a row that sets anything else in both arms plays
+  another baseline), the first such row in the screen's order. It is never simply the first
+  row. With none, the overview's first stage says "not recorded".
+- **Survives and did nothing.** These are the record's own, on the league's measure, in that
+  cell. A row that did nothing is no try. On another outcome, "clears one SE" is worked out from
+  that outcome's mean and SE (the mean's size above the SE), and the page says that is not the
+  screen's rule.
+- **Levers.** A table gives each lever a label and this README's words for it (`model.LEVERS`).
+  A lever not in it shows its name. Every row shows its values, a to b as the record holds them,
+  and the record's nudge text. `season_weight`'s baseline is 0 and its nudges add a weight.
+- **Performance.** Four stages a ruleset, on its league's measure: the baseline; the strongest
+  gain a screen saw upward (a screen's row, not a recommendation); the tuned set on the season
+  its search played; and the tuned set on the season it confirmed on. Without a tune the last
+  two say "not run". With one, they show the final set, the search's gain, the confirmation's
+  gain against the run's rivals and against static rivals, and the share of the search's gain
+  the confirmation kept. The search's gain is the sum of the taken steps' means; the steps share
+  paths, so it has no SE.
+- **Runs.** Each screen, tune and written replay: its ruleset, seasons, paths, seed, pairs done
+  and left, the rows not played, what cleared, its pieces with their recorded start and end on
+  one time line, its audit and its code. A tune also gets its own table: the search lever by
+  lever, each value's mean, SE and standing, the final set, and the confirmation's cells and
+  verdict.
+- **The seasons' ledger.** Every season a record or the notes name. Its role comes from the notes
+  when they give one. Otherwise it is the code's hold-out; a season a tune confirmed on, or the
+  code's confirmation season; a season a screen or a search played; or a replay's. Beside each
+  role, how many screens, searches, confirmations and replays played it. A season kept back to
+  confirm on is in no record until a tune confirms on it, so it comes from the notes.
+
+**The checks.** Recomputed on every build, a ruleset at a time, on its latest screen.
+
+- **Luck.** A try is a played cell that did something. With no real effect, a difference over
+  its SE is about normal. So about 0.317 of tries clear one SE (half each way), about 0.0455
+  clear two SE, and the bar corrected for the number of tries (the normal quantile of 0.025 over
+  that number) is cleared by luck alone 0.05 times in all, however many tries there are. The page
+  sets what was seen beside what luck alone would give.
+- **The flags.** Each is computed from the records:
+  - **one season** and **one seed**: every searched figure is from one season, or one seed;
+  - **fast tier only**: no row played on the exact tier;
+  - **shared baseline**: every pair is measured against the same baseline paths, so the rows are
+    not independent tries;
+  - **size of what cleared**: most of what cleared one SE is within two;
+  - **strict bar**: nothing clears the corrected bar;
+  - **direction**: what cleared splits both ways about as luck would;
+  - **confirmation season**, a problem: a season kept to confirm on was played by a screen or a
+    search;
+  - **hold-out**, a problem: the code's hold-out is in a run's seasons; a record that names
+    another hold-out is a watch;
+  - **audit**, a problem: a breach or a voided path in a played pair.
+
+  A flag about one ruleset's world (its rivals, say) is the notes' own, shown with the others and
+  marked as the lead's.
+- **What they do not prove.** A clean set of flags says the records hold no sign of these faults.
+  It does not say a lever helps: the luck figures treat tries as independent, and a screen's rows
+  are not (the shared-baseline flag). A flag reads the records, not the simulator's code. Nothing
+  on the page is a recommendation. A tune's confirmation is the only figure meant to be
+  believed, and it is one season, played once.
+
+**The notes file** (`--notes`, JSON, the lead's). An object whose sections are all optional:
+
+- `state`: `{"running": text or null, "text": text}`, the header's line;
+- `queue`: items of `title`, `what`, `state` (`word`, `running`, `later`, `done` or `planned`),
+  and optionally `size` and `say`;
+- `assessments`: items of `date` (YYYY-MM-DD), `level` (`ok`, `watch` or `problem`) and `text`,
+  and optionally `run` and `ruleset`;
+- `looks`: items of `name`, `date`, `what`, `result`, and optionally `issue`;
+- `openings`: items of `title`, `why`, `state` (`asked`, `planned`, `idea`, `later` or `done`),
+  and optionally `cost`;
+- `proposals`: items of `date`, `title` and `text`, and optionally `state` (`asked`, `taken` or
+  `declined`);
+- `seasons`: items of `id` (a season said as 2022-23), `role` (`search`, `confirm`, `holdout`,
+  `current` or `replay`) and optionally `note`;
+- `rulesets`: by ruleset key, `{"name", "order", "flags"}`, each optional, a flag being
+  `{"level", "title", "text"}`.
+
+Every text must be non-empty. A section, a field or a value outside this is refused by name: the
+command will not start, and a file that turns bad while the lab runs is said in the model's
+`generated.notes` and left out. Without a notes file, the sections that need one say "no notes
+file".
+
+**The pages.** Overview (a card a ruleset, the four stages, the queue and the latest
+assessments); Knobs (one ruleset, or the first two side by side with whether a shared row agrees
+or splits, by outcome, raw or in SEs, by lever or best first); Checks (the luck bars and the flags
+a ruleset, the seasons' ledger, the assessment log); Runs (the table, the time line, the short
+looks, the tunes); Season (the later PR's card); Openings (the proposals and the openings from the
+notes); Explainer (a frame of `/explainer` under the header). The layout holds from a wide
+screen to a phone.
+
+**`lab --check`** builds the model once and prints a line a section, counts and words only:
+what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
+the seasons' ledger, the notes, the explainer and what is not recorded. Then it exits.
+
 ## Runs
 
-Every command runs through the commands' guard: low priority, never when its span touches 04:45
-to 06:45 in the machine's local time, never while a draft room is open on the API, and a run
-expected over an hour is announced on the tracker and starts on the user's word (`--announced`
-says that has happened, and is passed only then). The no-peek check runs two seasons before it
+Every command that plays runs through the commands' guard (`lab` plays nothing and takes
+none): low priority, never when its span touches 04:45 to 06:45 in the machine's local time,
+never while a draft room is open on the API, and a run expected over an hour is announced on the
+tracker and starts on the user's word (`--announced` says that has happened, and is passed only
+then). The no-peek check runs two seasons before it
 can time one, so the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses
 it when that span touches the window.
 

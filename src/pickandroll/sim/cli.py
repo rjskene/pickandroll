@@ -12,6 +12,7 @@
     python -m pickandroll.sim validate --season 2024 --forecaster prior
     python -m pickandroll.sim screen --arm BASE.json --seasons 2024 [--levers pool min_gain]
     python -m pickandroll.sim tune --arm BASE.json --screen NAME --seasons 2023,2024
+    python -m pickandroll.sim lab [--host H] [--port P] [--notes F] [--explainer F] [--check]
 
 ESPN's season id is the year the season ends in: 2025 is 2024-25, the hold-out. ``fetch-logs``
 makes one request a season through the same player view the draft-edge audit read, caches each
@@ -40,7 +41,8 @@ set against the baseline once on the season the search never played, counts that
 confirmation season's ledger, and writes a folder under ``data/sim/tunes/``; it recommends and
 promotes nothing.
 
-Every command runs through :func:`guard`: at low priority (``nice``), never when its span would
+``lab`` (PR lab, ``sim/lab/``) serves the records read-only to a page on one address, GET
+only, and plays nothing. Every command that plays runs through :func:`guard`: at low priority (``nice``), never when its span would
 touch 04:45-06:45 in the machine's local time (the routines' window), never while a draft room is
 open on the API, and a run expected over an hour is announced on the tracker and starts on the
 user's word (``--announced`` says that has happened).
@@ -76,6 +78,9 @@ from . import screen as sc
 from . import tune as tn
 from . import validate as vg
 from .engine import EACH_CATEGORY, ONE_WIN, mv, wk
+from .lab import model as lab_model
+from .lab import records as lab_records
+from .lab import server as lab_server
 
 #: The repository: this file is ``src/pickandroll/sim/cli.py``.
 ROOT = Path(__file__).resolve().parents[3]
@@ -5418,6 +5423,51 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- main
+# --------------------------------------------------------------------------- lab (PR lab)
+def cmd_lab(args: argparse.Namespace) -> int:
+    """The lab: the records served read-only to a page (``sim/lab/``), or with ``--check`` the
+    model built once and said in one line a section. It writes nothing, plays nothing and
+    starts no process, so it takes no guard."""
+    why = lab_server.host_refused(args.host)
+    if why is not None:
+        print(f"refused: --host: {why}")
+        return 2
+    try:
+        lab_records.read_notes(args.notes)
+    except lab_model.NotesError as e:
+        print(f"refused: --notes: {e}")
+        return 2
+    if args.explainer is not None and not Path(args.explainer).is_file():
+        print(f"refused: --explainer: {args.explainer} is not a file")
+        return 2
+    lab = lab_server.Lab(
+        args.data,
+        args.notes,
+        args.explainer,
+        hold_out=HOLD_OUT,
+        confirmation=CONFIRMATION,
+        code_sha=lab_records.head_sha(ROOT),
+    )
+    if args.check:
+        for line in lab_server.check_lines(lab.model()):
+            print(line)
+        return 0
+    try:
+        srv = lab_server.server(lab, args.host, args.port)
+    except OSError as e:
+        print(f"refused: cannot serve on {args.host}:{args.port}: {e.strerror or e}")
+        return 2
+    host, port = srv.server_address[:2]
+    print(f"the lab serves http://{host}:{port}/ (GET only; Ctrl-C stops it)", flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+    return 0
+
+
 def _run_args(p: argparse.ArgumentParser, paths: int) -> None:
     p.add_argument("--paths", type=int, default=paths, help=f"paths a cell (default {paths})")
     p.add_argument("--seed", type=int, default=1, help="the run's seed (default 1)")
@@ -5777,6 +5827,31 @@ def main(argv: list[str] | None = None) -> int:
     va.add_argument("--name", default=None)
     va.add_argument("--dry-run", action="store_true", help="run the gate, write nothing")
     va.set_defaults(func=cmd_validate)
+    la = sub.add_parser(
+        "lab", help="the records served read-only to the lab's page on one address (GET only)"
+    )
+    la.add_argument(
+        "--host",
+        default=lab_server.HOST,
+        help=f"the one address to serve on (default {lab_server.HOST}); a wildcard is refused",
+    )
+    la.add_argument(
+        "--port", type=int, default=lab_server.PORT, help=f"the port (default {lab_server.PORT})"
+    )
+    la.add_argument(
+        "--notes", type=Path, default=None, metavar="FILE", help="the lead's notes file (JSON)"
+    )
+    la.add_argument(
+        "--explainer",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="the explainer's built file, shown in the Explainer tab",
+    )
+    la.add_argument(
+        "--check", action="store_true", help="build the model once, one line a section, and exit"
+    )
+    la.set_defaults(func=cmd_lab)
     args = ap.parse_args(argv)
     dry = getattr(args, "dry_run", False)
     if args.command in SIMULATING and not dry and hash_seed() == "random":
