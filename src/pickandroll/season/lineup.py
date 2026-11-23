@@ -197,11 +197,15 @@ def win_lineup[K: Hashable](
     locked: Mapping[date, Locked[K]] | None = None,
     started: Mapping[K, int] | None = None,
     one_win: bool = False,
+    miss: Mapping[K, float] | None = None,
+    cv: float = 0.0,
 ) -> WinLineup[K]:
     """Each of ``days``' starters by slot, for the most expected categories won this week against
     ``theirs`` (the opponent's finals), or with ``one_win`` (#397) the best odds of winning the
     matchup (``weekly.matchup_won``). ``yahoo`` is a day's starters as read, ``locked`` its
     players whose game began, ``started`` the starts counted on the week's other days.
+    ``miss`` is each player's chance of missing a start and ``cv`` the line's error (#487,
+    ``weekly.Noise``, the same spread the opponent's finals carry); neither is the week before.
 
     Category odds do not add up across players (two players strong in one close category, a
     percentage's whole set of shooters), so a day with a surplus is an exact search over its
@@ -227,7 +231,15 @@ def win_lineup[K: Hashable](
     won, tie = (wk.matchup_won, TIE_ODDS) if one_win else (wk.expected_won, TIE)
 
     def odds() -> list[wk.CategoryOdds]:
-        week = wk.team_week({k: wk.PlayerWeek(n, n) for k, n in counts.items()}, rates, None)
+        week = wk.team_week(
+            {
+                k: wk.PlayerWeek(n, n, (miss[k],) * n if miss and miss.get(k) else ())
+                for k, n in counts.items()
+            },
+            rates,
+            None,
+            cv,
+        )
         return wk.odds_of(wk.finals(week, so_far, cats), theirs, cats)
 
     def expected() -> float:

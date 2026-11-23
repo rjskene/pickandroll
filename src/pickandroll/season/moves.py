@@ -280,6 +280,10 @@ class MoveProblem:
     #: ``value``'s on the line before the blend, since a drop is permanent and a 7- or 14-day
     #: cold spell should not choose who goes (:func:`drop_value`). None: ``value``.
     drop_value: Mapping[int, float] | None = None
+    #: The week's spread for the line's error and missed games (#487, ``season.spread``), the
+    #: days ahead counted from ``first_day``; None: the week before #487. Only the team weeks take
+    #: it; the decision log's figures (``decisions.move_projection``) count whole games.
+    noise: wk.Noise | None = None
 
 
 @dataclass(frozen=True)
@@ -1310,6 +1314,8 @@ def project_mine(
         chosen=chosen,
         returns={k: d for k, d in p.returns.items() if dated(p, k)},
         spots=spots,
+        noise=p.noise,
+        today=p.first_day,
     )
 
 

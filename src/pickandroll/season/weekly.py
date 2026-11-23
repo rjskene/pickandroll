@@ -9,14 +9,16 @@ first; a day with more players than slots leaves the rest on the bench. A caller
 day's named starters first (``chosen``, the crowded days of ``season.lineup``'s recommended
 lineup, #314). The spread of a counting
 category's weekly total is ``phi`` times its mean (per-game variance over mean, from game logs);
-a percentage's spread is the binomial spread of the makes given the attempts.
+a percentage's spread is the binomial spread of the makes given the attempts. A
+:class:`Noise` (#487, ``season.spread``) adds the line's own error and the games a player may
+miss, and counts each started game less its chance of being missed.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from typing import Any
@@ -68,6 +70,44 @@ OUT_THIS_WEEK = frozenset({"O"})
 DATED = frozenset({"O", "INJ"})
 
 Rates = Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class Noise:
+    """The week's spread for the projection's own error and missed games (#487, the knobs and
+    their measured shapes in ``season.spread``): the per-game line's error as a share of it
+    (``rate_cv``), and each started game missed with :meth:`miss`'s probability. A week projected
+    with none is the week before #487."""
+
+    #: The per-game line's error as a share of it, over all of a player's games of the week.
+    rate_cv: float = 0.0
+    #: A healthy player's share of missed games, times ``shape`` at the game's days ahead.
+    miss_rate: float = 0.0
+    #: A status's missed games this week by days ahead (the last for any later day).
+    status_miss: Mapping[str, tuple[float, ...]] = field(default_factory=dict)
+    #: The healthy share's shape by days ahead (the last for any later day), mean 1.
+    shape: tuple[float, ...] = (1.0,)
+
+    def miss(self, status: str | None, ahead: int, this_week: bool) -> float:
+        """The probability a player listed ``status`` misses a game ``ahead`` days on: the
+        status's rate this week, else the healthy share at those days ahead; 0 when
+        ``miss_rate`` is."""
+        if self.miss_rate <= 0:
+            return 0.0
+        ahead = max(0, ahead)
+        rates = self.status_miss.get(status or "") if this_week else None
+        if rates:
+            return rates[min(ahead, len(rates) - 1)]
+        return min(1.0, self.miss_rate * self.shape[min(ahead, len(self.shape) - 1)])
+
+    def misses(
+        self, status: str | None, days: Iterable[date], today: date, this_week: bool
+    ) -> tuple[float, ...]:
+        """:meth:`miss` for a game on each of ``days``, counted from ``today``; empty when no
+        game is ever missed (``miss_rate`` 0)."""
+        if self.miss_rate <= 0:
+            return ()
+        return tuple(self.miss(status, (d - today).days, this_week) for d in days)
 
 
 def starting_slots(roster: Iterable[str]) -> tuple[str, ...]:
@@ -156,6 +196,18 @@ class PlayerWeek:
     #: Of those, games in a starting slot (a roster's projection; an available player's is his
     #: games).
     started: int
+    #: Each started game's chance of being missed (#487, :class:`Noise`); none: every one played.
+    miss: tuple[float, ...] = ()
+
+    @property
+    def expected(self) -> float:
+        """The started games expected to be played: each one less its chance of being missed."""
+        return self.started - sum(self.miss) if self.miss else self.started
+
+    @property
+    def missed_var(self) -> float:
+        """The variance of the started games played: ``m (1 - m)`` over the started games."""
+        return sum(m * (1 - m) for m in self.miss)
 
     def to_dict(self) -> dict[str, int]:
         return {"games": self.games, "started": self.started}
@@ -195,6 +247,8 @@ def project_week[K: Hashable](
     chosen: Mapping[date, Collection[K]] | None = None,
     returns: Mapping[K, date] | None = None,
     spots: int | None = None,
+    noise: Noise | None = None,
+    today: date | None = None,
 ) -> TeamWeek:
     """One roster's week over ``days``.
 
@@ -209,7 +263,11 @@ def project_week[K: Hashable](
     In a week after this one (#485), ``returns`` are the players' return dates (ESPN's): an
     ``O`` or ``INJ`` named there is out until his date and plays from it; and ``spots`` makes
     the roster legal: each day only the ``spots`` most valuable players who can play that day
-    are on the active roster (:func:`legal`). Both leave this week as it was."""
+    are on the active roster (:func:`legal`). Both leave this week as it was.
+
+    ``noise`` (#487) widens the spread for the line's error and discounts each started game for
+    the chance it is missed, counted in days ahead from ``today`` (``days``' first when None);
+    None is the week before #487."""
     playing = playing_days(
         roster,
         days,
@@ -223,12 +281,23 @@ def project_week[K: Hashable](
         spots,
         value,
     )
-    started = {key: 0 for key, _ in roster}
-    for lineup in daily_starters(roster, playing, days, slots, value, chosen).values():
+    started: dict[K, list[date]] = {key: [] for key, _ in roster}
+    for day, lineup in daily_starters(roster, playing, days, slots, value, chosen).items():
         for key in lineup:
-            started[key] += 1
-    players = {key: PlayerWeek(len(playing[key]), started[key]) for key, _ in roster}
-    return team_week(players, rates, points)
+            started[key].append(day)
+    if noise is None:
+        players = {key: PlayerWeek(len(playing[key]), len(started[key])) for key, _ in roster}
+        return team_week(players, rates, points)
+    first = today if today is not None else (days[0] if days else None)
+    players = {
+        key: PlayerWeek(
+            len(playing[key]),
+            len(started[key]),
+            noise.misses(player.status, started[key], first, this_week) if first else (),
+        )
+        for key, player in roster
+    }
+    return team_week(players, rates, points, noise.rate_cv)
 
 
 def playing_days[K: Hashable](
@@ -346,19 +415,39 @@ def standalone_week(
 
 
 def team_week[K: Hashable](
-    players: Mapping[K, PlayerWeek], rates: Mapping[K, Rates], points: Mapping[str, float] | None
+    players: Mapping[K, PlayerWeek],
+    rates: Mapping[K, Rates],
+    points: Mapping[str, float] | None,
+    cv: float = 0.0,
 ) -> TeamWeek:
-    """The week of ``players``, each counting his ``started`` games."""
+    """The week of ``players``, each counting the ``started`` games expected to be played
+    (:attr:`PlayerWeek.expected`). With a started game's chance of being missed or ``cv`` (#487,
+    :class:`Noise`) each player adds the variance of the games played times the line squared,
+    and ``(cv x expected x line)^2`` for the line's own error; with neither, the spread is the
+    game-to-game noise alone."""
     totals = {s: 0.0 for s in STATS}
     for key, week in players.items():
         r = rates.get(key)
         if r is None or not week.started:
             continue
+        n = week.expected
         for s in STATS:
-            totals[s] += week.started * float(r.get(s, 0.0))
+            totals[s] += n * float(r.get(s, 0.0))
+    # The line's error and the missed games, per player (#487): none when neither is on.
+    extra = [
+        (r, week.expected, week.missed_var)
+        for key, week in players.items()
+        if (r := rates.get(key)) is not None and week.started and (cv > 0 or week.miss)
+    ]
+
+    def spread(line: Callable[[Rates], float]) -> float:
+        return sum(vn * line(r) ** 2 + (cv * n * line(r)) ** 2 for r, n, vn in extra)
+
     variance: dict[str, float] = {}
     for s in COUNTING:
         variance[s] = PHI.get(s, 1.0) * totals[s]
+        if extra:
+            variance[s] += spread(lambda r, s=s: float(r.get(s, 0.0)))
     for cat, (made, att) in PCT.items():
         team = totals[made] / totals[att] if totals[att] else 0.0
         v = 0.0
@@ -369,9 +458,16 @@ def team_week[K: Hashable](
             a = float(r.get(att, 0.0))
             p = float(r.get(made, 0.0)) / a if a else 0.0
             v += (
-                week.started
+                week.expected
                 * a
                 * (BINOMIAL.get(made, 1.0) * p * (1 - p) + PHI.get(att, 1.0) * (p - team) ** 2)
+            )
+        if extra:
+            # The makes less the team's share of the attempts: a volume error moves both.
+            v += spread(
+                lambda r, made=made, att=att, team=team: (
+                    float(r.get(made, 0.0)) - team * float(r.get(att, 0.0))
+                )
             )
         variance[cat] = v
     if points:
@@ -379,6 +475,10 @@ def team_week[K: Hashable](
         variance[FPTS] = sum(
             float(w) ** 2 * PHI.get(s, 1.0) * totals.get(s, 0.0) for s, w in points.items()
         )
+        if extra:
+            variance[FPTS] += spread(
+                lambda r: sum(float(w) * float(r.get(s, 0.0)) for s, w in points.items())
+            )
     return TeamWeek(players, totals, variance)
 
 
@@ -389,7 +489,7 @@ def player_totals(
     percentages and, in a points league, his fantasy points."""
     if rates is None:
         return None
-    out = {s: week.started * float(rates.get(s, 0.0)) for s in STATS}
+    out = {s: week.expected * float(rates.get(s, 0.0)) for s in STATS}
     for cat, (made, att) in PCT.items():
         out[cat] = out[made] / out[att] if out[att] else None  # type: ignore[assignment]
     if points:

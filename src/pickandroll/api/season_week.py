@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from ..season import Matchup, Player, Season, matchup_key
+from ..season import spread as season_spread
 from ..season import weekly as wk
 from ..season.calendar import Week
 from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
@@ -322,11 +323,14 @@ def project_team(
     points: Mapping[str, float] | None = None,
     no_games: Collection[int] = (),
     returns: Mapping[int, date] | None = None,
+    noise: wk.Noise | None = None,
+    today: date | None = None,
 ) -> wk.TeamWeek:
     """A team's week as every view projects it (#485): the moves' field, the season outlook and
     the Week view. This week is the plain projection, the out rule's; a week after it plays the
     team on a legal roster (its ``spots`` active spots, most valuable first) with each O and INJ
-    held until his return date in ``returns`` (``weekly.project_week``)."""
+    held until the return date in ``returns`` (``weekly.project_week``). ``noise`` is the
+    league's spread (#487, ``season.spread``), the days ahead counted from ``today``."""
     return wk.project_week(
         members,
         rates,
@@ -340,6 +344,8 @@ def project_team(
         no_games=no_games,
         returns=returns,
         spots=spots,
+        noise=noise,
+        today=today,
     )
 
 
@@ -356,13 +362,15 @@ def week_projection(
     weeks_ahead: int,
     returns: Mapping[int, date] | None = None,
     played: Callable[[System, Mapping[int, Player]], System] | None = None,
+    noise: wk.Noise | None = None,
 ) -> dict[str, Any]:
     """The Week view: each week's games of every player, my roster's starts and this week's
     matchup. ``returns`` are ESPN's return dates (``season_moves.espn_returns``, #485): a later
     week plays my roster on its legal active spots with each dated O or INJ held until his date
     (:func:`project_team`); this week is as before. ``played`` turns Basketball Monster's line
     into the one the weeks play (``season_moves.played_bbm``, the recent-form blend, #486); the
-    players' rate rows show the line as read."""
+    players' rate rows show the line as read. ``noise`` is the league's spread (#487): the teams'
+    weeks and the odds take it, the games rows stay whole games."""
     weeks = season.calendar.ahead(today, weeks_ahead) if season.calendar else []
     s = season.settings
     points = dict(s.points) if s.scoring == "points" and s.points else None
@@ -378,6 +386,8 @@ def week_projection(
         "players": {},
         "matchup": None,
     }
+    if noise is not None:
+        out["spread"] = season_spread.record(noise)
     if not weeks:
         return out
     mine = s.my_team_id
@@ -445,6 +455,8 @@ def week_projection(
             points=points,
             no_games=yahoo.zero,
             returns=returns,
+            noise=noise,
+            today=since,
         )
 
     roster = [(sp.player.yahoo_id, sp.player) for sp in season.rosters.get(mine, ())]
