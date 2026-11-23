@@ -942,15 +942,22 @@ def result_of(
 
 def before(earlier: Mapping[str, Any], all_off: Mapping[str, Any]) -> dict[str, Any]:
     """The all-off row against the simulator before the take-in (PR take-in), from two pair
-    records (``by_path``, as ``replay`` writes a pair): ``earlier`` a pair an earlier screen
-    played on the surrogate tier from the same baseline, whose arm A is that baseline; and
-    ``all_off`` this screen's all-off pair, whose arm B is the same arm with every change of the
-    take-in off. On every path both records stand on, by season and forecaster, whether the
-    earlier arm A's outcomes are the all-off arm B's, path for path: they must be, as the
-    take-in's equality test holds on the made-up league. ``same`` counts the paths that agree,
-    ``differ`` lists the rest, and ``unmatched`` the paths only one record stands on (a voided
-    path, or another seed or cell). A record written before the trace keeps no ``by_path``:
-    nothing is compared, and ``compared`` says so."""
+    records as ``replay`` writes a pair: ``earlier`` a pair an earlier screen played on the
+    surrogate tier from the same baseline, whose arm A is that baseline; and ``all_off`` this
+    screen's all-off pair, whose arm B is the same arm with every change of the take-in off. On
+    the same seed and paths the two must agree, as the take-in's equality test holds on the
+    made-up league.
+
+    - ``by`` ``path``, when both records keep ``by_path`` (PR trace): on every path both stand
+      on, by season and forecaster, whether the earlier arm A's outcomes are the all-off arm
+      B's. ``same`` counts the paths that agree, ``differ`` lists the rest, and ``unmatched`` the
+      paths only one record stands on (a voided path, or another seed or cell).
+    - ``by`` ``summary``, when either keeps none (a record written before the trace, as every
+      screen before the take-in): each cell's figures (``results``), the earlier arm A's against
+      the all-off arm B's, metric by metric: the mean, its SE and the paths, which agree to the
+      last bit when the two arms played the same paths alike. ``same`` counts the metrics that
+      agree, ``differ`` lists the rest, and ``unmatched`` the cells only one record holds.
+    - ``compared`` False when neither has anything to compare."""
 
     def paths(record: Mapping[str, Any], side: str) -> dict[tuple[str, str, int], Any] | None:
         block = record.get("by_path")
@@ -963,24 +970,46 @@ def before(earlier: Mapping[str, Any], all_off: Mapping[str, Any]) -> dict[str, 
             for x in xs
         }
 
+    def where(t: str, label: str, **more: Any) -> dict[str, Any]:
+        return {"season": t, "forecaster": label, **more}
+
     was, now = paths(earlier, "a"), paths(all_off, "b")
-    if was is None or now is None:
-        return {"compared": False, "same": 0, "differ": [], "unmatched": []}
-    both = sorted(set(was) & set(now))
-    differ = [
-        {"season": t, "forecaster": label, "path": path}
-        for t, label, path in both
-        if was[(t, label, path)] != now[(t, label, path)]
-    ]
-    unmatched = [
-        {"season": t, "forecaster": label, "path": path}
-        for t, label, path in sorted(set(was) ^ set(now))
-    ]
+    if was is not None and now is not None:
+        both = sorted(set(was) & set(now))
+        return {
+            "compared": True,
+            "by": "path",
+            "same": sum(1 for k in both if was[k] == now[k]),
+            "differ": [
+                where(t, lb, path=p) for t, lb, p in both if was[(t, lb, p)] != now[(t, lb, p)]
+            ],
+            "unmatched": [where(t, lb, path=p) for t, lb, p in sorted(set(was) ^ set(now))],
+        }
+
+    def cells(record: Mapping[str, Any], side: str) -> dict[tuple[str, str], Mapping[str, Any]]:
+        return {
+            (t, label): cell.get(side) or {}
+            for t, by_label in (record.get("results") or {}).items()
+            for label, cell in by_label.items()
+        }
+
+    old, new = cells(earlier, "a"), cells(all_off, "b")
+    if not old or not new:
+        return {"compared": False, "by": None, "same": 0, "differ": [], "unmatched": []}
+    same, differ = 0, []
+    for t, lb in sorted(set(old) & set(new)):
+        a, b = old[(t, lb)], new[(t, lb)]
+        for metric in sorted(set(a) | set(b)):
+            if a.get(metric) == b.get(metric):
+                same += 1
+            else:
+                differ.append(where(t, lb, metric=metric))
     return {
         "compared": True,
-        "same": len(both) - len(differ),
+        "by": "summary",
+        "same": same,
         "differ": differ,
-        "unmatched": unmatched,
+        "unmatched": [where(t, lb) for t, lb in sorted(set(old) ^ set(new))],
     }
 
 

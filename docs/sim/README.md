@@ -2804,7 +2804,10 @@ seed and paths, must play what an earlier screen's arm A played on the surrogate
 same baseline, path for path, as the take-in's equality test holds on the made-up league.
 `screen.before(earlier, all_off)` reads the two pair records' `by_path`. It counts the paths
 that agree, lists the ones that differ, and lists the paths only one record stands on. A record
-written before the trace keeps no `by_path` and is not compared.
+written before the trace keeps no `by_path`, as every screen before the take-in: then each
+cell's figures are compared instead, the earlier arm A's against the all-off arm B's, metric by
+metric (the mean, its SE and the paths), which agree to the last bit when the two arms played
+the same paths alike.
 
 The tier each lever is played on, in both arms, whatever tier the baseline names (the cheapest
 that reads the lever):

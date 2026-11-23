@@ -27,6 +27,7 @@ from pickandroll.sim import cli as ss
 from pickandroll.sim import nopeek, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
+from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import rc, spr, wk
 from pickandroll.sim.state import initial
 from tests.sim.sim_league import KNOBS, arm, make_setup, recorded_lines
@@ -408,3 +409,49 @@ def test_a_blend_that_reads_past_the_day_is_caught(no_peek_league, monkeypatch):
     got = blended_records(setup, nopeek.perturb(lines, rn.game_days_of(setup), day, SEED))
     first = nopeek.first_difference(base, got)
     assert first is not None and first[0] <= day, first
+
+
+# --------------------------------------------------------------------------- the screen's all-off row
+def _pair(paths=None, results=None):
+    out = {}
+    if paths is not None:
+        out["by_path"] = {"by_season": {"2023": {"prior": paths}}}
+    if results is not None:
+        out["results"] = {"2023": {"prior": results}}
+    return out
+
+
+def test_before_compares_the_all_off_arm_with_an_earlier_screen_path_for_path():
+    earlier = _pair([{"path": p, "a": {"rank": r}, "b": {}} for p, r in ((0, 3), (1, 5), (2, 7))])
+    now = _pair([{"path": p, "a": {}, "b": {"rank": r}} for p, r in ((0, 3), (1, 6), (3, 2))])
+    got = sc.before(earlier, now)
+    assert got["compared"] and got["by"] == "path" and got["same"] == 1
+    assert got["differ"] == [{"season": "2023", "forecaster": "prior", "path": 1}]
+    assert [x["path"] for x in got["unmatched"]] == [2, 3]
+
+
+def test_before_compares_the_summaries_when_a_record_keeps_no_paths():
+    """A screen before the take-in wrote no ``by_path`` (it predates the trace): the cells'
+    figures are compared, the earlier arm A's against the all-off arm B's."""
+    fig = {"mean": 4.0, "n": 2, "se": 1.0}
+    earlier = _pair(results={"a": {"rank": fig, "made_playoffs": fig}, "b": {}})
+    now = _pair(
+        [{"path": 0, "a": {}, "b": {"rank": 4}}],
+        results={"a": {}, "b": {"rank": dict(fig), "made_playoffs": {**fig, "mean": 4.5}}},
+    )
+    got = sc.before(earlier, now)
+    assert got["compared"] and got["by"] == "summary" and got["same"] == 1
+    assert got["differ"] == [{"season": "2023", "forecaster": "prior", "metric": "made_playoffs"}]
+    assert got["unmatched"] == []
+    other = {"results": {"2024": {"prior": {"a": {"rank": fig}}}}}
+    assert sc.before(other, now)["unmatched"] == [
+        {"season": "2023", "forecaster": "prior"},
+        {"season": "2024", "forecaster": "prior"},
+    ]
+    assert sc.before({}, now) == {
+        "compared": False,
+        "by": None,
+        "same": 0,
+        "differ": [],
+        "unmatched": [],
+    }
