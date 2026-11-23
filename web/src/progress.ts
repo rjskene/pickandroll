@@ -53,9 +53,11 @@ export const UNITS_SHORT: Record<Scoring, string> = { points: "pts", categories:
  * a day counting only when its lineup was read after it ended. */
 export const LINEUP_LOST_TITLE = "player-games lost to the lineup: a player who played while benched with an eligible slot open or idle, on the days whose lineup was read after they ended";
 
-export function lineupLostTitle(s: { lineupLost: number | null; lineupDaysRead: number; lineupDays: number }): string {
+export function lineupLostTitle(s: { lineupLost: number | null; lineupDaysRead: number; lineupDays: number; lineupSat?: number }): string {
   if (s.lineupLost == null) return "player-games lost to the lineup: no lineup read after its day";
-  return `player-games lost to the lineup: a player who played while benched with an eligible slot open or idle; ${s.lineupDaysRead} of ${s.lineupDays} days read`;
+  // A sit the recommended lineup made (#482) is sat, never lost.
+  const sat = s.lineupSat ? `; ${s.lineupSat} sat as recommended, not counted` : "";
+  return `player-games lost to the lineup: a player who played while benched with an eligible slot open or idle; ${s.lineupDaysRead} of ${s.lineupDays} days read${sat}`;
 }
 
 /** The scored moves whose horizon is over, each on the one its set was recommended for (#143),
@@ -105,6 +107,8 @@ export interface ScopeWeek {
   lineupLost: number | null;
   lineupDaysRead: number;
   lineupDays: number;
+  /** The player-games the recommended lineup sat on purpose (#482): sat, not lost. */
+  lineupSat: number;
   lines: LeagueLine[];
 }
 
@@ -167,6 +171,7 @@ export function scopeWeeks(p: ProgressPayload, scope: string, from = 1, to = Inf
       lineupLost: lineup.length ? lineup.reduce((a, { r }) => a + r.lineup_lost!, 0) : null,
       lineupDaysRead: rows.reduce((a, { r }) => a + (r.lineup_days_read ?? 0), 0),
       lineupDays: rows.length * weekDays(w),
+      lineupSat: rows.reduce((a, { r }) => a + (r.lineup_sat ?? 0), 0),
       lines: rows.map(({ league, r }) => ({ league, outcome: r.outcome, expected: r.expected, won: r.won, rank: r.rank })),
     });
   }
@@ -221,6 +226,7 @@ export interface RangeSum {
   lineupLost: number | null;
   lineupDaysRead: number;
   lineupDays: number;
+  lineupSat: number;
 }
 
 export function rangeSum(weeks: ScopeWeek[]): RangeSum {
@@ -242,6 +248,7 @@ export function rangeSum(weeks: ScopeWeek[]): RangeSum {
     lineupLost: null,
     lineupDaysRead: 0,
     lineupDays: 0,
+    lineupSat: 0,
   };
   // The Brier score over the range is the mean over its matchups, not over its weeks.
   let brierSum = 0;
@@ -263,6 +270,7 @@ export function rangeSum(weeks: ScopeWeek[]): RangeSum {
     if (w.lineupLost != null) out.lineupLost = (out.lineupLost ?? 0) + w.lineupLost;
     out.lineupDaysRead += w.lineupDaysRead;
     out.lineupDays += w.lineupDays;
+    out.lineupSat += w.lineupSat;
     for (const [s, v] of Object.entries(w.realized) as [Scoring, number][]) out.realized[s] = round((out.realized[s] ?? 0) + v);
     for (const [s, c] of Object.entries(w.compared) as [Scoring, MovesSum][]) out.compared[s] = addMoves(out.compared[s], c);
     if (w.brier != null) {

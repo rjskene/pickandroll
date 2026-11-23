@@ -288,6 +288,18 @@ def test_a_benched_player_counts_when_a_starter_could_move_to_free_his_slot():
     assert lu.lost_games(spots, {1, 3}, slots) == 0
 
 
+def test_a_recommended_sit_is_sat_not_lost():
+    slots = ("PG", "C", "Util")
+    spots = [("PG", 1, ("PG",)), ("BN", 3, ("C",)), ("BN", 4, ("SG",))]
+    # Both benched players played with C and Util open: two lost, or one when 4 sat on purpose.
+    assert lu.lost_games(spots, {1, 3, 4}, slots) == 2
+    assert lu.lost_games(spots, {1, 3, 4}, slots, sat={4}) == 1
+    lineups = {WEEK[0]: spots, WEEK[1]: spots}
+    played = {WEEK[0]: {1, 3, 4}, WEEK[1]: {1, 3, 4}}
+    out = lu.week_lost(WEEK, lineups, played, slots, {1, 3, 4}, sat={WEEK[0]: {4}})
+    assert (out["lost"], out["sat"]) == (3, 1)
+
+
 def test_a_weeks_games_lost_sum_the_days_read_and_count_the_unmatched_once():
     slots = ("C", "PG")
     lineup = [("C", 1, ("C",)), ("BN", 2, ("PG",)), ("BN", 9, ("SG",)), ("NA", 8, ("C",))]
@@ -296,9 +308,10 @@ def test_a_weeks_games_lost_sum_the_days_read_and_count_the_unmatched_once():
     played = {WEEK[0]: {1, 2}, WEEK[1]: {2}, WEEK[2]: {1, 2}}
     out = lu.week_lost(WEEK, lineups, played, slots, matched={1, 2})
     # 9 matched no box score: once, though on two days; 8 is held and never counted.
-    assert out == {"lost": 2, "days_read": 2, "days": 7, "unmatched": 1}
+    assert out == {"lost": 2, "sat": 0, "days_read": 2, "days": 7, "unmatched": 1}
     assert lu.week_lost(WEEK, {}, played, slots, matched={1, 2}) == {
         "lost": None,
+        "sat": 0,
         "days_read": 0,
         "days": 7,
         "unmatched": 0,
@@ -349,10 +362,16 @@ def test_only_a_lineup_read_after_its_day_counts_and_the_box_scores_say_who_play
     # Oct 19: the benched PG played with PG open; the held player's game is no loss.
     assert season_lineup.week_lost(season, week, box) == {
         "lost": 1,
+        "sat": 0,
         "days_read": 1,
         "days": 7,
         "unmatched": 0,
     }
+    # The benched PG sat as the day's recommended lineup said (#482): sat, not lost.
+    sat = season_lineup.week_lost(season, week, box, {WEEK[0]: {2}})
+    assert (sat["lost"], sat["sat"]) == (0, 1)
+    # A sit recorded for another day changes nothing.
+    assert season_lineup.week_lost(season, week, box, {WEEK[1]: {2}})["lost"] == 1
     # A line of None is a player on the report who did not play.
     box.games[WEEK[0]] = game(e1=played, e2=None)
     assert season_lineup.week_lost(season, week, box)["lost"] == 0

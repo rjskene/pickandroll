@@ -490,7 +490,8 @@ def test_progress_gives_the_season_by_week_pooled_with_the_moves_knobs_and_notes
     # The games lost to the lineup, with the days read (#149); none read before the count.
     assert (week2["lineup_lost"], week2["lineup_days_read"], week2["lineup_days"]) == (2, 5, 7)
     assert first[0]["lineup_lost"] is None and first[0]["lineup_days_read"] == 0
-    assert week2["cum"]["lineup"] == {"lost": 2, "days_read": 5, "days": 7}
+    assert week2["cum"]["lineup"] == {"lost": 2, "days_read": 5, "days": 7, "sat": 0}
+    assert week2["lineup_sat"] == 0
     assert week2["moves"]["compared"]["moves"] == 1
     assert week2["cum"]["weeks"] == 1 and week2["cum"]["won"] == 1.0
     assert week2["cum"]["won_all"] == 1.0 and week2["cum"]["expected"] == 0.7
@@ -502,9 +503,9 @@ def test_progress_gives_the_season_by_week_pooled_with_the_moves_knobs_and_notes
     assert pooled[2]["brier"] == pytest.approx((0.09 + 0.16) / 2)
     assert pooled[2]["cum"]["moves"]["categories"]["compared"]["moves"] == 1
     # Pooled over the public leagues only: the private league's four are not in.
-    assert pooled[2]["lineup"] == {"lost": 3, "days_read": 12, "days": 14}
-    assert pooled[1]["lineup"] == {"lost": None, "days_read": 0, "days": 0}
-    assert pooled[2]["cum"]["lineup"] == {"lost": 3, "days_read": 12, "days": 14}
+    assert pooled[2]["lineup"] == {"lost": 3, "days_read": 12, "days": 14, "sat": 0}
+    assert pooled[1]["lineup"] == {"lost": None, "days_read": 0, "days": 0, "sat": 0}
+    assert pooled[2]["cum"]["lineup"] == {"lost": 3, "days_read": 12, "days": 14, "sat": 0}
     assert out["pooled"]["calibration"]["weeks"] == 2
     # The move, with its names, the knobs at its solve, its odds and its value by category.
     (move,) = out["moves"]

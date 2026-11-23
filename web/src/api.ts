@@ -2862,6 +2862,8 @@ export interface LineupLost {
   lost: number | null;
   days_read: number;
   days: number;
+  /** The player-games sat as recommended (#482), not in ``lost``. */
+  sat?: number;
 }
 
 export interface ProgressRunning {
@@ -2907,6 +2909,8 @@ export interface ProgressWeek {
   /** The days read after they ended, and the week's days the record counted. */
   lineup_days_read?: number;
   lineup_days?: number;
+  /** The player-games the recommended lineup sat on purpose (#482): sat, not lost. */
+  lineup_sat?: number;
   cum: ProgressRunning & {
     moves: { made: number; realized_value: Partial<Record<MoveHorizon, number>>; compared: MovesCompared | null };
   };

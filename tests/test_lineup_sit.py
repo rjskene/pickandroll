@@ -6,16 +6,18 @@ Made-up players and lines throughout; nothing here is from Basketball Monster.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from pickandroll.api import season_lineup as sl
+from pickandroll.api.seasons import season_dir
 from pickandroll.season import Player
 from pickandroll.season import lineup as lu
 from pickandroll.season import weekly as wk
 from pickandroll.season.state import RosterSpot
 from tests.test_lineup import lineup_league, moved
-from tests.test_season import LEAGUE, fixture, season_client
+from tests.test_season import LEAGUE, TODAY, fixture, season_client
 
 SUN = date(2026, 10, 25)
 WEEK = [SUN - timedelta(days=6 - i) for i in range(7)]
@@ -219,3 +221,70 @@ def test_after_start_active_the_steps_bench_the_sat_player_and_fill_nothing(tmp_
         ]
         assert steps["target"] == {str(sat): "BN"}
         assert steps["games"]["after"] == steps["games"]["yahoo"] - 1
+
+
+# --------------------------------------------------------------------------- sat, not lost (#149)
+def sits(players, gain=0.2) -> dict:
+    return {"players": players, "gain": gain, "unit": "categories", "cats": []}
+
+
+def test_the_days_sits_are_recorded_once_each_and_read_back_by_day(tmp_path):
+    at = datetime(2026, 10, 25, 10, tzinfo=UTC)
+    today = {"date": SUN.isoformat(), "past": False, "sits": sits([2, 3])}
+    payload = {"days": [{"date": "2026-10-24", "past": True, "sits": sits([5])}, today]}
+    assert sl.record_sits(tmp_path, payload, SUN, at) == [2, 3]
+    # The same sit again writes nothing; a later solve's new player is added with its time.
+    assert sl.record_sits(tmp_path, payload, SUN, at) == []
+    later = {"days": [{**today, "sits": sits([3, 4], 0.3)}]}
+    assert sl.record_sits(tmp_path, later, SUN, at.replace(hour=12)) == [4]
+    assert sl.sits_read(tmp_path) == {SUN: frozenset({2, 3, 4})}
+    body = (tmp_path / sl.SITS_FILE).read_text()
+    assert '"with": [\n    3,\n    4\n   ]' in body
+    # No sit today, a past day, or another day: nothing recorded.
+    assert sl.record_sits(tmp_path, {"days": [{**today, "sits": None}]}, SUN, at) == []
+    assert sl.record_sits(tmp_path, payload, SUN + timedelta(days=1), at) == []
+    # A record that does not read counts as none.
+    (tmp_path / sl.SITS_FILE).write_text("{not json")
+    assert sl.sits_read(tmp_path) == {}
+
+
+def test_the_lineup_route_records_todays_sit(tmp_path, monkeypatch):
+    with season_client(tmp_path) as client:
+        lineup_league(client)
+        real = lu.win_lineup
+
+        def with_a_sit(*args, **kwargs):
+            out = real(*args, **kwargs)
+            on = [k for k in out.days.get(TODAY, {}) if TODAY in args[1].get(k, ())]
+            if not on:
+                return out
+            days = {**out.days, TODAY: {k: s for k, s in out.days[TODAY].items() if k != on[0]}}
+            return lu.WinLineup(days, {**out.sits, TODAY: lu.Sit((on[0],), 0.2, ())})
+
+        monkeypatch.setattr(lu, "win_lineup", with_a_sit)
+        day = next(
+            d
+            for d in client.get(f"/seasons/{LEAGUE}/lineup").json()["days"]
+            if d["date"] == TODAY.isoformat()
+        )
+        assert day["sits"] is not None
+        recorded = sl.sits_read(season_dir(client.data_dir, LEAGUE))
+        assert recorded == {TODAY: frozenset(day["sits"]["players"])}
+        # Another week's view records nothing more.
+        client.get(f"/seasons/{LEAGUE}/lineup", params={"week": 2})
+        assert sl.sits_read(season_dir(client.data_dir, LEAGUE)) == recorded
+
+
+def test_a_sits_record_that_fails_leaves_the_lineup_answering(tmp_path, monkeypatch, caplog):
+    def full_disk(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    with season_client(tmp_path) as client:
+        lineup_league(client)
+        monkeypatch.setattr(sl, "record_sits", full_disk)
+        with caplog.at_level("WARNING", logger="uvicorn.error"):
+            r = client.get(f"/seasons/{LEAGUE}/lineup")
+        assert r.status_code == 200, r.text
+        assert r.json()["days"]
+        assert f"league {LEAGUE}: today's sits not recorded" in caplog.text
+        assert "No space left on device" in caplog.text

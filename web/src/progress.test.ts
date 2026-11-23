@@ -219,6 +219,15 @@ test("the games lost to the lineup sum the weeks read and say how many of their 
   assert.deepEqual([week2.lineupLost, week2.lineupDaysRead, week2.lineupDays], [2, 12, 14]);
 });
 
+test("a recommended sit is sat, not lost: the sum and the tooltip say so (#482)", () => {
+  const p = payload([league("1001", true, [row(1, { lineup_lost: 1, lineup_days_read: 7, lineup_days: 7, lineup_sat: 2 }), row(2, { lineup_lost: 0, lineup_days_read: 7, lineup_days: 7 })])]);
+  const weeks = scopeWeeks(p, "1001");
+  assert.deepEqual(weeks.map((w) => w.lineupSat), [2, 0]);
+  const s = rangeSum(weeks);
+  assert.equal(s.lineupSat, 2);
+  assert.equal(lineupLostTitle(s), "player-games lost to the lineup: a player who played while benched with an eligible slot open or idle; 14 of 14 days read; 2 sat as recommended, not counted");
+});
+
 test("moves sums add up and keep their share", () => {
   const a = addMoves(undefined, compared(1, 2, 1, 1));
   assert.deepEqual(addMoves(a, compared(1, 2, 3, 1)), { moves: 2, projected: 4, realized: 4, same_way: 2, share: 1 });

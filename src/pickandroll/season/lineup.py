@@ -378,14 +378,18 @@ def compare(
 
 
 def lost_games[K: Hashable](
-    spots: Sequence[tuple[str, K, Sequence[str]]], played: Collection[K], slots: Sequence[str]
+    spots: Sequence[tuple[str, K, Sequence[str]]],
+    played: Collection[K],
+    slots: Sequence[str],
+    sat: Collection[K] = (),
 ) -> int:
     """The games one day's lineup as read lost (#149): the most of its starters and benched
     players who played that the starting ``slots`` can hold, less as many of its starters who
     played. ``spots`` is the lineup (slot, player, positions), ``played`` the players who played
     that day. A benched player who played counts when a slot he fits was open or held a player
     without a game, or could be freed by moving its starter to one; two benched players who
-    could take only one such slot count once. Held slots neither start nor count."""
+    could take only one such slot count once. Held slots neither start nor count. A player of
+    ``sat``, a sit the day's recommended lineup made (#482), is never lost: he sat on purpose."""
 
     def most(rows: list[tuple[K, Sequence[str]]]) -> int:
         return len(wk.starters(rows, slots, dict.fromkeys((k for k, _ in rows), 1.0)))
@@ -393,7 +397,7 @@ def lost_games[K: Hashable](
     starting = [(k, pos) for slot, k, pos in spots if slot.upper() not in wk.NOT_STARTING]
     bench = [(k, pos) for slot, k, pos in spots if slot.upper() == BENCH]
     starting = [(k, pos) for k, pos in starting if k in played]
-    bench = [(k, pos) for k, pos in bench if k in played]
+    bench = [(k, pos) for k, pos in bench if k in played and k not in sat]
     return most([*starting, *bench]) - most(starting)
 
 
@@ -403,12 +407,15 @@ def week_lost[K: Hashable](
     played: Mapping[date, Collection[K]],
     slots: Sequence[str],
     matched: Collection[K],
+    sat: Mapping[date, Collection[K]] | None = None,
 ) -> dict[str, Any]:
     """A week's games lost to the lineup: :func:`lost_games` summed over the ``days`` read, a
     day with both its lineup read after it (``lineups``) and its box scores (``played``); a day
     without either adds nothing and is not read. ``lost`` is None when no day was read.
     ``unmatched`` counts the players of a read day's starting slots or bench whom no box score
-    of the week matched (``matched``): they count as not playing."""
+    of the week matched (``matched``): they count as not playing. ``sat`` are each day's sits
+    the recommended lineup made (#482): ``sat`` counts the games they would have added to
+    ``lost``, which they do not."""
     read = [d for d in days if d in lineups and d in played]
     unmatched = {
         k
@@ -416,8 +423,11 @@ def week_lost[K: Hashable](
         for slot, k, _ in lineups[d]
         if (slot.upper() not in wk.NOT_STARTING or slot.upper() == BENCH) and k not in matched
     }
+    sat = sat or {}
+    lost = {d: lost_games(lineups[d], played[d], slots, sat.get(d, ())) for d in read}
     return {
-        "lost": sum(lost_games(lineups[d], played[d], slots) for d in read) if read else None,
+        "lost": sum(lost.values()) if read else None,
+        "sat": sum(lost_games(lineups[d], played[d], slots) - lost[d] for d in read),
         "days_read": len(read),
         "days": len(days),
         "unmatched": len(unmatched),
