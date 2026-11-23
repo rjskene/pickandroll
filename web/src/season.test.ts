@@ -1306,6 +1306,7 @@ test("a recommended sit (#482) leaves the bench row for the sit row, with its ca
     cats: [
       { cat: "tov" as const, before: 0.3, after: 0.86 },
       { cat: "fg_pct" as const, before: 0.41, after: 0.554 },
+      { cat: "threes" as const, before: 0.49, after: 0.2 },
     ],
   };
   // 7 is on Yahoo's lineup still, 9 already on its bench; 4 plays and stays on the bench.
@@ -1317,7 +1318,7 @@ test("a recommended sit (#482) leaves the bench row for the sit row, with its ca
     { player: 9, protect: true },
   ]);
   const name = (id: number) => `P${id}`;
-  assert.equal(sitText(sits, name, 7), "Recommended sit, with P9: protects TO 30% → 86%, FG% 41% → 55% · +0.21 expected categories won");
+  assert.equal(sitText(sits, name, 7), "Recommended sit, with P9: protects TO 30% → 86%, FG% 41% → 55%; gives up 3PM 49% → 20% · +0.21 expected categories won");
   assert.equal(
     sitText({ ...sits, players: [9], unit: "odds", gain: 0.0612, cats: [] }, name, 9),
     "Recommended sit: protects close categories · +6.1 points of matchup odds",

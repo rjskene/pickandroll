@@ -607,13 +607,21 @@ export function sitList(d: LineupDay): { player: number; protect: boolean }[] {
 }
 
 /** A recommended sit's words (#482): "Recommended sit, with P2: protects TO 30% → 86%, FG% 41% →
- * 55% · +0.21 expected categories won". */
+ * 55%; gives up 3PM 49% → 20% · +0.21 expected categories won", each category's odds of winning
+ * before and after. */
 export function sitText(sits: LineupSits, name: (id: number) => string, player?: number): string {
   const others = sits.players.filter((k) => k !== player).map(name);
   const pct = (x: number) => `${Math.round(x * 100)}%`;
-  const cats = sits.cats.map((c) => `${CAT_LABEL[c.cat] ?? c.cat} ${pct(c.before)} → ${pct(c.after)}`).join(", ");
+  const words = (up: boolean) =>
+    sits.cats
+      .filter((c) => c.after > c.before === up)
+      .map((c) => `${CAT_LABEL[c.cat] ?? c.cat} ${pct(c.before)} → ${pct(c.after)}`)
+      .join(", ");
+  const kept = words(true);
+  const lost = words(false);
+  const cats = [kept ? `protects ${kept}` : "protects close categories", ...(lost ? [`gives up ${lost}`] : [])].join("; ");
   const gain = sits.unit === "odds" ? `+${(sits.gain * 100).toFixed(1)} points of matchup odds` : `+${sits.gain.toFixed(2)} expected categories won`;
-  return `Recommended sit${others.length ? `, with ${others.join(", ")}` : ""}: ${cats ? `protects ${cats}` : "protects close categories"} · ${gain}`;
+  return `Recommended sit${others.length ? `, with ${others.join(", ")}` : ""}: ${cats} · ${gain}`;
 }
 
 /** "daily lineups, a change counts today (the settings page)". */
