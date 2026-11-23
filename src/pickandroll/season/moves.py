@@ -271,6 +271,15 @@ class MoveProblem:
     #: My marginal players (#435, :func:`marginal_of`): a lifted add's drop must be one of them,
     #: or nobody.
     marginal: frozenset[int] = frozenset()
+    #: The lines the rest of the season is valued on (#486): the projection before the recent-form
+    #: blend (``season.recent``), which ``rates`` carry. A 7- or 14-day window is no signal for a
+    #: season, so the season guard and every rest-of-season figure read these
+    #: (:func:`season_line`). None: ``rates``.
+    season_rates: Mapping[int, wk.Rates] | None = None
+    #: The per-game values a forced drop is chosen on (#486, the master's ruling of 2026-11-23):
+    #: ``value``'s on the line before the blend, since a drop is permanent and a 7- or 14-day
+    #: cold spell should not choose who goes (:func:`drop_value`). None: ``value``.
+    drop_value: Mapping[int, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -707,7 +716,7 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
         )
         # A returning player the stash threshold keeps goes only when no one else can (#373).
         pool = guarded_pool(problem, pool, day)
-        weakest = min(pool, key=lambda x: (problem.value.get(x, 0.0), str(x)))
+        weakest = min(pool, key=lambda x: (drop_value(problem, x), str(x)))
         active.remove(weakest)
         out.append(Comeback(k, slot, day, weakest, back))
     return out
@@ -915,7 +924,7 @@ def guarded_pool(problem: MoveProblem, pool: Sequence[int], day: date) -> list[i
     others = [x for x in pool if returning_net(problem, x) is None]
     if not others or len(others) == len(pool):
         return pool
-    instead = min(others, key=lambda x: (problem.value.get(x, 0.0), str(x)))
+    instead = min(others, key=lambda x: (drop_value(problem, x), str(x)))
     worth = worth_from(problem, instead, day)
     return [
         x
@@ -1020,6 +1029,23 @@ def line_of(problem: MoveProblem, add: int, drop: int | None) -> wk.Rates | None
     if is_lifted(problem, add, drop):
         return problem.lifted[add].rates
     return problem.rates.get(add)
+
+
+def drop_value(problem: MoveProblem, key: int) -> float:
+    """Player ``key``'s per-game value as a forced drop weighs it (#486): on the line before the
+    recent-form blend (``drop_value``), else the starters' ``value``; 0 with neither."""
+    values = problem.drop_value if problem.drop_value is not None else problem.value
+    return values.get(key, 0.0)
+
+
+def season_line(problem: MoveProblem, add: int, drop: int | None, key: int) -> wk.Rates | None:
+    """The line player ``key`` of a move adding ``add`` for ``drop`` is valued on over the rest
+    of the season (#486): a lifted add's lifted line (the lift is made on the line before the
+    blend), else the line before the recent-form blend (``season_rates``)."""
+    if key == add and is_lifted(problem, add, drop):
+        return problem.lifted[add].rates
+    lines = problem.season_rates if problem.season_rates is not None else problem.rates
+    return lines.get(key)
 
 
 def rates_with(problem: MoveProblem, moves: Iterable[Move]) -> Mapping[int, wk.Rates]:

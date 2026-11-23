@@ -136,6 +136,7 @@ from ..season import (
     YAHOO_WEEK,
     Calendar,
     Part,
+    Player,
     Season,
     SeasonSettings,
     Transaction,
@@ -190,6 +191,7 @@ from .season_week import (
     BBM_THIS_WEEK,
     DEFAULT_SYSTEM,
     NBA_TZ,
+    System,
     exports_in_force,
     week_projection,
 )
@@ -680,10 +682,25 @@ class SeasonService:
             **_summary(season, is_public, bool(parts), self.job(league)),
             **_view(season, today),
             "week_projection": week_projection(
-                season, today, self.data_dir, WEEKS_AHEAD, self._returns(season)
+                season,
+                today,
+                self.data_dir,
+                WEEKS_AHEAD,
+                self._returns(season),
+                self._played(league, today),
             ),
             **flag_view,
         }
+
+    def _played(self, league: str, today: date) -> Callable[[System, Mapping[int, Player]], System]:
+        """Basketball Monster's line as the league's weeks play it (#486: blended toward recent
+        form under the league's knobs, ``season_moves.played_bbm``)."""
+        knobs = season_knobs.for_league(self.data_dir, league)
+
+        def played(bbm: System, players: Mapping[int, Player]) -> System:
+            return season_moves.played_bbm(bbm, self.data_dir, players, knobs, today)[0]
+
+        return played
 
     def _returns(self, season: Season) -> dict[int, date]:
         """ESPN's return dates for every rostered player of ``season`` listed O or INJ (#485)."""
