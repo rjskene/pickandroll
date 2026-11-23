@@ -6,7 +6,7 @@
 const fs = require("fs");
 const [app, first, next, season] = process.argv.slice(2);
 const models = [JSON.parse(fs.readFileSync(first, "utf8")), JSON.parse(fs.readFileSync(next, "utf8"))];
-const out = { renders: 0, problems: [], marks: [], escaped: 0, refresh: {} };
+const out = { pages: {}, renders: 0, problems: [], marks: [], escaped: 0, refresh: {} };
 const el = (id) => {
   const e = { id, hidden: false, style: { setProperty() {} }, classList: { toggle() {} }, addEventListener() {}, setAttribute() {}, offsetHeight: 50, offsetWidth: 100, offsetLeft: 10, offsetTop: 10, clientWidth: 600, contains: () => true, writes: 0, html: "" };
   Object.defineProperty(e, "innerHTML", { get() { return this.html; }, set(v) { this.html = v; this.writes += 1; } });
@@ -47,6 +47,7 @@ const look = (where) => {
       location.hash = "#" + p;
       try { global.__render(); out.renders += 1; } catch (e) { out.problems.push(`${p} ${JSON.stringify(st)}: ${e.message}`); continue; }
       look(`${p} ${JSON.stringify(st)}`);
+      if (!Object.keys(st).length) out.pages[p] = get("page").html;
     }
   }
   // A refresh with the same build draws nothing; a new build draws the same tab and switches.

@@ -29,8 +29,8 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 `pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
-`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, `trace`, and the lab's `lab/model` and
-`lab/trace_view`) for any way to a file, a process or the
+`shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, `trace`, `capabilities`, and the lab's
+`lab/model` and `lab/trace_view`) for any way to a file, a process or the
 network: none of them imports `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`,
 `http`, `requests`, `httpx`, `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only
 `run.py` uses `os`, for the worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -1316,7 +1316,9 @@ name whose seat reads the week, which the decision's key now keeps apart on two 
 bracket week**); 20 since the union pool as an arm's choice (PR pool), its figures version
 19's with the field left off; and 21 since a league whose free-agent adds play the same day (PR
 today, `--lineup-from today`), its figures version 20's with the rule left off (**A league whose
-adds play the same day**).
+adds play the same day**). Each step, and each of the screen's and the tune's, has its mark in
+the capability log (**The capability log**, PR capabilities): a version stepped without a mark
+fails the simulator's tests.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -3100,6 +3102,34 @@ claims. The estimate lists the values from the baseline, and a later pass may pl
 not list. The check before the first pair asks what a season's files say; what only a whole plan
 of the confirmation's pair finds is still met at the end.
 
+## The capability log (`sim/capabilities.py`, PR capabilities)
+
+The user's ask (2026-11-23): mark when the simulator's capabilities change, so a change in a
+result can be read as "a knob did this" or "the simulator changed", never left to guess. The log
+is a table of marks in the package, oldest first. Each mark has an `id`, the `date` it landed on
+main, its `pr`, a `kind`, a `title`, `words` (two lines at most, plain, no number), the versions
+it is the first to have (`replay_version`, `screen_version`, `tune_version`; none for a change
+that stepped none) and `takes_in`, the live engine's changes it brought in, by issue.
+
+- **Kinds**: `world` (the simulated league: its rules, the rivals, the draft, waivers), `seat`
+  (what the seat's policy can do, a knob given a reader), `engine` (a live rule the simulator
+  mirrors, taken in), `measure` (how outcomes are counted or recorded).
+- **Backfilled** from the version comments and `REPLAY_VERSION_WHY` in `cli.py`, `screen.py` and
+  `tune.py`, and main's history: one mark for each version step from the first replay to today,
+  and a mark with no version for a change that added a capability or moved what a run plays
+  without stepping one (an add's week, the executor's held-slot moves, a held move's slot, the
+  daily audit and counts, the season term, gate five's record and its kept-gain rule, the
+  trace).
+- **The rule that makes it stick.** `tests/sim/test_sim_capabilities.py` fails when
+  `REPLAY_VERSION`, `SCREEN_VERSION` or `TUNE_VERSION` is not the last one the log holds, or a
+  version from one to its last is held by no mark or by two. So a PR that steps a version (the
+  replay's history is in **The replay: what a seat knows**, the screen's and the tune's in their
+  sections) cannot merge without its mark. A change that adds a capability without a version
+  step gets a mark too, of its kind, with no version.
+- **A run's capability** is its `replay_version` and the last mark at or below it that steps the
+  replay's version (`capabilities.at`). A mark with no version is dated only, so a run's version
+  cannot place it; the lab draws it on the time line by its day.
+
 ## The lab (`sim/lab/`, `cli.cmd_lab`, PR lab)
 
     python -m pickandroll.sim [--data DIR] lab [--host H] [--port P] [--notes FILE]
@@ -3233,7 +3263,11 @@ and the model lists those gaps (`generated.lacks`).
 - `seasons`: items of `id` (a season said as 2022-23), `role` (`search`, `confirm`, `holdout`,
   `current` or `replay`) and optionally `note`;
 - `rulesets`: by ruleset key, `{"name", "order", "flags"}`, each optional, a flag being
-  `{"level", "title", "text"}`.
+  `{"level", "title", "text"}`;
+- `engine` (PR capabilities): the live engine's changes, items of `date`, `issue` (`#485`),
+  `title` and `words`, and optionally `taken_in`, the replay version that took it in, or null
+  while the simulator has not. The lead writes one for each word the master posts on #172. A
+  mark of the capability log whose `takes_in` names the issue closes it whatever the notes say.
 
 Every text must be non-empty. A section, a field or a value outside this is refused by name: the
 command will not start, and a file that turns bad while the lab runs is said in the model's
@@ -3311,10 +3345,40 @@ one column in the order above, the lanes fit a phone's width without a sideways 
 charts are drawn at their panel's own width so their labels keep their size. Players' names are
 shown: the page is the lead's, on the box, and a trace lives under `data/` only.
 
+**The capabilities** (PR capabilities) are read from the capability log (below) and the notes'
+`engine` section:
+
+- **each run** shows the capability it was played on (its `replay_version` and the log's last
+  mark at or below it; "no recorded version" when it records none) and what it was behind live
+  in: the live changes dated before the day (UTC) it started that its version had not taken in;
+- **now**: Overview's strip "The simulator's capabilities" says the current capability, the last
+  update of any kind and when, and what the simulator is behind live in;
+- **"Is the seat getting better?"**: each stage says the capability its run was played on, and
+  a line says so when the stages were played on more than one;
+- **shifts**: where two screens of one ruleset, one after the other, were played on different
+  capabilities, what moved between them that no knob did, shown on Overview as the capability's
+  effect: the baseline cell by cell when both screens' baseline arms are the same arm (its name
+  aside), and each row both played with the same values (a row that did nothing in both is left
+  out), with whether the seed and the paths were the same too (when not, part of a shift is the
+  draw);
+- **three flags**, a ruleset at a time, with the others on Checks: **capabilities**, a watch
+  when its runs were played on more than one capability (saying which run sits where) or none
+  records a version; **behind live**, a watch when its latest screen was played on an engine
+  behind live (naming the changes) or records no version, ok otherwise (and it says when the
+  notes list no live change); **tune's screen**, a problem when a tune reads a screen played on
+  another capability (the tune's own record says the screen's version when it differs);
+- **Runs**: a column with each run's capability and what it was behind; on the time line one
+  line a day the simulator changed, through every run's track, with the day's count of marks
+  above it (a tap lists them), and a diamond for a change to the live engine; under it the
+  capability log as a table, newest first, and the live engine's changes with what took each in;
+- **the Season tab**: the trace's head says the version it was played on, and whether that was
+  read from its source's record.
+
 **`lab --check`** builds the model once and prints a line a section, counts and words only:
 what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
-the traces by their check's level, the seasons' ledger, the notes, the explainer and what is not
-recorded. Then it exits.
+the traces by their check's level, the capabilities (now, the last update, the versions the runs
+were played on, what the simulator is behind live in), the seasons' ledger, the notes, the
+explainer and what is not recorded. Then it exits.
 
 ## The trace (`sim/trace.py`, `cli.cmd_trace`, PR trace)
 
@@ -3424,8 +3488,12 @@ For the pair:
 with the recorder's small share beside it. A dry run (`--dry-run`) plans and checks, plays
 nothing and writes nothing, and prints the record's own estimate of one task. The guard is given
 that estimate with a margin (`TRACE_MARGIN`), or half an hour (`TRACE_HOURS`) when no record
-holds one. The file is plain JSON, players by id with one names table. The trace has its own version (`TRACE_VERSION`); a replay's
-`replay_version` is not a trace's.
+holds one. The file is plain JSON, players by id with one names table. The trace has its own
+version (`TRACE_VERSION`, 2 since PR capabilities): a replay's `replay_version` is not a trace's,
+and since version 2 a trace also names the `replay_version` it was played under, so the lab can
+say which capability it shows. The lab plays versions 1 and 2; for a version 1 trace whose check
+found the code at its source's version (checked, or checked on its world and seat only) it reads
+the source run's.
 
 ## Runs
 

@@ -346,6 +346,26 @@ def check_lines(m: dict[str, Any]) -> list[str]:
             else ""
         )
     )
+    caps = m.get("capabilities") or {}
+    now = caps.get("current") or {}
+    last = caps.get("latest") or {}
+    played = sorted(
+        {run["capability"]["replay_version"] for run in m["runs"] if run.get("capability")}
+    )
+    lines.append(
+        f"capabilities: now version {now.get('replay_version')} ({now.get('title')}); last "
+        f"update {last.get('date')} ({last.get('title')}); {len(caps.get('log') or [])} marks; "
+        f"runs played on version(s) {', '.join(str(v) for v in played) or 'none recorded'}; "
+        + (
+            "behind live in " + ", ".join(e["issue"] for e in caps["behind"])
+            if caps.get("behind")
+            else (
+                "nothing from live outstanding"
+                if caps.get("engine")
+                else "no live-engine change in the notes"
+            )
+        )
+    )
     lines.append(
         f"seasons: {len(m['seasons'])} in the ledger ("
         + ", ".join(f"{s['words']} {s['role']} from the {s['from']}" for s in m["seasons"])

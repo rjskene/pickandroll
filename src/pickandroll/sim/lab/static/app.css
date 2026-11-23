@@ -171,6 +171,19 @@ tr.taken td { color: var(--good); }
 .gtrack { position: relative; height: 12px; background: var(--panel-2); border-radius: 3px; }
 .gtrack i { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--muted); }
 .gtrack i.t0 { background: var(--accent); } .gtrack i.t1 { background: var(--them); } .gtrack i.t2 { background: var(--good); }
+.gtrack i.mk { width: 1px; top: -8px; bottom: -8px; border-radius: 0; background: var(--line-2); }
+.gtrack i.mk.live { background: var(--bad); }
+.gmk .gtrack { background: none; }
+.gmk .mkl { position: absolute; top: -2px; transform: translateX(-50%); font-size: 10.5px; font-weight: 600; color: var(--accent); cursor: default; }
+.gmk .mkl.live { color: var(--bad); }
+.capgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+.capgrid > div { border: 1px solid var(--line-2); border-radius: 8px; padding: 10px 12px; background: var(--panel-2); }
+.capgrid b { display: block; font: 700 22px var(--display); margin: 2px 0; }
+.capgrid small { color: var(--muted); font-size: 12px; display: block; }
+@media (max-width: 700px) { .capgrid { grid-template-columns: 1fr; } }
+.stage small.capt { margin-top: 4px; color: var(--dim); }
+.crosses { margin-top: 8px; color: var(--accent); font-size: 12.5px; }
+.shift { margin-top: 8px; font-size: 12.5px; color: var(--muted); } .shift ul { margin: 4px 0 0 18px; }
 .gaxis { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-left: 142px; }
 
 /* tooltip */

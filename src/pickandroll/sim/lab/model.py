@@ -17,6 +17,9 @@ The sections, as the page has them:
 - **runs** and **tunes**: each run's pieces, pairs, audit and code; a tune's search and its
   confirmation;
 - **seasons**: the seasons' ledger, from the records and the notes' roles;
+- **capabilities** (PR capabilities): the simulator's log of marks (``sim/capabilities.py``),
+  the live engine's changes from the notes, what each run was played on and was behind live
+  in, and where a ruleset's figures cross a mark;
 - **notes**: the lead's notes as given (:func:`notes_of` checks them);
 - **generated**: when, on what code, what was read and what was refused.
 """
@@ -29,9 +32,11 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
+from itertools import pairwise
 from statistics import NormalDist
 from typing import Any
 
+from .. import capabilities as cap
 from .. import screen as sc
 
 #: The model's own version (its shape, for the page): no record's version moves with it.
@@ -228,6 +233,9 @@ NOTE_ITEMS: Mapping[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "openings": (("title", "why", "state"), ("cost",)),
     "proposals": (("date", "title", "text"), ("state",)),
     "seasons": (("id", "role"), ("note",)),
+    # The live engine's changes (PR capabilities): the lead writes one for each word the master
+    # posts on #172; ``taken_in`` is the replay version that took it in, or null.
+    "engine": (("date", "issue", "title", "words"), ("taken_in",)),
 }
 NOTE_CHOICES: Mapping[str, Mapping[str, tuple[str, ...]]] = {
     "queue": {"state": ("word", "running", "later", "done", "planned")},
@@ -274,7 +282,17 @@ def _item(x: Any, section: str, i: int) -> dict[str, Any]:
             if key in need:
                 raise NotesError(f"notes: {where}: {key!r} is missing")
             continue
+        if section == "engine" and key == "taken_in":
+            v = x[key]
+            if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 1):
+                raise NotesError(
+                    f"notes: {where}.taken_in: a replay version (a whole number from 1) or null"
+                )
+            out[key] = v
+            continue
         out[key] = _text(x[key], f"{where}.{key}")
+    if section == "engine" and not cap.ISSUE.fullmatch(out["issue"]):
+        raise NotesError(f"notes: {where}.issue: {out['issue']!r} is not an issue like #485")
     if "date" in out:
         try:
             date.fromisoformat(out["date"])
@@ -298,8 +316,10 @@ def _item(x: Any, section: str, i: int) -> dict[str, Any]:
 def notes_of(x: Any) -> dict[str, Any]:
     """The lead's notes, checked: an object of :data:`NOTE_KEYS`, each optional. ``state`` is
     ``{"running": text or null, "text": text}``; each list section's items have the fields of
-    :data:`NOTE_ITEMS` (required, then optional), texts all, a ``date`` as YYYY-MM-DD and the
-    choices of :data:`NOTE_CHOICES`; a season's ``id`` is said as 2022-23. ``rulesets`` maps a
+    :data:`NOTE_ITEMS` (required, then optional), texts all but an ``engine`` item's
+    ``taken_in`` (a replay version or null), a ``date`` as YYYY-MM-DD and the choices of
+    :data:`NOTE_CHOICES`; a season's ``id`` is said as 2022-23, an ``engine`` item's ``issue``
+    as #485. ``rulesets`` maps a
     ruleset's key to ``{"name", "order", "flags"}``, each optional, a flag ``{"level", "title",
     "text"}``. Anything else is refused by name (:class:`NotesError`)."""
     if not isinstance(x, Mapping):
@@ -899,6 +919,286 @@ def _seasons(xs: Any) -> list[int]:
 
 
 # --------------------------------------------------------------------------- the build
+# --------------------------------------------------------------------------- capabilities
+def capability_of(replay_version: Any) -> dict[str, Any] | None:
+    """The capability a run of ``replay_version`` was played on (``capabilities.at``), as the
+    page shows it; None for a run that records no version."""
+    m = cap.at(replay_version)
+    if m is None:
+        return None
+    return {
+        "id": m.id,
+        "replay_version": m.replay_version,
+        "title": m.title,
+        "date": m.date,
+        "kind": m.kind,
+    }
+
+
+def cap_words(c: Mapping[str, Any] | None) -> str:
+    """A capability in words: its version and title."""
+    return "no recorded version" if not c else f"version {c['replay_version']} ({c['title']})"
+
+
+def engine_changes(notes: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """The live engine's changes (the notes' ``engine``), oldest first, each with the replay
+    version that took it in: the log's mark that names its issue (``capabilities.taken_in``,
+    ``closed_by`` that mark), else the notes' own ``taken_in``; None while the simulator has not
+    taken it in."""
+    out = []
+    for e in (notes or {}).get("engine") or []:
+        mark = cap.taken_in(e["issue"])
+        if mark is not None and mark.replay_version is not None:
+            v, by = mark.replay_version, mark.id
+        else:
+            v = e.get("taken_in")
+            by = None if v is None else "notes"
+        out.append(
+            {
+                "date": e["date"],
+                "issue": e["issue"],
+                "title": e["title"],
+                "words": e["words"],
+                "taken_in": v,
+                "closed_by": by,
+            }
+        )
+    return sorted(out, key=lambda e: (e["date"], e["issue"]))
+
+
+def behind_live(
+    started: Any, replay_version: Any, engine: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]] | None:
+    """The live engine's changes a run was behind: dated before the day (UTC) it started, and
+    not taken in by its version. None when the run records no start or no version."""
+    when = _when(started)
+    if when is None or isinstance(replay_version, bool) or not isinstance(replay_version, int):
+        return None
+    day = when.astimezone(UTC).date().isoformat()
+    return [
+        {"issue": e["issue"], "title": e["title"], "date": e["date"]}
+        for e in engine
+        if e["date"] < day and (e["taken_in"] is None or e["taken_in"] > replay_version)
+    ]
+
+
+def _place_on(day: str, span: Mapping[str, str] | None) -> float | None:
+    """A dated mark's place on the runs' time line, at the start of its day (UTC); None when
+    there is no line or the day is off it."""
+    if not span:
+        return None
+    t0, t1 = _when(span["start"]), _when(span["end"])
+    t = _when(f"{day}T00:00:00+00:00")
+    if t0 is None or t1 is None or t is None:
+        return None
+    width = (t1 - t0).total_seconds() or 1.0
+    x = (t - t0).total_seconds() / width
+    return x if 0.0 <= x <= 1.0 else None
+
+
+def _arm_of(arm: Any) -> Any:
+    return None if not isinstance(arm, Mapping) else {k: v for k, v in arm.items() if k != "name"}
+
+
+def _shift(before: Mapping[str, Any], after: Mapping[str, Any]) -> float | None:
+    a, b = before.get("mean"), after.get("mean")
+    return None if a is None or b is None else b - a
+
+
+def shifts_of(
+    mine: Sequence[Mapping[str, Any]],
+    rows: Sequence[Mapping[str, Any]],
+    info: Mapping[str, Mapping[str, Any]],
+    measure: str,
+) -> list[dict[str, Any]]:
+    """Where two screens of one ruleset, one after the other, were played on different
+    capabilities: what moved between them that no knob did, the capability's effect. The
+    baseline, when both screens' baseline arms are the same arm (its name aside), cell by cell
+    (season and forecaster); and each row both played with the same values, its difference B
+    less A in each (a row that did nothing in both is left out). ``same_world`` says whether the seed and the paths are the same too: when
+    not, part of a shift is the draw."""
+    screens = [x for x in mine if x["kind"] == "screen" and x.get("capability")]
+    out = []
+    for s1, s2 in pairwise(screens):
+        c1, c2 = s1["capability"], s2["capability"]
+        if c1["id"] == c2["id"]:
+            continue
+        i1, i2 = info.get(s1["name"]) or {}, info.get(s2["name"]) or {}
+        base = []
+        b1, b2 = i1.get("baseline"), i2.get("baseline")
+        if b1 and b2 and _arm_of(i1.get("arm")) == _arm_of(i2.get("arm")):
+            before = {c["cell"]: c for c in b1["cells"]}
+            for c in b2["cells"]:
+                b = before.get(c["cell"])
+                if b is None:
+                    continue
+                x, y = b["outcomes"][measure], c["outcomes"][measure]
+                base.append(
+                    {
+                        "cell": c["cell"],
+                        "season_words": c["season_words"],
+                        "forecaster": c["forecaster"],
+                        "before": {"mean": x["mean"], "se": x["se"]},
+                        "after": {"mean": y["mean"], "se": y["se"]},
+                        "shift": _shift(x, y),
+                    }
+                )
+        earlier = {(r["key"], r["cell"]): r for r in rows if r["run"] == s1["name"] and r["played"]}
+        same = []
+        for r in rows:
+            if r["run"] != s2["name"] or not r["played"]:
+                continue
+            q = earlier.get((r["key"], r["cell"]))
+            if q is None or q["values"] != r["values"] or (q["did_nothing"] and r["did_nothing"]):
+                continue
+            x, y = q["diff"][measure], r["diff"][measure]
+            same.append(
+                {
+                    "key": r["key"],
+                    "label": r["label"],
+                    "nudge": r["nudge"],
+                    "values": r["values"],
+                    "cell": r["cell"],
+                    "before": {"mean": x["mean"], "se": x["se"]},
+                    "after": {"mean": y["mean"], "se": y["se"]},
+                    "shift": _shift(x, y),
+                }
+            )
+        if base or same:
+            out.append(
+                {
+                    "from": {"run": s1["name"], "capability": c1},
+                    "to": {"run": s2["name"], "capability": c2},
+                    "same_world": s1["seed"] == s2["seed"] and s1["paths"] == s2["paths"],
+                    "baseline": base,
+                    "rows": same,
+                    "words": "the simulator's change between these screens, not a knob's",
+                }
+            )
+    return out
+
+
+def _names(xs: Sequence[str]) -> str:
+    return ", ".join(xs)
+
+
+def capability_flags(
+    mine: Sequence[Mapping[str, Any]],
+    latest: str | None,
+    engine: Sequence[Mapping[str, Any]],
+    noted: bool,
+    by_name: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """A ruleset's three capability flags: whether its figures span more than one capability
+    (a watch, saying which run sits where); whether its latest screen was played on an engine
+    behind live (a watch, naming the changes); and whether a tune reads a screen of another
+    capability (a problem)."""
+    out = []
+    groups: dict[str, tuple[Mapping[str, Any], list[str]]] = {}
+    unknown = []
+    for x in mine:
+        c = x.get("capability")
+        if c is None:
+            unknown.append(x["name"])
+        else:
+            groups.setdefault(c["id"], (c, []))[1].append(x["name"])
+    tail = f" {len(unknown)} run(s) record no version: {_names(unknown)}." if unknown else ""
+    if len(groups) > 1:
+        out.append(
+            {
+                "level": WATCH,
+                "title": "Capabilities",
+                "text": "Its figures were played on more than one capability: "
+                + "; ".join(f"{cap_words(c)}: {_names(ns)}" for c, ns in groups.values())
+                + ". A difference across them is the simulator's change, not a knob's."
+                + tail,
+            }
+        )
+    elif groups:
+        c, _ = next(iter(groups.values()))
+        out.append(
+            {
+                "level": OK,
+                "title": "Capabilities",
+                "text": f"Every run with a version was played on {cap_words(c)}." + tail,
+            }
+        )
+    else:
+        out.append(
+            {
+                "level": WATCH,
+                "title": "Capabilities",
+                "text": "No run of it records the replay's version, so what it was played on "
+                "is not known.",
+            }
+        )
+    run = by_name.get(latest) if latest else None
+    if run is None:
+        out.append({"level": OK, "title": "Behind live", "text": "No screen yet."})
+    elif run.get("behind_live") is None:
+        out.append(
+            {
+                "level": WATCH,
+                "title": "Behind live",
+                "text": f"Its latest screen, {latest}, records no version or start, so whether "
+                "live had moved is not known.",
+            }
+        )
+    elif run["behind_live"]:
+        out.append(
+            {
+                "level": WATCH,
+                "title": "Behind live",
+                "text": f"Its latest screen, {latest} ({cap_words(run['capability'])}), was "
+                "played before the simulator took in: "
+                + "; ".join(f"{e['issue']} {e['title']} ({e['date']})" for e in run["behind_live"])
+                + ".",
+            }
+        )
+    else:
+        out.append(
+            {
+                "level": OK,
+                "title": "Behind live",
+                "text": f"Its latest screen, {latest}, was played with nothing from live "
+                "outstanding"
+                + (
+                    "."
+                    if engine
+                    else (
+                        " (the notes list no live-engine change)."
+                        if noted
+                        else " (no notes file: live's changes are not listed)."
+                    )
+                ),
+            }
+        )
+    tunes = [x for x in mine if x["kind"] == "tune"]
+    if tunes:
+        bad = []
+        for t in tunes:
+            sc_ = t.get("screen") or {}
+            if not sc_.get("name"):
+                continue
+            theirs = capability_of(sc_.get("replay_version"))
+            mine_c = t.get("capability")
+            if theirs and mine_c and theirs["id"] != mine_c["id"]:
+                bad.append(
+                    f"{t['name']} ({cap_words(mine_c)}) reads the screen {sc_['name']}, played "
+                    f"on {cap_words(theirs)}"
+                )
+        out.append(
+            {
+                "level": PROBLEM if bad else OK,
+                "title": "Tune's screen",
+                "text": "; ".join(bad) + ": its order and values come from another simulator."
+                if bad
+                else "Each tune reads a screen of its own capability.",
+            }
+        )
+    return out
+
+
 def build(
     screens: Sequence[Mapping[str, Any]],
     tunes: Sequence[Mapping[str, Any]],
@@ -924,6 +1224,7 @@ def build(
     rows: list[dict[str, Any]] = []
     tune_list: list[dict[str, Any]] = []
     by_rs: dict[str, dict[str, Any]] = {}
+    info: dict[str, dict[str, Any]] = {}  # a screen's baseline arm and baseline, by name
 
     def ruleset(
         rules: Mapping[str, Any], label: Any, world: Mapping[str, Any], shapes: Any, started: Any
@@ -1016,7 +1317,9 @@ def build(
             }
         )
         by_rs[rk]["screens"].append(name)
-        by_rs[rk].setdefault("baselines", []).append((started, baseline_of(name, rec, pairs)))
+        bl = baseline_of(name, rec, pairs)
+        by_rs[rk].setdefault("baselines", []).append((started, bl))
+        info[name] = {"arm": spec.get("arm"), "baseline": bl}
 
     # Tunes.
     for t in tunes:
@@ -1034,6 +1337,11 @@ def build(
         tune_list.append(summary)
         played = sum(1 for st in summary["steps"] for v in st["values"] if v["status"] == sc.PLAYED)
         played += sum(1 for k in pairs if k.startswith("confirm-"))
+        # The screen its order came from, and that screen's replay version: the tune's record
+        # names what the screen was played under that the tune is not (``cli.screen_differs``).
+        read = (spec.get("screen") or {}).get("name")
+        apart = (rec.get("screen") or {}).get("replay_version")
+        read_rv = apart.get("screen") if isinstance(apart, Mapping) else spec.get("replay_version")
         runs.append(
             {
                 "name": name,
@@ -1049,6 +1357,7 @@ def build(
                 ),
                 "code_sha": (rec.get("code_sha") or "")[:7] or None,
                 "versions": {"tune": rec.get("tune_version"), "replay": spec.get("replay_version")},
+                "screen": None if not read else {"name": read, "replay_version": read_rv},
                 "pairs_done": played,
                 "pairs_left": 1 if rec.get("left") else 0,
                 "not_played": 0,
@@ -1136,8 +1445,13 @@ def build(
         by_rs[rk]["replays"].append(name)
 
     runs.sort(key=lambda x: (_t(x.get("started_at")), str(x["name"])))
+    engine = engine_changes(notes)
     for run in runs:
         run["season_words"] = [season_words(t) for t in run["seasons"]]
+        rv = (run.get("versions") or {}).get("replay")
+        run["capability"] = capability_of(rv)
+        run["behind_live"] = behind_live(run.get("started_at"), rv, engine)
+    by_name = {run["name"]: run for run in runs}
     timeline = _span(runs)
 
     # Rulesets, in the notes' order, else by their first run.
@@ -1172,6 +1486,29 @@ def build(
         here = [r for r in rows if r["ruleset"] == rk and r["run"] == latest]
         card = _ruleset_card(rs, rk, tone, mine, here, baseline, notes_rs.get(rk, {}), tune_list)
         card["listed"] = rk in listed
+        groups: dict[str, dict[str, Any]] = {}
+        for x in mine:
+            c = x.get("capability")
+            key = c["id"] if c else ""
+            groups.setdefault(key, {"capability": c, "runs": []})["runs"].append(x["name"])
+        card["capabilities"] = list(groups.values())
+        card["shifts"] = shifts_of(mine, rows, info, rs["measure"])
+        for st in card["stages"]:
+            src = by_name.get(st.get("run") or "")
+            st["capability"] = None if src is None else src.get("capability")
+        held = {}
+        for st in card["stages"]:
+            if st["capability"]:
+                held.setdefault(st["capability"]["id"], (st["capability"], []))[1].append(
+                    st["title"]
+                )
+        card["crosses"] = (
+            None
+            if len(held) < 2
+            else "These figures were played on more than one capability: "
+            + "; ".join(f"{_names(ts)} on {cap_words(c)}" for c, ts in held.values())
+            + ". A gain across them is partly the simulator's change."
+        )
         rulesets.append(card)
 
     # Knobs: every screen row, the domains, the rows two rulesets' latest screens share.
@@ -1192,9 +1529,25 @@ def build(
         (dict(t) for t in traces), key=lambda t: (-_t(t.get("made")), str(t.get("name")))
     )
     seasons = _ledger(runs, tune_list, looks, notes, hold_out, confirmation, trace_list)
+    for t in trace_list:
+        # A trace records the replay version it was played under from PR capabilities on; an
+        # earlier one takes its source's, when its check found the code at that version.
+        rv, how = t.get("replay_version"), "the trace"
+        src = by_name.get(str(t.get("from") or ""))
+        if rv is None and t.get("from_source") and src is not None:
+            rv, how = (src.get("versions") or {}).get("replay"), "its source's record"
+        t["capability"] = capability_of(rv)
+        t["capability_from"] = how if t["capability"] else None
     for rs in rulesets:
         rs["checks"]["flags"] += _season_flags(
             rs["key"], runs, seasons, hold_out, looks, tune_list, trace_list
+        )
+        rs["checks"]["flags"] += capability_flags(
+            [x for x in runs if x["ruleset"] == rs["key"]],
+            rs["screen"],
+            engine,
+            notes is not None,
+            by_name,
         )
         rs["checks"]["level"] = _worst(f["level"] for f in rs["checks"]["flags"])
     if not (notes or {}).get("seasons"):
@@ -1235,9 +1588,34 @@ def build(
         "tunes": tune_list,
         "seasons": seasons,
         "traces": trace_list,
+        "capabilities": _capabilities(engine, timeline, notes is not None),
         "notes": None if notes is None else dict(notes),
         "viewer": {"title": "Season", "words": VIEWER, "note": VIEWER_NOTE},
         "generated": dict(generated) | {"lacks": sorted(dict.fromkeys(lacks))},
+    }
+
+
+def _capabilities(
+    engine: Sequence[Mapping[str, Any]], span: Mapping[str, str] | None, noted: bool
+) -> dict[str, Any]:
+    """The simulator's capabilities as the page shows them: the log (each mark placed on the
+    runs' time line), the live engine's changes (placed too), the capability now, the last
+    update of any kind, and what the simulator is behind live in."""
+    now = cap.current()
+    latest = cap.latest()
+    behind = [
+        dict(e)
+        for e in engine
+        if e["taken_in"] is None or (now is not None and e["taken_in"] > (now.replay_version or 0))
+    ]
+    return {
+        "log": [m.payload() | {"at": _place_on(m.date, span)} for m in cap.LOG],
+        "engine": [dict(e) | {"at": _place_on(e["date"], span)} for e in engine],
+        "current": None if now is None else now.payload(),
+        "latest": None if latest is None else latest.payload(),
+        "behind": behind,
+        "kinds": dict(cap.KINDS),
+        "noted": noted,
     }
 
 
@@ -1311,6 +1689,18 @@ def _ruleset_card(
     latest = screens[-1] if screens else None
     base_cell = (baseline or {}).get("cells", [None])[0] if baseline else None
     stages = _stages(rs, rk, m, base_cell, best_up, tunes)
+    tuned = [t["name"] for t in tunes if t["ruleset"] == rk]
+    for st, run in zip(
+        stages,
+        (
+            (baseline or {}).get("run"),
+            (best_up or {}).get("run"),
+            tuned[-1] if tuned else None,
+            tuned[-1] if tuned else None,
+        ),
+        strict=True,
+    ):
+        st["run"] = None if st.get("ghost") else run
     luck_here = luck([r["diff"][m]["ratio"] for r in done])
     flags = _flags(rs, m, mine, here, done, cleared, better, worse, luck_here)
     flags[4:4] = [dict(f) for f in noted.get("flags", [])]

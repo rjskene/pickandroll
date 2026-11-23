@@ -28,9 +28,10 @@
       ${V.view ? "" : note()}</section>`;
   }
   function head() {
-    const v = V.view, s = v.summary, c = v.check;
+    const v = V.view, s = v.summary, c = v.check, line = V.list.find((x) => x.name === V.name), k = line && line.capability;
+    const played = k ? `played on version ${esc(k.replay_version)} (${esc(k.title)})${line.capability_from === "the trace" ? "" : `, read from ${esc(line.capability_from)}`}` : "the version it was played on is not recorded";
     return `<section class="panel"><p class="sv-check">${badge(c.level)} ${esc(c.words)}${c.drift.length ? ": " + c.drift.map(esc).join("; ") : ""}</p>
-      <p class="sub">${esc(s.form)} ${esc(s.from || "")}${s.row ? ` row <code>${esc(s.row)}</code>` : ""} · ${esc(s.season_words)} · ${esc(s.forecaster)} · seed ${esc(s.seed)} · path ${esc(s.path)} · the seat is team ${esc(v.seat)} of ${esc(v.teams)} · code <code>${esc(s.code_sha)}</code> · made ${esc(when(s.made))}</p>
+      <p class="sub">${esc(s.form)} ${esc(s.from || "")}${s.row ? ` row <code>${esc(s.row)}</code>` : ""} · ${esc(s.season_words)} · ${esc(s.forecaster)} · seed ${esc(s.seed)} · path ${esc(s.path)} · the seat is team ${esc(v.seat)} of ${esc(v.teams)} · code <code>${esc(s.code_sha)}</code> · made ${esc(when(s.made))} · ${played}</p>
       <div class="chips"><span class="chip">${esc(v.league.label)}</span><span class="chip">${esc(v.league.shape)}</span></div></section>`;
   }
 

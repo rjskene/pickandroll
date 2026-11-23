@@ -90,9 +90,27 @@
       const st = s.static ? ` · rivals as recorded: ${signed(s.static.mean, m)} ± ${pm(s.static.se, m)}` : "";
       big = signed(s.value.mean, m); small = `± ${pm(s.value.se, m)} on ${esc(s.season)}${st}${kept}${s.verdict ? " · " + esc(s.verdict.words || s.verdict.state) : ""}`;
     }
-    return `<div class="stage ${s.ghost ? "ghost" : ""}"><span class="tag">${esc(s.tag)}</span><span class="k">${esc(s.title)}</span><b>${big}</b><small>${small}</small></div>`;
+    return `<div class="stage ${s.ghost ? "ghost" : ""}"><span class="tag">${esc(s.tag)}</span><span class="k">${esc(s.title)}</span><b>${big}</b><small>${small}</small>${s.capability ? `<small class="capt">played on ${capw(s.capability)}</small>` : ""}</div>`;
   }
-  const stages = (x) => `<div class="rsname c${x.tone % 4}">${esc(x.name)} · ${esc(O(x.measure).label.toLowerCase())}</div><div class="stages">${x.stages.map((s) => stage(s, x.measure)).join("")}</div>`;
+  // ------------------------------------------------------------------ capabilities (PR capabilities)
+  const capw = (c) => (c ? `version ${esc(c.replay_version)} · ${esc(c.title)}` : "no recorded version");
+  const stepped = (m) => [["replay", m.replay_version], ["screen", m.screen_version], ["tune", m.tune_version]].filter(([, v]) => v != null).map(([k, v]) => `${k} ${esc(v)}`).join(", ");
+  function shiftBlock(x) {
+    const m = x.measure;
+    return (x.shifts || []).map((h) => `<div class="shift"><b>Across a capability.</b> <code>${esc(h.from.run)}</code> (${capw(h.from.capability)}) to <code>${esc(h.to.run)}</code> (${capw(h.to.capability)}): ${esc(h.words)}${h.same_world ? "" : "; their seed or paths differ too, so part of it is the draw"}.
+      <ul>${h.baseline.map((b) => `<li>The baseline on ${esc(b.season_words)} ${esc(b.forecaster)}: ${val(b.before.mean, m)} to ${val(b.after.mean, m)} (${signed(b.shift, m)})</li>`).join("")}${h.rows.map((r) => `<li>${esc(r.label)} ${vals(r)} on ${esc(r.cell)}: ${signed(r.before.mean, m)} to ${signed(r.after.mean, m)} (${signed(r.shift, m)})</li>`).join("")}</ul></div>`).join("");
+  }
+  const stages = (x) => `<div class="rsname c${x.tone % 4}">${esc(x.name)} · ${esc(O(x.measure).label.toLowerCase())}</div><div class="stages">${x.stages.map((s) => stage(s, x.measure)).join("")}</div>${x.crosses ? `<p class="crosses">${esc(x.crosses)}</p>` : ""}${shiftBlock(x)}`;
+  function capStrip() {
+    const C = M.capabilities;
+    if (!C) return "";
+    const now = C.current, last = C.latest;
+    const behind = C.behind.length ? C.behind.map((e) => `<b>${esc(e.issue)}</b> ${esc(e.title)} <span class="sub">(${esc(e.date)})</span>`).join(" · ") : C.engine.length ? "nothing outstanding" : C.noted ? "the notes list no live-engine change" : "no notes file";
+    return `<section class="panel"><h2>The simulator's capabilities</h2><p class="sub">Each change to what the simulator can do is a mark (the log is under Runs), and every run says which one it was played on. A figure that crosses a mark moved partly because the simulator did.</p>
+      <div class="capgrid"><div><span class="k">Now</span><b>${now ? `version ${esc(now.replay_version)}` : "n/a"}</b><small>${now ? `${esc(now.title)} · ${esc(now.date)}` : ""}</small></div>
+      <div><span class="k">Last update</span><b>${last ? esc(last.title) : "n/a"}</b><small>${last ? `${esc(last.date)} · ${esc(last.kind)} · ${stepped(last) || "no version stepped"}` : ""}</small></div>
+      <div><span class="k">Behind live in</span><small class="behind">${behind}</small></div></div></section>`;
+  }
   const queueItem = (q) => `<div class="item"><b>${esc(q.title)}</b><span class="badge ${q.state === "word" ? "word" : ""}">${q.state === "word" ? "waits on your word" : esc(q.state)}</span>
     <p>${esc(q.what)}</p><span class="sub" style="text-align:right">${esc(q.size || "")}</span>${q.say ? `<p class="say">say: “${esc(q.say)}”</p>` : ""}</div>`;
   const entry = (a) => `<div class="entry"><div class="when"><span class="badge ${esc(a.level)}">${esc(a.level)}</span>${esc(a.date)}${a.run ? ` · <code>${esc(a.run)}</code>` : ""}</div><p>${esc(a.text)}</p></div>`;
@@ -103,6 +121,7 @@
     const cards = rs.length ? `<div class="grid2">${rs.map(rsCard).join("")}</div>` : `<section class="panel"><p class="empty">No screen or tune is recorded yet.</p></section>`;
     return `<p class="lede">What the simulator has played, what it found, and how far to trust it. <b>Every figure is read from the records</b> on the box, built again when they change.</p>
       ${cards}
+      ${capStrip()}
       <section class="panel"><h2>Is the seat getting better?</h2><p class="sub">Each ruleset's own measure, from today's settings to a tuned set checked on a season no search has seen.</p>
         ${rs.map(stages).join("") || `<p class="empty">Nothing recorded.</p>`}</section>
       <div class="grid2">
@@ -235,14 +254,29 @@
       return `<tr><td><b>${esc(r.name)}</b><br><span class="sub">${esc(r.kind)}${r.design ? " · " + esc(r.design) : ""}</span></td><td><span class="c${tone(r.ruleset)}">${esc(x ? x.name : r.ruleset)}</span></td>
       <td>${r.season_words.map(esc).join(", ") || "n/a"}<br><span class="sub">${esc(r.forecasters)}</span></td><td class="n">${esc(r.paths)}<br><span class="sub">seed ${esc(r.seed)}</span></td>
       <td class="n">${esc(r.pairs_done)}${r.pairs_left ? " · " + esc(r.pairs_left) + " left" : ""}<br><span class="sub">${esc(r.not_played)} not played</span></td><td class="n">${esc(r.cleared)}</td>
-      <td class="n">${isNum(r.hours) ? fx(r.hours, 1) + " h" : "n/a"}<br><span class="sub">${r.pieces.length} piece(s)</span></td><td>${levelBadge(r.audit.level)}<br><span class="sub">${esc(r.audit.breaches)} breaches, ${esc(r.audit.voided)} voided</span></td><td><code>${esc(r.code_sha || "")}</code><br><span class="sub">${esc(r.status)}</span></td></tr>`;
+      <td class="n">${isNum(r.hours) ? fx(r.hours, 1) + " h" : "n/a"}<br><span class="sub">${r.pieces.length} piece(s)</span></td><td>${levelBadge(r.audit.level)}<br><span class="sub">${esc(r.audit.breaches)} breaches, ${esc(r.audit.voided)} voided</span></td><td>${capw(r.capability)}${r.behind_live && r.behind_live.length ? `<br><span class="sub">behind live: ${r.behind_live.map((e) => esc(e.issue)).join(", ")}</span>` : ""}</td><td><code>${esc(r.code_sha || "")}</code><br><span class="sub">${esc(r.status)}</span></td></tr>`;
     }).join("");
     const span = M.timeline || {};
-    const gantt = runs.filter((r) => r.pieces.some((p) => p.at)).map((r) => `<div class="grow"><span>${esc(r.name)}</span><div class="gtrack">${r.pieces.filter((p) => p.at).map((p) => `<i class="t${tone(r.ruleset)}" style="left:${100 * p.at[0]}%;width:${Math.max(0.5, 100 * (p.at[1] - p.at[0]))}%" title="${day(p.started_at)} to ${day(p.finished_at)}"></i>`).join("")}</div></div>`).join("");
+    // The capability log's marks and live's changes on the time line, one line a day (PR capabilities).
+    const C = M.capabilities || { log: [], engine: [] }, onDay = {};
+    const put = (d, at) => (onDay[d] = onDay[d] || { at, marks: [], live: [] });
+    C.log.forEach((m) => { if (m.at != null) put(m.date, m.at).marks.push(m); });
+    C.engine.forEach((e) => { if (e.at != null) put(e.date, e.at).live.push(e); });
+    const days = Object.entries(onDay);
+    const lines = days.map(([, d]) => `<i class="mk${d.marks.length ? "" : " live"}" style="left:${100 * d.at}%"></i>`).join("");
+    const marksRow = days.length ? `<div class="grow gmk"><span class="sub">marks</span><div class="gtrack">${days.map(([dd, d]) => `<b class="mkl${d.marks.length ? "" : " live"}" style="left:${100 * d.at}%"${tip(`<b>${esc(dd)}</b>` + d.marks.map((m) => `<div>${esc(m.title)} <span class="sub">${esc(m.kind)}${stepped(m) ? " · " + stepped(m) : ""}</span></div>`).join("") + d.live.map((e) => `<div>live ${esc(e.issue)}: ${esc(e.title)}</div>`).join(""))}>${d.marks.length ? esc(d.marks.length) : ""}${d.live.length ? "◆" : ""}</b>`).join("")}</div></div>` : "";
+    const gantt = marksRow + runs.filter((r) => r.pieces.some((p) => p.at)).map((r) => `<div class="grow"><span>${esc(r.name)}</span><div class="gtrack">${lines}${r.pieces.filter((p) => p.at).map((p) => `<i class="t${tone(r.ruleset)}" style="left:${100 * p.at[0]}%;width:${Math.max(0.5, 100 * (p.at[1] - p.at[0]))}%" title="${day(p.started_at)} to ${day(p.finished_at)}"></i>`).join("")}</div></div>`).join("");
+    const logRows = [...C.log].reverse().map((m) => `<tr><td>${esc(m.date)}</td><td>#${esc(m.pr)}</td><td>${esc(m.kind)}</td><td>${stepped(m) || `<span class="sub">none stepped</span>`}</td><td><b>${esc(m.title)}</b><br><span class="sub">${esc(m.words)}</span></td><td>${m.takes_in.map(esc).join(", ")}</td></tr>`).join("");
+    const liveRows = (C.engine || []).map((e) => `<tr><td>${esc(e.date)}</td><td>${esc(e.issue)}</td><td><b>${esc(e.title)}</b><br><span class="sub">${esc(e.words)}</span></td><td>${e.taken_in == null ? "not yet" : `version ${esc(e.taken_in)}${e.closed_by && e.closed_by !== "notes" ? ` <span class="sub">(${esc(e.closed_by)})</span>` : ""}`}</td></tr>`).join("");
     const looks = n ? n.looks.map((l) => `<tr><td><b>${esc(l.name)}</b></td><td>${esc(l.date)}</td><td>${esc(l.what)}</td><td>${esc(l.result)}</td><td>${esc(l.issue || "")}</td></tr>`).join("") : "";
     return `<p class="lede">Everything the simulator has recorded on the box. Long runs go in pieces between the live routines' quiet windows.</p>
-      <section class="panel"><h2>Runs</h2>${rows ? `<div class="tablewrap"><table><tr><th>Run</th><th>Ruleset</th><th>Seasons</th><th class="n">Paths</th><th class="n">Pairs</th><th class="n">Cleared</th><th class="n">Box time</th><th>Audit</th><th>Code</th></tr>${rows}</table></div>
-        <div class="gantt">${gantt}<div class="gaxis"><span>${day(span.start)}</span><span>${day(span.end)}</span></div></div>` : `<p class="empty">No run recorded.</p>`}</section>
+      <section class="panel"><h2>Runs</h2>${rows ? `<div class="tablewrap"><table><tr><th>Run</th><th>Ruleset</th><th>Seasons</th><th class="n">Paths</th><th class="n">Pairs</th><th class="n">Cleared</th><th class="n">Box time</th><th>Audit</th><th>Capability</th><th>Code</th></tr>${rows}</table></div>
+        <div class="gantt">${gantt}<div class="gaxis"><span>${day(span.start)}</span><span>${day(span.end)}</span></div></div>
+        <p class="sub">A line on the time line is a day the simulator changed (its count of marks; tap it for what), a diamond a change to the live engine.</p>` : `<p class="empty">No run recorded.</p>`}</section>
+      <section class="panel"><h2>The capability log</h2><p class="sub">Every change to what the simulator can do, newest first: its world, what the seat can do, a live rule it mirrors, how it counts. A version step without a mark fails the simulator's tests.</p>
+        <div class="tablewrap"><table><tr><th>Date</th><th>PR</th><th>Kind</th><th>Versions</th><th>What changed</th><th>Takes in</th></tr>${logRows}</table></div>
+        <h3>The live engine's changes</h3><p class="sub">From the lead's notes; a mark that takes one in closes it.</p>
+        ${liveRows ? `<div class="tablewrap"><table><tr><th>Date</th><th>Issue</th><th>Change</th><th>Taken in</th></tr>${liveRows}</table></div>` : `<p class="empty">${C.noted ? "The notes list no live-engine change." : "No notes file."}</p>`}</section>
       <section class="panel"><h2>Short looks</h2><p class="sub">One path, one seed: never a finding.</p>${n ? `<div class="tablewrap"><table><tr><th>Look</th><th>Date</th><th>What</th><th>Result</th><th>Record</th></tr>${looks}</table></div>` : noNotes("The looks")}</section>
       <section class="panel"><h2>Traces</h2><p class="sub">One path of one pair, written day by day for the Season tab by the trace command (the lead runs it); the lab plays nothing. One path proves nothing.</p>${traceTable()}</section>
       ${M.tunes.length ? M.tunes.map(tuneTable).join("") : `<section class="panel"><h2>Tunes</h2><p class="sub">None recorded yet. Each tune will show its search, lever by lever, and its one confirmation on the unseen season.</p></section>`}`;

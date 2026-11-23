@@ -126,14 +126,19 @@ def read_all(data: Path) -> dict[str, Any]:
     }
 
 
+#: The trace versions the Season tab plays: 1, and 2 since PR capabilities (the same record
+#: with the replay version it was played under).
+TRACE_READS = (1, tv.tr.TRACE_VERSION)
+
+
 def not_a_trace(rec: Any) -> str | None:
     """Why a record is not a trace the Season tab plays; None when it is one."""
     if not isinstance(rec, dict) or rec.get("kind") != "trace":
         return "not a trace (its kind is not trace)"
-    if rec.get("trace_version") != tv.tr.TRACE_VERSION:
+    if rec.get("trace_version") not in TRACE_READS:
         return (
-            f"a trace of version {rec.get('trace_version')!r}: the lab reads version "
-            f"{tv.tr.TRACE_VERSION}"
+            f"a trace of version {rec.get('trace_version')!r}: the lab reads versions "
+            + " and ".join(str(v) for v in TRACE_READS)
         )
     if not isinstance((rec.get("arms") or {}).get("a"), dict) or not isinstance(
         (rec.get("arms") or {}).get("b"), dict

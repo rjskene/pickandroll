@@ -57,8 +57,10 @@ from .engine import mv
 from .state import BENCH, LOST, WON, Setup, SimState
 
 #: The trace record's own version: a change to what a trace holds or means moves it. A replay's
-#: outcome never does (``replay_version`` is the replay's).
-TRACE_VERSION = 1
+#: outcome never does (``replay_version`` is the replay's). 2 since PR capabilities: the record
+#: names the replay version it was played under (``replay_version``), so the lab can say which
+#: capability a trace shows; 1 the trace of PR trace.
+TRACE_VERSION = 2
 #: The two arms, as a pair's record keys them; variant 0 is A's season and variant 1 is B's.
 SIDES = ("a", "b")
 

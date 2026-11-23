@@ -176,6 +176,11 @@ def summary(name: str, rec: Mapping[str, Any]) -> dict[str, Any]:
         "code_sha": (str(rec.get("code_sha") or ""))[:7] or None,
         "made": rec.get("finished_at"),
         "trace_version": rec.get("trace_version"),
+        # PR capabilities: the replay version it was played under (version 2 traces), and
+        # whether its check found the code at its source's version (the model then reads the
+        # source's for a version 1 trace).
+        "replay_version": rec.get("replay_version"),
+        "from_source": (rec.get("check") or {}).get("status") in (CHECKED, WORLD_ONLY),
         "ruleset": md.ruleset_key(rules) if rules else None,
         "confirmation": rec.get("confirmation"),
     }

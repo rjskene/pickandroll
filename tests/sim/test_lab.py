@@ -787,7 +787,8 @@ MARK_STRINGS = {
 MARK_NUMBERS = {
     "paths", "seed", "teams", "breaches", "voided", "pairs_done", "pairs_left", "not_played",
     "screens", "searches", "confirmations", "replays", "looks", "done", "better", "worse",
-    "pass", "traces", "path", "differ_days",
+    "pass", "traces", "path", "differ_days", "replay_version", "screen_version", "tune_version",
+    "pr", "taken_in",
 }  # fmt: skip
 MARK_LISTS = {"chips", "season_words", "seasons", "searched", "tiers"}
 MARK_MAPS = {"values", "set", "both"}
@@ -1610,7 +1611,7 @@ def test_the_traces_are_read_and_a_record_that_is_not_one_refused_by_name(tmp_pa
     code, words = rd.read_trace(tmp_path, "not-a-trace")
     assert code == 422 and words == "not-a-trace: not a trace (its kind is not trace)"
     newer = made_trace() | {"trace_version": 99}
-    assert "the lab reads version 1" in rd.not_a_trace(newer)
+    assert "the lab reads versions 1 and 2" in rd.not_a_trace(newer)
     lab = sv.Lab(tmp_path)
     assert [t["name"] for t in lab.model()["traces"]] == ["t-made"]
 
@@ -1686,3 +1687,275 @@ def test_the_season_tab_plays_a_trace_escapes_it_and_says_when_there_is_none(tmp
     assert out["missing"] and "no trace named" in out["missing"]
     assert "No trace on the box yet" in out["empty"]
     assert out["runs_has_trace"] and out["ledger_has_traces"]
+
+
+# --------------------------------------------------------------------------- capabilities (PR capabilities)
+ENGINE = [
+    {"date": "2026-01-01", "issue": "#485", "title": "made-up live change", "words": "w"},
+    {"date": "2026-01-01", "issue": "#424", "title": "the union pool", "words": "w"},
+    {"date": "2026-01-01", "issue": "#486", "title": "another", "words": "w", "taken_in": 1},
+    {"date": "2026-01-02", "issue": "#487", "title": "dated the run's day", "words": "w"},
+]
+
+
+def on_version(s: dict, version: int | None) -> dict:
+    s["record"]["spec"]["replay_version"] = version
+    return s
+
+
+def test_the_notes_engine_section():
+    n = md.notes_of({"engine": ENGINE})
+    assert [e["issue"] for e in n["engine"]] == ["#485", "#424", "#486", "#487"]
+    assert n["engine"][2]["taken_in"] == 1 and "taken_in" not in n["engine"][0]
+    assert (
+        md.notes_of({"engine": [ENGINE[0] | {"taken_in": None}]})["engine"][0]["taken_in"] is None
+    )
+    assert md.notes_of({})["engine"] == []
+
+
+@pytest.mark.parametrize(
+    ("change", "words"),
+    [
+        ({"issue": "485"}, "engine[0].issue: '485' is not an issue like #485"),
+        ({"taken_in": "21"}, "engine[0].taken_in: a replay version"),
+        ({"taken_in": True}, "engine[0].taken_in: a replay version"),
+        ({"taken_in": 0}, "engine[0].taken_in: a replay version"),
+        ({"date": "yesterday"}, "engine[0].date: 'yesterday' is not a date"),
+        ({"words": ""}, "engine[0].words: a non-empty text"),
+        ({"pr": "#9"}, "'pr' is not a field of engine"),
+    ],
+)
+def test_a_malformed_engine_item_is_refused_by_name(change, words):
+    with pytest.raises(md.NotesError, match=re.escape(words)):
+        md.notes_of({"engine": [ENGINE[0] | change]})
+    with pytest.raises(md.NotesError, match=re.escape("engine[0]: 'words' is missing")):
+        md.notes_of({"engine": [{k: v for k, v in ENGINE[0].items() if k != "words"}]})
+
+
+def test_a_live_change_is_closed_by_the_log_or_the_notes():
+    got = {e["issue"]: e for e in md.engine_changes(md.notes_of({"engine": ENGINE}))}
+    assert (got["#424"]["taken_in"], got["#424"]["closed_by"]) == (20, "replay-20")  # the log
+    assert (got["#486"]["taken_in"], got["#486"]["closed_by"]) == (1, "notes")
+    assert (got["#485"]["taken_in"], got["#485"]["closed_by"]) == (None, None)
+    assert md.engine_changes(None) == []
+
+
+def test_a_run_s_capability_and_what_it_was_behind_live_in():
+    a, _ = two_screens()  # started 2026-01-02, replay version 1
+    m = built([a], notes=md.notes_of({"engine": ENGINE}))
+    run = m["runs"][0]
+    assert run["capability"] == {
+        "id": "replay-1", "replay_version": 1, "title": "The replay", "date": "2026-10-24",
+        "kind": "world",
+    }  # fmt: skip
+    # dated before the run's day and not taken in by its version: #424 came in at 20, #485 not
+    # yet; #486 came in at 1; #487 is dated the run's own day
+    assert [e["issue"] for e in run["behind_live"]] == ["#424", "#485"]
+    f = flag(m["rulesets"][0], "Behind live")
+    assert f["level"] == "watch"
+    assert f["text"] == (
+        "Its latest screen, s-one (version 1 (The replay)), was played before the simulator "
+        "took in: #424 the union pool (2026-01-01); #485 made-up live change (2026-01-01)."
+    )
+    # no version: unknown, never "behind nothing"
+    m = built([on_version(two_screens()[0], None)], notes=md.notes_of({"engine": ENGINE}))
+    assert m["runs"][0]["capability"] is None and m["runs"][0]["behind_live"] is None
+    assert flag(m["rulesets"][0], "Behind live")["level"] == "watch"
+    assert flag(m["rulesets"][0], "Capabilities")["level"] == "watch"
+    # nothing outstanding, and no notes at all, are both ok and said
+    m = built([on_version(two_screens()[0], 21)], notes=md.notes_of({"engine": ENGINE[1:2]}))
+    assert flag(m["rulesets"][0], "Behind live") == {
+        "level": "ok",
+        "title": "Behind live",
+        "text": "Its latest screen, s-one, was played with nothing from live outstanding.",
+    }
+    assert flag(built([two_screens()[0]])["rulesets"][0], "Behind live")["text"].endswith(
+        "(no notes file: live's changes are not listed)."
+    )
+
+
+def two_capabilities():
+    """One ruleset, two screens a day apart: the first on version 20, the second on 21, the
+    same baseline arm and one row in common; the second's baseline a little higher."""
+    rows = [
+        row("base", "pool", 0.0, did_nothing=True),
+        row("up", "pool", 1.2, 0.5, values=(10, 20)),
+    ]
+    old = on_version(screen("s-old", ONE_WIN, copy.deepcopy(rows), started="2026-01-01T10:00:00+00:00",
+                            finished="2026-01-01T12:00:00+00:00"), 20)  # fmt: skip
+    rows2 = [row("base", "pool", 0.0, did_nothing=True), row("up", "pool", 1.5, 0.5, values=(10, 20)),
+             row("new", "daily_cap", 0.4, 0.5)]  # fmt: skip
+    new = on_version(screen("s-new", ONE_WIN, rows2), 21)
+    new["pairs"]["base.json"] = pair(rows2[0], base=5.5)
+    return old, new
+
+
+def test_a_ruleset_on_two_capabilities_is_a_watch_with_the_shift_between():
+    old, new = two_capabilities()
+    m = built([old, new])
+    rs = m["rulesets"][0]
+    assert [(g["capability"]["id"], g["runs"]) for g in rs["capabilities"]] == [
+        ("replay-20", ["s-old"]),
+        ("replay-21", ["s-new"]),
+    ]
+    f = flag(rs, "Capabilities")
+    assert f["level"] == "watch"
+    assert f["text"] == (
+        "Its figures were played on more than one capability: version 20 (The union pool): "
+        "s-old; version 21 (Same-day adds): s-new. A difference across them is the simulator's "
+        "change, not a knob's."
+    )
+    [h] = rs["shifts"]
+    assert (h["from"]["run"], h["to"]["run"]) == ("s-old", "s-new") and h["same_world"]
+    [b] = h["baseline"]
+    assert b["cell"] == "2023 prior" and b["before"]["mean"] == 5.0 and b["after"]["mean"] == 5.5
+    assert b["shift"] == pytest.approx(0.5)
+    # the row both played with the same values; the new row is in one screen only
+    assert [(r["key"], r["before"]["mean"], r["after"]["mean"]) for r in h["rows"]] == [
+        ("up", 1.2, 1.5)
+    ]
+    assert h["rows"][0]["shift"] == pytest.approx(0.3)
+    # the same capability twice: no flag's watch, no shift
+    m = built([on_version(two_capabilities()[0], 21), two_capabilities()[1]])
+    assert m["rulesets"][0]["shifts"] == []
+    assert flag(m["rulesets"][0], "Capabilities")["text"] == (
+        "Every run with a version was played on version 21 (Same-day adds)."
+    )
+    # another baseline arm: the baseline is not compared, the rows still are
+    old, new = two_capabilities()
+    new["record"]["spec"]["arm"] = {"name": "x", "knobs": {"pool": 30}}
+    [h] = built([old, new])["rulesets"][0]["shifts"]
+    assert h["baseline"] == [] and [r["key"] for r in h["rows"]] == ["up"]
+    # another seed: said, since part of the shift is then the draw
+    old, new = two_capabilities()
+    new["record"]["spec"]["world"]["seed"] = 2
+    assert not built([old, new])["rulesets"][0]["shifts"][0]["same_world"]
+
+
+def test_a_tune_on_a_screen_of_another_capability_is_a_problem():
+    old, new = two_capabilities()
+    t = tune("t-1", ONE_WIN)
+    t["record"]["spec"] |= {"replay_version": 20, "screen": {"name": "s-new", "spec_sha": "x"}}
+    t["record"]["screen"] = {"replay_version": {"screen": 21, "tune": 20}}
+    m = built([old, new], [t])
+    rs = m["rulesets"][0]
+    run = next(r for r in m["runs"] if r["name"] == "t-1")
+    assert run["screen"] == {"name": "s-new", "replay_version": 21}
+    f = flag(rs, "Tune's screen")
+    assert f["level"] == "problem"
+    assert f["text"] == (
+        "t-1 (version 20 (The union pool)) reads the screen s-new, played on version 21 "
+        "(Same-day adds): its order and values come from another simulator."
+    )
+    # the stages say what each was played on, and that they cross a mark
+    caps = [(s["id"], (s["capability"] or {}).get("replay_version")) for s in rs["stages"]]
+    assert caps == [("baseline", 21), ("screen", 21), ("searched", 20), ("unseen", 20)]
+    assert rs["crosses"] == (
+        "These figures were played on more than one capability: Current settings, Strongest "
+        "single gain, screen on version 21 (Same-day adds); Tuned set, searched season, Tuned "
+        "set, unseen season on version 20 (The union pool). A gain across them is partly the "
+        "simulator's change."
+    )
+    # its own screen's capability: ok
+    t["record"]["spec"]["replay_version"] = 21
+    t["record"]["screen"] = {}
+    m = built([old, new], [t])
+    assert flag(m["rulesets"][0], "Tune's screen")["level"] == "ok"
+    assert m["rulesets"][0]["crosses"] is None
+
+
+def test_the_simulator_s_capabilities_now_and_on_the_time_line():
+    old, new = two_capabilities()
+    for s, (a, b) in zip(
+        (old, new),
+        (("2026-11-19T10:00:00+00:00", "2026-11-19T12:00:00+00:00"),
+         ("2026-11-21T10:00:00+00:00", "2026-11-21T12:00:00+00:00")),
+        strict=True,
+    ):  # fmt: skip
+        s["record"]["timing"]["pieces"][0] |= {"started_at": a, "finished_at": b}
+    engine = [{"date": "2026-11-20", "issue": "#485", "title": "made up", "words": "w"}]
+    m = built([old, new], notes=md.notes_of({"engine": engine}))
+    c = m["capabilities"]
+    assert c["current"]["id"] == f"replay-{cli.REPLAY_VERSION}"
+    assert c["latest"]["id"] == md.cap.LOG[-1].id
+    assert [e["issue"] for e in c["behind"]] == ["#485"] and c["noted"]
+    at = {x["id"]: x["at"] for x in c["log"]}
+    assert at["replay-1"] is None  # before the line
+    assert at["replay-21"] == pytest.approx(14 / 50)  # 2026-11-20 00:00 on a line of 50 hours
+    assert c["engine"][0]["at"] == pytest.approx(14 / 50)
+    # the runs behind it, and what lab --check says
+    assert [r["behind_live"] for r in m["runs"]] == [
+        [],
+        [{"issue": "#485", "title": "made up", "date": "2026-11-20"}],
+    ]
+    lines = sv.check_lines(m | {"generated": m["generated"] | GENERATED})
+    line = next(x for x in lines if x.startswith("capabilities:"))
+    assert line.startswith(f"capabilities: now version {cli.REPLAY_VERSION} (")
+    assert "runs played on version(s) 20, 21; behind live in #485" in line
+
+
+def test_a_trace_shows_the_capability_it_was_played_on():
+    s = on_version(screen("s-made", ONE_WIN, [row("base", "pool", 0.0, did_nothing=True)]), 20)
+    v1 = tv.summary("t-one", made_trace())  # version 1: no replay version of its own
+    v2 = tv.summary("t-two", made_trace() | {"trace_version": 2, "replay_version": 21})
+    off = tv.summary("t-off", made_trace(status=tv.DRIFTED, drift=("replay_version: x",)))
+    m = built([s], traces=[v1, v2, off])
+    got = {
+        t["name"]: ((t["capability"] or {}).get("id"), t["capability_from"]) for t in m["traces"]
+    }
+    assert got == {
+        "t-one": ("replay-20", "its source's record"),
+        "t-two": ("replay-21", "the trace"),
+        "t-off": (None, None),  # drifted: its source's version is not the code's
+    }
+    assert rd.not_a_trace(made_trace() | {"trace_version": 2}) is None
+    assert "the lab reads versions 1 and 2" in rd.not_a_trace(made_trace() | {"trace_version": 3})
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_the_page_draws_the_capabilities_and_their_marks(tmp_path):
+    old, new = two_capabilities()
+    for s, (a, b) in zip(
+        (old, new),
+        (("2026-11-19T10:00:00+00:00", "2026-11-19T12:00:00+00:00"),
+         ("2026-11-21T10:00:00+00:00", "2026-11-21T12:00:00+00:00")),
+        strict=True,
+    ):  # fmt: skip
+        s["record"]["timing"]["pieces"][0] |= {"started_at": a, "finished_at": b}
+    t = tune("t-1", ONE_WIN)
+    t["record"]["spec"] |= {"replay_version": 20, "screen": {"name": "s-new", "spec_sha": "x"}}
+    t["record"]["timing"]["pieces"][0] |= {
+        "started_at": "2026-11-21T13:00:00+00:00",
+        "finished_at": "2026-11-21T14:00:00+00:00",
+    }
+    engine = [
+        {"date": "2026-11-20", "issue": "#485", "title": "made up", "words": "w"},
+        {"date": "2026-11-21", "issue": "#486", "title": "made up too", "words": "w"},
+    ]
+    notes = md.notes_of(GOOD | {"rulesets": {}, "engine": engine})
+    m = marked(json.loads(json.dumps(built([old, new], [t], notes=notes), default=str)))
+    f = tmp_path / "m.json"
+    f.write_text(json.dumps(m))
+    harness = Path(__file__).with_name("lab_page_harness.js")
+    got = subprocess.run(
+        ["node", str(harness), str(STATIC / "app.js"), str(f), str(f), str(STATIC / "season.js")],
+        capture_output=True, text=True, timeout=120, check=True,
+    )  # fmt: skip
+    out = json.loads(got.stdout)
+    assert out["problems"] == [] and out["marks"] == []
+    over, runs = out["pages"]["overview"], out["pages"]["runs"]
+    assert "The simulator&#x27;s capabilities" in over or "The simulator's capabilities" in over
+    assert "Behind live in" in over and "#485" in over
+    assert 'class="crosses"' in over and 'class="shift"' in over and "Across a capability." in over
+    assert 'class="capt"' in over
+    # the time line: one line a day on each of the three runs' tracks, the day's count above,
+    # a diamond for live's change; a day with only live's change drawn as live's
+    assert runs.count('class="mkl"') == 1 and runs.count('class="mkl live"') == 1
+    assert runs.count('class="mk"') == 3 and runs.count('class="mk live"') == 3
+    assert runs.count("◆") == 2
+    # the log, newest first, and live's changes; each run's capability
+    assert runs.count("<td>#&lt;x-mark&gt;") == len(md.cap.LOG)  # each mark's PR, escaped
+    assert "The capability log" in runs and "not yet" in runs
+    assert "version " in runs and "behind live:" in runs
+    checks = out["pages"]["checks"]
+    assert "Tune&#x27;s screen" in checks or "Tune's screen" in checks

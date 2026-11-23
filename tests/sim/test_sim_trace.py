@@ -262,6 +262,8 @@ def test_a_trace_of_a_screen_s_row_checks_itself_on_the_path_s_outcomes(data):
     assert got is not None
     assert reader.trace_path(data, name).parent == data / reader.TRACES_DIR
     assert got["kind"] == "trace" and got["trace_version"] == tr.TRACE_VERSION
+    # PR capabilities: the replay version it was played under, so the lab can say its capability
+    assert got["replay_version"] == ss.REPLAY_VERSION
     assert got["check"] == {"status": ss.CHECKED, "drift": [], "record_hash_seed": ss.hash_seed()}
     pair = reader.read_screen_pair(data, SCREEN, ROW)
     (on_path,) = [x for x in pair["by_path"]["by_season"]["2024"]["prior"] if x["path"] == 1]

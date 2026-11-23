@@ -5884,6 +5884,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
     row = {} if got is None else got.row
     payload |= {
         "note": TRACE_NOTE,
+        "replay_version": REPLAY_VERSION,
         "source": {"form": "arms"}
         if got is None
         else {
