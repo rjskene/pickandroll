@@ -233,7 +233,16 @@ details.same { margin-top: 8px; color: var(--muted); } details.same summary { cu
 .sv-chart .cap { fill: none; stroke: var(--dim); stroke-dasharray: 4 4; stroke-width: 1.5px; }
 .sv-chart .cap.la { stroke: var(--muted); } .sv-chart .cap.lb { stroke: var(--accent); }
 .sv-chart .nd { stroke: var(--text); stroke-width: 1.5px; }
-.sv-flat { margin-top: 12px; }
+.sv-flat { margin-top: 8px; }
+.sv-flat .kdiffer { font-weight: 600; color: var(--text); }
+.sv-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.sv-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.sv-col > div > .panel { height: auto; }
+@media (max-width: 980px) {
+  .sv-cols { display: flex; flex-direction: column; }
+  .sv-col { display: contents; }
+  .sv-cols .o1 { order: 1; } .sv-cols .o2 { order: 2; } .sv-cols .o3 { order: 3; } .sv-cols .o4 { order: 4; }
+}
 .sv-cmp { margin: 8px 0 4px; font: 600 14px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
 .sv-cmp.diff { color: var(--accent); }
 .sv-lane { position: relative; border-top: 1px solid var(--line); padding: 10px 0 8px; }

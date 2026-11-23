@@ -1441,17 +1441,34 @@ def test_the_day_s_line_in_words():
 def test_which_knobs_get_a_chart():
     v = tv.view("t-made", made_trace())
     charts = {c["key"]: c for c in v["charts"]}
-    # one that differs between the arms, one that moves through the season
-    assert charts["season_weight"]["differs"] and not charts["season_weight"]["moves"]
-    assert charts["stake_level"]["moves"] and not charts["stake_level"]["differs"]
+    # a chart is for what moves (the lead's decision): the adds move, in both arms
+    assert set(charts) == {"adds_week", "adds_today"}
     assert charts["adds_week"]["moves"] and charts["adds_week"]["differs"]
-    # a count and its cap on one chart, and the cap never alone
+    # a count and its cap on one chart, and the cap never alone; the legend says both
     assert charts["adds_week"]["cap"]["same"] and charts["adds_week"]["cap"]["a"][0] == 4
     assert charts["adds_week"]["lo"] == 0 and charts["adds_week"]["hi"] == 4
-    assert not {"adds_week_cap", "adds_today_cap"} & set(charts)
-    # flat and equal in both arms: no chart, said in a line; a flag that is not a number: none
-    assert {x["key"] for x in v["flat"]} == {"later_share", "playoff_weight", "stake"}
-    assert "reads_stake" not in charts and "reads_stake" not in {x["key"] for x in v["flat"]}
+    assert charts["adds_week"]["say"]["b"][3] == "1 of 4"
+    # constant all season in each arm: no chart, even where the arms differ; one row says
+    # both values, the differing ones marked
+    flat = {x["key"]: x for x in v["flat"]}
+    assert set(flat) == {
+        "season_weight", "season_weight_later", "later_share", "playoff_weight", "stake",
+    }  # fmt: skip
+    assert flat["season_weight"] == {
+        "key": "season_weight",
+        "label": "Season weight, this week's games",
+        "a": "0",
+        "b": "0.25",
+        "differs": True,
+    }
+    assert not flat["stake"]["differs"]
+    # the stake level moves, but neither arm reads it: a line, no chart; a flag gets none
+    assert [x["key"] for x in v["unread"]] == ["stake_level"]
+    assert "reads_stake" not in charts and "reads_stake" not in flat
+    t = made_trace()
+    t["arms"]["b"]["days"][4]["knobs"]["reads_stake"] = True
+    got = tv.view("t", t)
+    assert "stake_level" in {c["key"] for c in got["charts"]} and got["unread"] == []
     # drawn from the keys: a knob the trace adds later gets a chart with no change here
     t = made_trace()
     for i, d in enumerate(t["arms"]["b"]["days"]):
@@ -1460,6 +1477,67 @@ def test_which_knobs_get_a_chart():
         d["knobs"]["a_new_schedule"] = 0.0
     got = {c["key"]: c for c in tv.view("t", t)["charts"]}["a_new_schedule"]
     assert got["label"] == "a_new_schedule" and got["differs"] and got["moves"]
+
+
+def test_a_small_value_never_reads_as_zero():
+    t = made_trace()
+    for i, d in enumerate(t["arms"]["b"]["days"]):
+        d["knobs"]["season_weight"] = 0.0004 * (i >= 7)
+    c = {c["key"]: c for c in tv.view("t", t)["charts"]}["season_weight"]
+    assert c["say"]["b"][10] == "0.0004" and c["say"]["a"][10] == "0"
+    assert c["ticks"] == [[0.0, "0"], [0.0004, "0.0004"]]
+    assert [tv._fmt(x, False) for x in (0.00001234, 0.25, 1.0, 12.345, 100.0, 1500.0)] == [
+        "0.0000123", "0.25", "1", "12.3", "100", "1500",
+    ]  # fmt: skip
+
+
+def day(roster, **decided):
+    return {"roster": [[p, "BN"] for p in roster], "decision": decision(**decided)}
+
+
+def test_an_arrival_takes_the_spot_of_the_player_his_move_dropped():
+    # two moves a day whose roster order would cross: 105 is listed first but replaced 103
+    got = tv.roster_spots(
+        [day([101, 102, 103]), day([101, 105, 104], landed=[[104, 102], [105, 103]])]
+    )
+    assert got[1]["rides"] == [
+        {"in": 105, "out": 103, "spot": 2},
+        {"in": 104, "out": 102, "spot": 1},
+    ]
+    assert got[1]["order"] == [101, 104, 105] and got[1]["gone"] == []
+    # a claim won pairs the same way; what no move names pairs by order
+    got = tv.roster_spots(
+        [
+            day([101, 102, 103, 106]),
+            day(
+                [101, 105, 104, 107],
+                cleared=[{"add": 104, "drop": 106, "won": True, "bid": 2}],
+                landed=[[105, 103]],
+            ),
+        ]
+    )
+    rides = {r["in"]: (r["out"], r["spot"]) for r in got[1]["rides"]}
+    assert rides == {105: (103, 2), 104: (106, 3), 107: (102, 1)}
+    # a claim lost moves nobody
+    got = tv.roster_spots(
+        [day([101, 102]), day([101, 104], cleared=[{"add": 103, "drop": 102, "won": False}])]
+    )
+    assert got[1]["rides"] == [{"in": 104, "out": 102, "spot": 1}]
+
+
+def test_a_move_that_lands_on_the_first_day_rides():
+    # a same-day league: day one's roster already holds the add; before it, his drop
+    got = tv.roster_spots([day([101, 104, 103], landed=[[104, 102]]), day([101, 104, 103])])
+    assert got[0]["rides"] == [{"in": 104, "out": 102, "spot": 1}]
+    assert got[0]["order"] == [101, 104, 103] and got[1]["rides"] == []
+    t = made_trace()
+    d0 = t["arms"]["b"]["days"][0]
+    d0["roster"] = [[101, "PG"], [104, "SG"], [103, "BN"]]
+    d0["decision"] = decision(landed=[[104, 102]])
+    v = tv.view("t", t)
+    side = v["days"][0]["sides"]["b"]
+    assert side["rides"] == [{"in": 104, "out": 102, "spot": 1}] and side["did"]
+    assert side["roster"][1] == [104, "SG", True, True]
 
 
 def test_the_pair_shows_what_differs_and_folds_the_rest():

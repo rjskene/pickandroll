@@ -3271,15 +3271,22 @@ the user has not yet said yes to it. From the top:
   differs, and the ones they share folded away; then **where the arms decide differently**, the
   trace's days whose decisions differ (the set, what was queued, the claims) as buttons that go
   there, the first marked;
-- **the knobs in force**: one chart a key of the days' knobs that differs between the arms on
-  any day or moves through the season in either, both arms on it, a needle at the day, the
-  bracket's weeks shaded, the values at the needle beside its name. A count and its cap share a
-  chart (adds this week, adds today, the dollars left against the budget) and a cap gets none of
-  its own. The charts come from the keys, so a knob that becomes a schedule is drawn with no
-  change here; a table gives the known keys their words. One axis a chart. The keys flat and
-  equal in both arms are named in a line;
+- **the knobs in force**: charts are for what moves (the lead's decision). A key of the days'
+  knobs gets one when it changes through the season in either arm's own series, both arms on
+  it, a needle at the day, the bracket's weeks shaded, the values at the needle beside its
+  name in the ticks' own words (three significant digits, so a small fraction never reads as
+  zero). A key the same every day in each arm gets no chart, even where the arms differ: one
+  row above the charts says each such key's value, both arms' where they differ, marked. The
+  week's stake level gets a chart only when an arm reads it; otherwise a line says it moves
+  and neither arm reads it. A count and its cap share a chart (adds this week, adds today, the
+  dollars left against the budget) and a cap gets none of its own. The charts come from the
+  keys, so a knob that becomes a schedule is drawn with no change here; a table gives the known
+  keys their words. One axis a chart;
 - **each arm's move of the day**: two lanes, A above B. The roster in a steady order (a player
-  keeps his spot; one who arrives takes the spot one who left gave up), each with the day's
+  keeps his spot; one who arrives takes the spot of the player his own move dropped, a landed
+  add or a claim won, and only what no move names is paired by order; on the first day the
+  roster before is that day's less its landed adds plus their drops, so a move that lands on
+  day one rides too), each with the day's
   lineup slot, the day's arrivals riding in and the leavers riding out, a lit chip for a
   player who arrived today and a dashed one for a player only that arm holds; the arm's day in
   words (the tier and its solves, the set, what was queued and claimed with its bid, what
@@ -3297,8 +3304,10 @@ the user has not yet said yes to it. From the top:
 The view (`lab/trace_view.py`) works out everything the tab draws that a trace does not hold as
 such: a category's share and lead and the score so far (the engine's own percentage and winner
 rules), the steady roster and the spots that differ, the charts and which keys get one, the
-day's words, and the places. The script draws and moves the clock and works nothing out. The
-parts stack in one column on a phone, the lanes fit its width without a sideways scroll, and the
+day's words and the legends', and the places. The script draws and moves the clock and works
+nothing out. On a wide screen the middle parts sit in two columns, each as tall as its own
+parts (the pair, then the lanes; the knobs, then the matchup); on a narrower one they stack in
+one column in the order above, the lanes fit a phone's width without a sideways scroll, and the
 charts are drawn at their panel's own width so their labels keep their size. Players' names are
 shown: the page is the lead's, on the box, and a trace lives under `data/` only.
 

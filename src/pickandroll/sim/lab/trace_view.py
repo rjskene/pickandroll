@@ -70,9 +70,12 @@ KNOBS: Mapping[str, tuple[str, str]] = {
     ),
     "season_weight_later": (
         "Season weight, the games after this week",
-        "the weight times one less the stake times the week's L",
+        "the weight times one less the stake times the week's stake level",
     ),
-    "later_share": ("Share kept for the later weeks", "one less the stake times the week's L"),
+    "later_share": (
+        "Share kept for the later weeks",
+        "one less the stake times the week's stake level",
+    ),
     "playoff_weight": (
         "Playoff weeks' weight",
         "how many times a bracket week's game counts in the season term",
@@ -90,6 +93,9 @@ CAPS: Mapping[str, str] = {
     "adds_today": "adds_today_cap",
     "faab_left": "faab_budget",
 }
+#: A key drawn only when an arm reads it: the flag, a day's knob, that says the arm does. Where
+#: neither arm reads it on any day, a line says it moves and is not read.
+READ_BY: Mapping[str, str] = {"stake_level": "reads_stake"}
 #: A whole-number key, drawn without decimals.
 WHOLE = frozenset({"adds_week", "adds_today", "faab_left", *CAPS.values()})
 DAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
@@ -341,35 +347,57 @@ def _did(d: Mapping[str, Any], rides: Sequence[Mapping[str, Any]]) -> bool:
 
 
 # --------------------------------------------------------------------------- the roster
+def _moves_of(decision: Mapping[str, Any] | None) -> list[tuple[Any, Any]]:
+    """The day's moves that changed the roster, add and drop: the landed adds, then the claims
+    won that day."""
+    d = decision or {}
+    out = [(m[0], m[1]) for m in d.get("landed") or [] if len(m) >= 2]
+    out += [(c.get("add"), c.get("drop")) for c in d.get("cleared") or [] if c.get("won")]
+    return out
+
+
 def roster_spots(days: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Each day's roster in a steady order of spots (a player keeps his spot while he stays; one
     who arrives takes a spot one who left gave up), with the day's arrivals (``in``, the spot,
-    and whom he took it from) and the players gone with no one in their spot."""
+    and whom he took it from) and the players gone with no one in their spot. An arrival takes
+    the spot of the player the day's own move dropped for him (a landed add, a claim won);
+    only what no move names is paired by order. The first day's roster before is its roster
+    less that day's landed adds, plus their drops, so a move that lands on day one rides too."""
     out: list[dict[str, Any]] = []
     order: list[Any] = []
-    for day in days:
+    for i, day in enumerate(days):
         now = [r[0] for r in day.get("roster") or []]
         slot = {r[0]: r[1] for r in day.get("roster") or []}
         here = set(now)
-        if not out:
-            order = list(now)
-            out.append({"order": order, "slot": slot, "rides": [], "gone": []})
-            continue
+        moves = [(a, b) for a, b in _moves_of(day.get("decision")) if a in here]
+        if i == 0:
+            back = {a: b for a, b in moves if b is not None and b not in here}
+            order = [back.get(p, p) for p in now]
         kept = [p if p in here else None for p in order]
-        freed = [i for i, p in enumerate(kept) if p is None]
-        left = [order[i] for i in freed]
+        freed = [j for j, p in enumerate(kept) if p is None]
         new = [p for p in now if p not in set(order)]
-        rides = []
-        for i, p in enumerate(new):
-            if i < len(freed):
-                kept[freed[i]] = p
-                rides.append({"in": p, "out": left[i], "spot": freed[i]})
+        rides: list[dict[str, Any]] = []
+        took: dict[Any, int] = {}
+        for add, drop in moves:
+            if add in new and add not in took and drop in order:
+                j = order.index(drop)
+                if j in freed:
+                    took[add] = j
+                    freed.remove(j)
+        rest = [p for p in new if p not in took]
+        for p in rest:
+            if freed:
+                took[p] = freed.pop(0)
+        for p in new:
+            if p in took:
+                kept[took[p]] = p
+                rides.append({"in": p, "out": order[took[p]], "spot": took[p]})
             else:
                 kept.append(p)
                 rides.append({"in": p, "out": None, "spot": len(kept) - 1})
-        gone = left[len(new) :]
+        gone = [order[j] for j in freed]
         order = [p for p in kept if p is not None]
-        spot_of = {p: i for i, p in enumerate(order)}
+        spot_of = {p: j for j, p in enumerate(order)}
         for r in rides:
             r["spot"] = spot_of[r["in"]]
         out.append({"order": order, "slot": slot, "rides": rides, "gone": gone})
@@ -382,28 +410,46 @@ def _series(days: Sequence[Mapping[str, Any]], key: str) -> list[float | None]:
 
 
 def _fmt(x: float | None, whole: bool) -> str:
+    """A knob's value in words: whole, or to three significant digits without an exponent, so
+    a small fraction never reads as zero (the ticks and the legend say the same)."""
     if x is None:
         return "none"
-    if whole:
+    if whole or x == 0 or abs(x) >= 1000:
         return f"{x:.0f}"
-    return f"{x:.3g}"
+    t = f"{x:.{max(0, 2 - math.floor(math.log10(abs(x))))}f}"
+    return t.rstrip("0").rstrip(".") if "." in t else t
+
+
+def _say(xs: Sequence[float | None], caps: Sequence[float | None] | None, whole: bool) -> list[str]:
+    """A chart's legend at each day: the value, and "of" the cap's when the chart has one."""
+    return [
+        _fmt(x, whole) + ("" if not caps or caps[i] is None else " of " + _fmt(caps[i], whole))
+        for i, x in enumerate(xs)
+    ]
 
 
 def knob_charts(
     da: Sequence[Mapping[str, Any]], db: Sequence[Mapping[str, Any]]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """The knobs' charts, and the knobs that get none. A key of the days' ``knobs`` gets a chart
-    when it differs between the arms on any day or changes through the season in either; a cap
-    is drawn on its count's chart, never alone; a key that is not a number gets none. Each
-    chart is one axis (its low and high), both arms' series by day, and the cap's when it has
-    one."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """The knobs' charts, the knobs constant all season, and the knobs that move but no arm
+    reads. A key of the days' ``knobs`` gets a chart when it changes through the season in
+    either arm's own series (the lead's decision: charts are for what moves); one the same every
+    day in each arm is a constant, its two values said in one row, marked when the arms differ.
+    A key of :data:`READ_BY` gets a chart only when an arm reads it on some day. A cap is drawn
+    on its count's chart, never alone; a key that is not a number gets none. Each chart is one
+    axis (its low and high), both arms' series by day, the cap's when it has one, and the words
+    the legend says at each day (``say``), the ticks' own."""
     keys: list[str] = []
     for d in (*da, *db):
         for k, v in (d.get("knobs") or {}).items():
             if k not in keys and _num(v) is not None:
                 keys.append(k)
     caps = set(CAPS.values())
-    charts, flat = [], []
+
+    def reads(flag: str) -> bool:
+        return any(bool((d.get("knobs") or {}).get(flag)) for d in (*da, *db))
+
+    charts, constant, unread = [], [], []
     for k in keys:
         if k in caps:
             continue
@@ -412,9 +458,27 @@ def knob_charts(
         moves = len({x for x in a if x is not None}) > 1 or len({x for x in b if x is not None}) > 1
         label, words = KNOBS.get(k, (k, ""))
         whole = k in WHOLE
-        if not (differs or moves):
-            v = next((x for x in a if x is not None), None)
-            flat.append({"key": k, "label": label, "value": _fmt(v, whole)})
+        if not moves:
+            va = next((x for x in a if x is not None), None)
+            vb = next((x for x in b if x is not None), None)
+            constant.append(
+                {
+                    "key": k,
+                    "label": label,
+                    "a": _fmt(va, whole),
+                    "b": _fmt(vb, whole),
+                    "differs": differs,
+                }
+            )
+            continue
+        if k in READ_BY and not reads(READ_BY[k]):
+            unread.append(
+                {
+                    "key": k,
+                    "label": label,
+                    "words": "moves through the season; neither arm reads it",
+                }
+            )
             continue
         cap = None
         if k in CAPS:
@@ -425,14 +489,7 @@ def knob_charts(
         lo, hi = (min(seen), max(seen)) if seen else (0.0, 1.0)
         if lo > 0 and (whole or k in CAPS):
             lo = 0.0
-        if hi == lo:
-            lo, hi = (
-                (lo - 1.0, hi + 1.0)
-                if whole
-                else (lo - abs(lo) * 0.5 - 0.5, hi + abs(hi) * 0.5 + 0.5)
-            )
-            if lo < 0 <= min(seen or [0.0]):
-                lo = 0.0
+
         charts.append(
             {
                 "key": k,
@@ -444,12 +501,15 @@ def knob_charts(
                 "lo": lo,
                 "hi": hi,
                 "ticks": [[lo, _fmt(lo, whole)], [hi, _fmt(hi, whole)]],
-                "digits": 0 if whole else 3,
+                "say": {
+                    "a": _say(a, cap["a"] if cap else None, whole),
+                    "b": _say(b, cap["b"] if cap else None, whole),
+                },
                 "differs": differs,
                 "moves": moves,
             }
         )
-    return charts, flat
+    return charts, constant, unread
 
 
 # --------------------------------------------------------------------------- the view
@@ -626,7 +686,7 @@ def view(name: str, rec: Mapping[str, Any]) -> dict[str, Any]:
             "breaches": len(e.get("breaches") or []),
         }
 
-    charts, flat = knob_charts(days["a"], days["b"])
+    charts, flat, unread = knob_charts(days["a"], days["b"])
     differ = rec.get("differ") or {}
     jumps = [
         {"day": index[t], "label": f"{out_days[index[t]]['label']} {out_days[index[t]]['dow']}"}
@@ -660,6 +720,7 @@ def view(name: str, rec: Mapping[str, Any]) -> dict[str, Any]:
         "differ": {"count": differ.get("count"), "first": index.get(differ.get("first"))},
         "charts": charts,
         "flat": flat,
+        "unread": unread,
         "playoff_teams": playoff_teams,
         "end": end,
         "outcomes": rec.get("outcomes"),

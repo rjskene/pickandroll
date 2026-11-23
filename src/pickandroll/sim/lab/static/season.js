@@ -59,9 +59,11 @@
   }
   function knobPanel() {
     const v = V.view;
-    return `<section class="panel"><span class="k">Knobs in force, day by day</span><div id="sv-charts">
-      ${v.charts.map((c, i) => `<div class="kchart"><div><b>${esc(c.label)}</b><span class="kv" id="sv-kv${i}"></span></div><p class="sub">${esc(c.words)}</p><div id="sv-ch${i}"></div></div>`).join("") || `<p class="sub">No knob differs between the arms or moves through the season.</p>`}</div>
-      ${v.flat.length ? `<p class="sub sv-flat">The same in both arms all season, so not drawn: ${v.flat.map((x) => `${esc(x.label)} ${esc(x.value)}`).join(" · ")}.</p>` : ""}</section>`;
+    const con = (x) => (x.differs ? `<b class="kdiffer">${esc(x.label)}: <span class="ca">A ${esc(x.a)}</span>, <span class="cb">B ${esc(x.b)}</span></b>` : `${esc(x.label)} ${esc(x.a)}`);
+    return `<section class="panel"><span class="k">Knobs in force, day by day</span>
+      ${v.flat.length ? `<p class="sub sv-flat">Constant all season, so not drawn${v.flat.some((x) => x.differs) ? " (the arms' own values where they differ)" : ""}: ${v.flat.map(con).join(" · ")}.</p>` : ""}
+      ${v.unread.length ? `<p class="sub sv-flat">${v.unread.map((x) => `${esc(x.label)}: ${esc(x.words)}`).join(" · ")}.</p>` : ""}
+      <div id="sv-charts">${v.charts.map((c, i) => `<div class="kchart"><div><b>${esc(c.label)}</b><span class="kv" id="sv-kv${i}"></span></div><p class="sub">${esc(c.words)}</p><div id="sv-ch${i}"></div></div>`).join("") || `<p class="sub">No knob moves through the season in either arm.</p>`}</div></section>`;
   }
   function lanePanel() {
     const v = V.view;
@@ -212,8 +214,7 @@
     if (mt) mt.textContent = `${d.label} · ` + (oa === ob ? (oa == null ? "no matchup this week" : `both arms against team ${oa}`) : `A against ${oa == null ? "nobody" : "team " + oa}, B against ${ob == null ? "nobody" : "team " + ob}`);
     v.charts.forEach((c, i) => {
       const e = $("sv-kv" + i); if (!e) return;
-      const cap = (sd) => (c.cap && isNum(c.cap[sd][di]) ? " of " + fmt(c.cap[sd][di], c.digits) : "");
-      e.innerHTML = SIDES.map((sd) => `<i class="l${sd}"></i>${ARM(sd)} ${esc(fmt(c[sd][di], c.digits) + cap(sd))}`).join("");
+      e.innerHTML = SIDES.map((sd) => `<i class="l${sd}"></i>${ARM(sd)} ${esc(c.say[sd][di])}`).join("");
     });
     const kr = $("sv-kvr"), wk = v.weeks[wi];
     if (kr && wk) kr.innerHTML = SIDES.map((sd) => `<i class="l${sd}"></i>${ARM(sd)} ${wk[sd].before ? esc(ord(wk[sd].before.rank)) : "—"}`).join("");
@@ -249,7 +250,9 @@
 
   // ------------------------------------------------------------------ the tab
   function shell() {
-    V.el.innerHTML = picker() + bar() + head() + `<div class="grid2">${pairPanel()}${knobPanel()}</div><div class="grid2">${lanePanel()}${matchPanel()}</div>${racePanel()}`;
+    // Two columns on a wide screen (the pair, then the lanes; the knobs, then the matchup), each
+    // as tall as its own parts; one column on a phone in the brief's order.
+    V.el.innerHTML = picker() + bar() + head() + `<div class="sv-cols"><div class="sv-col"><div class="o1">${pairPanel()}</div><div class="o3">${lanePanel()}</div></div><div class="sv-col"><div class="o2">${knobPanel()}</div><div class="o4">${matchPanel()}</div></div></div>${racePanel()}`;
     V.key = ""; V.week = -1;
     drawCharts(); safeDraw(); controls();
   }
