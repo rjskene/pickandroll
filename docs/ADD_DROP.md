@@ -1482,6 +1482,39 @@ everyone else's by the same rule:
   `blended`, `no blend: export stale (<file> (<date>), …)`, `no blend: export unreadable
   (<file>)`, `no blend: no export` or `no blend: no player in the exports`.
 
+### The week's spread and missed games (#487)
+
+The same calibration found the week's spread too narrow early in the week (the standardized gap's
+spread 1.23 on Monday, 1.29 on Tuesday) and both sides' games about 8% over the games played. The
+master ruled on 2026-11-23 (`season/spread.py`, `weekly.Noise`):
+
+- **Missed games.** Each started game is missed with a probability: a healthy player's
+  `miss_rate` times `spread.SHAPE` at the game's days ahead (a status read today says more about
+  today's game than Sunday's: 0.031 on the day to 0.102 six days on, measured), or, this week
+  only, the measured rate of a Q, D or P listing (`spread.STATUS_MISS`: Q by days ahead, 0.497
+  to 0.226; D 0.698; P 0.126). O and INJ keep the out rule, a GTD the zero-games rule. A team
+  week counts the started games expected to be played, `sum (1 − m)`; the games and starts it
+  shows stay whole games.
+- **The spread.** Each player adds the variance of the games played (`sum m (1 − m)` times the
+  line squared) and the line's own error (`(rate_cv × expected games × line)^2`), a percentage's
+  on its makes less the team's share of its attempts. Both count only the games left, so the
+  spread narrows through the week.
+- **Where.** Every team week: the moves' field and my weeks in the evaluator
+  (`MoveProblem.noise`), the week view and its odds, the outlook, the matchup view, the trade
+  evaluator (so a trade's week before it is the moves' base) and the lineup and sits
+  (`win_lineup`'s `miss` and `cv`, each player's chance the mean over the days left), so my
+  starts carry the spread the opponent's finals do. The days ahead count from the problem's
+  first day. The decision log's move figures (`decisions.move_projection`) count whole games on
+  every horizon, so the season guard and every rest-of-season figure are unchanged. The
+  simulator passes no noise.
+- **The knobs**, the master's ruling as the code's defaults (`spread.DEFAULTS`): `rate_cv` 0.25
+  (0 to 1) and `miss_rate` 0.07 (0 to 0.3). `miss_rate` 0 turns off the missed games, the status
+  rates with them. Like the blend's, they stay out of `LIVE_KNOBS` (the simulator tunes them,
+  #172), and the Monday step never steps them. Both at 0 give the week before #487, byte for
+  byte.
+- **The record.** The moves payload's and the decision log's `system`, and the week view, gain
+  `spread`: the knobs, the shape, the status rates and their source.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a

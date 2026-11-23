@@ -220,6 +220,8 @@ def payload(
             points=p.points,
             no_games=p.no_games,
             gone_from=gone,
+            noise=p.noise,
+            today=p.first_day,
         )
 
     chosen = sl.recommended(

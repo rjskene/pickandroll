@@ -16,7 +16,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from . import lift, recent, reserve
+from . import lift, recent, reserve, spread
 from .moves import PROTECTION_FLOOR
 from .plans import THREE_WEIGHT
 from .stream import DAILY_CAP, PLAN_FLOOR_CATS, PLAN_FLOOR_POINTS
@@ -43,8 +43,9 @@ LIVE_KNOBS = (*KNOBS, "three_weight")
 #: (the simulator's arms name every live knob; the lift's are tuned there later, #172): the solve
 #: reads each from the file or else ``season.lift.DEFAULTS``, and the Monday step never steps them.
 #: The add reserve's and the re-cut rule's (#436, ``season.reserve.KNOBS``) likewise, and the
-#: recent-form blend's (#486, ``season.recent.KNOBS``).
-FILE_KNOBS = (*LIVE_KNOBS, *lift.KNOBS, *reserve.KNOBS, *recent.KNOBS)
+#: recent-form blend's (#486, ``season.recent.KNOBS``) and the week's spread (#487,
+#: ``season.spread.KNOBS``).
+FILE_KNOBS = (*LIVE_KNOBS, *lift.KNOBS, *reserve.KNOBS, *recent.KNOBS, *spread.KNOBS)
 #: The lowest value a knob may take, from section 6's table (#150): the protection floor never
 #: below its default, so no setting lets the engine drop a player worth more than the best add
 #: over the rest of the season; the blend weight and the daily move cap at their bounds' low end.
@@ -174,6 +175,8 @@ def refused(knob: str, value: Any) -> str | None:
         return lift.refused(knob, value)
     if knob in recent.KNOBS:
         return recent.refused(knob, value)
+    if knob in spread.KNOBS:
+        return spread.refused(knob, value)
     if knob in CHOICES and value not in CHOICES[knob]:
         return f"{knob} {value!r} is not one of {', '.join(CHOICES[knob])}"
     if knob in NUMBERS and (isinstance(value, bool) or not isinstance(value, int | float)):

@@ -75,6 +75,7 @@ from ..season import pool as sp
 from ..season import progress as pg
 from ..season import recent as rc
 from ..season import reserve as rs
+from ..season import spread as spr
 from ..season import stream as st
 from ..season import weekly as wk
 from ..sources.injuries import Listed
@@ -426,6 +427,10 @@ def build(
     cats = tuple(s.cats)
     rated = system_rates(season, data_dir, system, knobs["blend"], knobs, today)
     rates, value, info, yahoo = rated.rates, rated.value, rated.info, rated.yahoo
+    # The week's spread for the line's error and missed games (#487): every team week takes it.
+    noise = spr.noise_of(knobs)
+    if noise is not None:
+        info = {**info, "spread": spr.record(noise)}
     players = rated.players
     matchup, read_at = sw.matchup_read(season, mine)
     since = sw.first_day(read_at, today) if matchup is not None else today
@@ -459,6 +464,8 @@ def build(
             points=points,
             no_games=yahoo.zero,
             returns=returns,
+            noise=noise,
+            today=since,
         )
 
     other = matchup.opponent_of(mine) if matchup is not None else None
@@ -533,6 +540,7 @@ def build(
         season_rates=rated.unblended,
         # A forced drop is a permanent cut: chosen on the values before the blend (#486).
         drop_value=rated.unblended_value,
+        noise=noise,
     )
     names = {t.team_id: t.name for t in season.teams}
     horizons = {

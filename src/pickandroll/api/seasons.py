@@ -154,6 +154,7 @@ from ..season import (
 from ..season import autopilot as qa
 from ..season import moves as mv
 from ..season import record as season_rec
+from ..season import spread as season_spread
 from ..season import status as st
 from ..season import weekly as wk
 from ..sources import boxscores
@@ -689,6 +690,7 @@ class SeasonService:
                 WEEKS_AHEAD,
                 self._returns(season),
                 self._played(league, today),
+                season_spread.noise_of(season_knobs.for_league(self.data_dir, league)),
             ),
             **flag_view,
         }
@@ -2984,8 +2986,15 @@ class SeasonService:
 
         def make() -> season_trades.TradeLeague | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
-            blend = season_knobs.for_league(self.data_dir, league)["blend"]
-            return season_trades.build(season, today, self.data_dir, system, blend)
+            knobs = season_knobs.for_league(self.data_dir, league)
+            return season_trades.build(
+                season,
+                today,
+                self.data_dir,
+                system,
+                knobs["blend"],
+                season_spread.noise_of(knobs),
+            )
 
         built = self.moves_cache.get(key, make)
         if built is None:
