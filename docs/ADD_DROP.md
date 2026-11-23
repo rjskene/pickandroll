@@ -123,8 +123,10 @@ games.
 - **The blend** (#152, `system=blend`). For a player Yahoo projects, each per-game rate is
   (1 − w) × Basketball Monster's + w × Yahoo's, w the knob file's `blend` (Yahoo's share, 0.5
   when the file names the blend system and no weight); everyone else keeps Basketball Monster's
-  line, and a player only Yahoo projects keeps Yahoo's. A per-game value is the same mix of the
-  two systems' own. The routes take `blend` as a system name; the dashboard's select still offers
+  line, and a player only Yahoo projects keeps Yahoo's. The per-game values are that mixed table
+  valued once (#500), as the `yahoo` system's are its own mixed table: Yahoo's table lists the
+  available players only, so valued alone it would score them on the waiver wire's scale and
+  mark every one up against the rostered players. The routes take `blend` as a system name; the dashboard's select still offers
   the two systems.
 - **The system in force** (#152). A route that names no system solves on the one the knob file
   (`data/autopilot/knobs.json`, docs/AUTOPILOT.md section 6) has in force for the league,

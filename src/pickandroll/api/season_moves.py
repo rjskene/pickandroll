@@ -277,8 +277,8 @@ def system_rates(
 ) -> Rated:
     """The rates of ``system``: Basketball Monster's; Yahoo's next seven days for the
     available players with Basketball Monster's line for everyone else; or the ``blend`` of the
-    two (#152), Yahoo's share ``blend`` for each player Yahoo projects, each per-game value the
-    same mix of the two systems' own.
+    two (#152), Yahoo's share ``blend`` for each player Yahoo projects. Each per-game value is
+    the system's own table valued once (#500), on one scale for every player.
 
     With ``knobs`` and ``today``, Basketball Monster's line is first blended toward each player's
     recent form (#486, :func:`played_bbm`); Yahoo's seven-day line is near-term already and stays
@@ -308,13 +308,16 @@ def _system(
     cats: tuple[str, ...],
     points: dict[str, float] | None,
 ) -> tuple[dict[int, wk.Rates], dict[int, float], dict[str, Any]]:
-    """:func:`system_rates`' rates, values and info on Basketball Monster's line ``bbm``."""
+    """:func:`system_rates`' rates, values and info on Basketball Monster's line ``bbm``.
+
+    ``yahoo`` and ``blend`` value their own mixed table once (#500): Yahoo's table lists the
+    available players only, so a scorer fitted on it alone would score them on the waiver wire's
+    scale and mark every one up against the rostered players. One table puts every player on
+    the scale of the league's best, as ``bbm`` does."""
     if system == "blend":
         w = pg.BLEND if blend is None else float(blend)
         rates = {**bbm.rates, **blend_rates(bbm.rates, yahoo.rates, w)}
-        value = wk.per_game_values(bbm.rates, cats, points)
-        theirs = wk.per_game_values(yahoo.rates, cats, points)
-        value |= {k: (1 - w) * value[k] + w * v if k in value else v for k, v in theirs.items()}
+        value = wk.per_game_values(rates, cats, points)
         info = {
             **yahoo.info,
             "label": f"Blend: Yahoo {w:.0%}, Basketball Monster {1 - w:.0%}",
@@ -324,8 +327,7 @@ def _system(
         }
     elif system == "yahoo":
         rates = {**bbm.rates, **yahoo.rates}
-        value = {**wk.per_game_values(bbm.rates, cats, points)}
-        value |= wk.per_game_values(yahoo.rates, cats, points)
+        value = wk.per_game_values(rates, cats, points)
         # Yahoo's view of the players page lists the available players only: my roster, the
         # opponents and anyone it does not project keep Basketball Monster's line.
         info = {
