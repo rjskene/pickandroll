@@ -63,6 +63,9 @@ NOT_STARTING = frozenset({"BN", "IL", "IL+", "NA"})
 #: of the rest of this week. D, Q and P keep their games.
 OUT_ALL = frozenset({"INJ", "OFS", "SUSP", "NA"})
 OUT_THIS_WEEK = frozenset({"O"})
+#: The statuses a return date (ESPN's, #485) brings back: in a week after this one a dated player
+#: of these is out until his date and plays from it, whatever the status says.
+DATED = frozenset({"O", "INJ"})
 
 Rates = Mapping[str, float]
 
@@ -70,6 +73,12 @@ Rates = Mapping[str, float]
 def starting_slots(roster: Iterable[str]) -> tuple[str, ...]:
     """The league's daily starting slots (``PG`` ... ``Util``), bench and IL left out."""
     return tuple(s for s in roster if s.upper() not in NOT_STARTING)
+
+
+def active_spots(roster: Iterable[str]) -> int:
+    """The league's active roster spots: the starting slots and the bench, the held slots (IL,
+    IL+, NA) left out (#485, the legal roster a later week plays on)."""
+    return sum(1 for s in roster if s.upper() not in NOT_STARTING or s.upper() == "BN")
 
 
 def accepts(slot: str, positions: Iterable[str]) -> bool:
@@ -119,10 +128,13 @@ def preferring[K: Hashable](value: Mapping[K, float], first: Collection[K]) -> d
     return {**value, **{k: value.get(k, 0.0) + top for k in first}}
 
 
-def is_out(player: Player, this_week: bool, zero_games: bool = False) -> bool:
+def is_out(player: Player, this_week: bool, zero_games: bool = False, dated: bool = False) -> bool:
     """Whether ``player`` misses a week's games: every week for ``INJ``, ``OFS``, ``SUSP`` and
     ``NA``; the rest of this week for ``O``, and for a game-time decision that another
-    projection gives no games (``zero_games``)."""
+    projection gives no games (``zero_games``). A week after this one does not keep out an ``O``
+    or ``INJ`` with a return date (``dated``, #485): the caller holds him back until it."""
+    if dated and not this_week and player.status in DATED:
+        return False
     if player.status in OUT_ALL:
         return True
     return this_week and (player.status in OUT_THIS_WEEK or (player.status == "GTD" and zero_games))
@@ -181,6 +193,8 @@ def project_week[K: Hashable](
     available_from: Mapping[K, date] | None = None,
     gone_from: Mapping[K, date] | None = None,
     chosen: Mapping[date, Collection[K]] | None = None,
+    returns: Mapping[K, date] | None = None,
+    spots: int | None = None,
 ) -> TeamWeek:
     """One roster's week over ``days``.
 
@@ -190,9 +204,24 @@ def project_week[K: Hashable](
     decisions). ``available_from`` holds back the players it names until that day (a waiver
     claim's clear date) and ``gone_from`` stops them from that day on (a drop). A player
     without rates plays but adds nothing. Starters are chosen per day by ``value``, a day of
-    ``chosen`` ranking the players it names first (:func:`daily_starters`)."""
+    ``chosen`` ranking the players it names first (:func:`daily_starters`).
+
+    In a week after this one (#485), ``returns`` are the players' return dates (ESPN's): an
+    ``O`` or ``INJ`` named there is out until his date and plays from it; and ``spots`` makes
+    the roster legal: each day only the ``spots`` most valuable players who can play that day
+    are on the active roster (:func:`legal`). Both leave this week as it was."""
     playing = playing_days(
-        roster, days, schedule, this_week, games, no_games, available_from, gone_from
+        roster,
+        days,
+        schedule,
+        this_week,
+        games,
+        no_games,
+        available_from,
+        gone_from,
+        returns,
+        spots,
+        value,
     )
     started = {key: 0 for key, _ in roster}
     for lineup in daily_starters(roster, playing, days, slots, value, chosen).values():
@@ -211,24 +240,69 @@ def playing_days[K: Hashable](
     no_games: Collection[K] = (),
     available_from: Mapping[K, date] | None = None,
     gone_from: Mapping[K, date] | None = None,
+    returns: Mapping[K, date] | None = None,
+    spots: int | None = None,
+    value: Mapping[K, float] | None = None,
 ) -> dict[K, list[date]]:
     """The days of ``days`` each player of ``roster`` plays, as :func:`project_week` counts
-    them (the schedule, the out rule or a weekly export's games, and the days he is held back
-    or gone)."""
+    them (the schedule, the out rule or a weekly export's games, the days he is held back or
+    gone, and in a later week his return date and the legal roster's ``spots``)."""
+    later = not this_week
+    dated = returns if later and returns is not None else {}
     playing: dict[K, list[date]] = {}
+    # Each player's first and last day he can play, or None when he is out of the week.
+    window: dict[K, tuple[date | None, date | None] | None] = {}
     for key, player in roster:
         played = game_days(player.nba_team, days, schedule)
+        start = available_from.get(key) if available_from is not None else None
+        end = gone_from.get(key) if gone_from is not None else None
+        out = False
         if games is not None and key in games:
             n = max(0, min(int(games[key]), len(played)))
             played = played[len(played) - n :]
-        elif is_out(player, this_week, key in no_games):
-            played = []
-        if available_from is not None and key in available_from:
-            played = [d for d in played if d >= available_from[key]]
-        if gone_from is not None and key in gone_from:
-            played = [d for d in played if d < gone_from[key]]
+            # He plays the last of his game days: before the first of them he is not back.
+            if n <= 0:
+                out = True
+            elif n < len(game_days(player.nba_team, days, schedule)):
+                start = played[0] if start is None else max(start, played[0])
+        elif is_out(player, this_week, key in no_games, key in dated):
+            played, out = [], True
+        if key in dated:
+            start = dated[key] if start is None else max(start, dated[key])
+        if start is not None:
+            played = [d for d in played if d >= start]
+        if end is not None:
+            played = [d for d in played if d < end]
         playing[key] = played
+        window[key] = None if out else (start, end)
+    if later and spots is not None:
+        playing = legal(playing, window, days, spots, value or {})
     return playing
+
+
+def legal[K: Hashable](
+    playing: Mapping[K, list[date]],
+    window: Mapping[K, tuple[date | None, date | None] | None],
+    days: Sequence[date],
+    spots: int,
+    value: Mapping[K, float],
+) -> dict[K, list[date]]:
+    """``playing`` on a legal roster (#485): each day the players who can play that day (inside
+    their ``window``, game or not) hold the ``spots`` active spots, most valuable first by
+    ``value`` (ties by key, as :func:`starters`), and only their games count that day. A held
+    player takes a spot from his day back, the least valuable player then giving it up."""
+    order = sorted(playing, key=lambda k: (-value.get(k, 0.0), str(k)))
+    active: dict[date, frozenset[K]] = {}
+    for day in days:
+        able = [
+            k
+            for k in order
+            if (w := window.get(k)) is not None
+            and (w[0] is None or day >= w[0])
+            and (w[1] is None or day < w[1])
+        ]
+        active[day] = frozenset(able[: max(0, spots)])
+    return {k: [d for d in played if k in active[d]] for k, played in playing.items()}
 
 
 def daily_starters[K: Hashable](

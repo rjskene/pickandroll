@@ -1338,6 +1338,7 @@ def test_an_out_player_of_mine_is_held_out_until_espns_later_return_date(tmp_pat
         listed("espn:1", "Hurt One", "MIN", "Out", "2026-11-04"),
         listed("espn:2", "Day Two", "SAS", "Day-To-Day", "2026-10-23"),
         listed("espn:3", "No Date", "NYK", "Out", None),
+        listed("espn:5", "Long Out", "BOS", "Out", "2026-12-15"),
     ]
     path.write_text(json.dumps({"read_at": NOW.isoformat(), "players": players}))
     members = [
@@ -1345,9 +1346,13 @@ def test_an_out_player_of_mine_is_held_out_until_espns_later_return_date(tmp_pat
         (2, Player(2, "Day Two", "SAS", ("C",), status="GTD")),
         (3, Player(3, "No Date", "NYK", ("C",), status="O")),
         (4, Player(4, "Hurt One", "LAL", ("C",), status="O")),
+        (5, Player(5, "Long Out", "BOS", ("C",), status="INJ")),
     ]
-    # O players only, by name and team; no date, no hold.
-    assert season_moves.espn_returns(tmp_path, members) == {1: date(2026, 11, 4)}
+    # O and INJ players (#485), by name and team; no date, no hold.
+    assert season_moves.espn_returns(tmp_path, members) == {
+        1: date(2026, 11, 4),
+        5: date(2026, 12, 15),
+    }
     assert season_moves.espn_returns(tmp_path / "none", members) == {}
 
 
@@ -1530,21 +1535,22 @@ def test_the_outlook_gives_every_week_left_against_its_opponent_or_the_field(cli
     assert s["underdog"] == sum(1 for x in named if x <= 0.4)
     assert s["favoured"] + s["toss_up"] + s["underdog"] == 18
     # A week's players: what each adds is the week without him from its first day.
-    p = client.app.state.seasons._built(LEAGUE, "bbm").problem
+    built = client.app.state.seasons._built(LEAGUE, "bbm")
+    p = built.problem
     season = client.app.state.seasons.season(LEAGUE)
     span = mv.WeekSpan(tuple(date(2026, 10, 26) + timedelta(n) for n in range(7)), False, ())
     members = [(sp.player.yahoo_id, sp.player) for sp in season.rosters[10]]
-    theirs = wk.finals(
-        wk.project_week(
-            members, p.rates, span.days, p.schedule, p.slots, p.value, False,
-            points=p.points, no_games=p.no_games,
-        ),
-        {},
-        CATS,
+    # Every view's one projection of a later week (#485): the moves' field holds the same week.
+    their_week = season_week.project_team(
+        members, p.rates, span.days, False, p.schedule, p.slots, p.value, p.spots,
+        points=p.points, no_games=p.no_games, returns=built.returns,
     )  # fmt: skip
-    full = wk.odds_of(wk.finals(mv.project_mine(p, span), {}, CATS), theirs, CATS)
+    field = [t for t in season.rosters if t != 4]
+    assert p.horizons["three"][0].opponents[field.index(10)] == their_week
+    theirs = wk.finals(their_week, {}, CATS)
+    full = wk.odds_of(wk.finals(mv.project_mine(p, span, spots=p.spots), {}, CATS), theirs, CATS)
     top = nxt["players"][0]
-    gone = mv.project_mine(p, span, gone={top["player"]: span.days[0]})
+    gone = mv.project_mine(p, span, gone={top["player"]: span.days[0]}, spots=p.spots)
     without = wk.odds_of(wk.finals(gone, {}, CATS), theirs, CATS)
     assert nxt["win"] == pytest.approx(wk.matchup_won(full), abs=1e-4)
     assert top["matchup"] == pytest.approx(wk.matchup_won(full) - wk.matchup_won(without), abs=1e-4)
