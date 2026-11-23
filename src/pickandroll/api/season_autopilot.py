@@ -1133,6 +1133,8 @@ def start_active_need(
     week_start: date,
     roster: Mapping[str, list[int]] | None,
     today: date | None = None,
+    now: datetime | None = None,
+    slots: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Whether the league wants a Start Active run (#215): ``no_run`` before any run in its
     mode, ``week_start`` when its last run is before the week's first day, ``roster_changed``
@@ -1146,7 +1148,12 @@ def start_active_need(
     (the master's ruling on #289). Widened to every set once a week of the presses' ``diff``
     shows Yahoo never undoes a swap of two players who both play. A run in the other mode does
     not count: a league switched live runs again. No need while the mode is off or the league is
-    private."""
+    private.
+
+    A press that is due waits while a live lineup run sat a player today (#482, :func:`sat_today`)
+    whose game has not begun by ``now``: Yahoo's press would start him again in the slot left open.
+    The need is false, its reason ``sit_held``, with the players and their tip-offs under
+    ``sits`` and the reasons it waits on under ``held``; once his tip-off passed, the press runs."""
     out: dict[str, Any] = {"need": False, "reasons": [], "changes": None, "last": None}
     if mode.get("private") or mode["mode"] == "off":
         return out
@@ -1196,7 +1203,72 @@ def start_active_need(
     if landed_since(LINEUP, later_set):
         reasons.append("lineup_set")
     last_view = {k: last.get(k) for k in ("at", "day", "trigger", "outcome", "message")}
+    sits = sat_today(data_dir, league, today, now, slots) if reasons and now and today else []
+    if sits:
+        return {
+            "need": False,
+            "reasons": ["sit_held"],
+            "held": reasons,
+            "sits": sits,
+            "changes": changes,
+            "last": last_view,
+        }
     return {"need": bool(reasons), "reasons": reasons, "changes": changes, "last": last_view}
+
+
+def sat_today(
+    data_dir: Path,
+    league: str,
+    today: date,
+    now: datetime,
+    slots: Sequence[str] | None = None,
+) -> list[dict[str, Any]]:
+    """The players a live lineup run of ``today`` sat (#482) whose game has not begun by ``now``:
+    a step set to the bench from a starting slot with nobody in his place, his tip-off after
+    ``now``, and still on the bench by the day's last live run with a starting slot he may take
+    open, so that Yahoo's Start Active would start him again. ``slots`` are the league's starting
+    slots (None: the open slot is taken as given). Each ``{player, tip}``, by player."""
+    live = [
+        r
+        for _, r in runs(data_dir, league, LINEUP)
+        if r.get("mode") == "live" and r.get("day") == today.isoformat()
+    ]
+    if not live:
+        return []
+    after = next((r.get("after") for r in reversed(live) if r.get("after")), None) or {}
+    out: dict[int, dict[str, Any]] = {}
+    for r in live:
+        for x in r.get("steps") or []:
+            tip = _at(x.get("tip"))
+            if (
+                x.get("outcome") != "set"
+                or str(x.get("to_slot", "")).upper() != lu.BENCH
+                or x.get("with") is not None
+                or str(x.get("from_slot", "")).upper() in wk.NOT_STARTING
+                or tip is None
+                or tip <= now
+            ):
+                continue
+            k = x.get("player")
+            if after and str(after.get(str(k)) or "").upper() != lu.BENCH:
+                continue
+            options = ((x.get("control") or {}).get("options")) or None
+            if slots is not None and not _open_for(after, slots, options):
+                continue
+            out[k] = {"player": k, "tip": tip.isoformat()}
+    return [out[k] for k in sorted(out)]
+
+
+def _open_for(
+    after: Mapping[str, str | None], slots: Sequence[str], options: Sequence[str] | None
+) -> bool:
+    """Whether a starting slot is open on the lineup ``after`` (each player's slot) that a player
+    whose page offers ``options`` (None: any) may take."""
+    held = Counter(str(s).upper() for s in after.values() if s)
+    left = Counter(s.upper() for s in slots)
+    left.subtract(held)
+    may = {o.upper() for o in options} if options is not None else None
+    return any(n > 0 and (may is None or s in may) for s, n in left.items())
 
 
 def start_active_lines(data_dir: Path, league: str, day: date) -> list[dict[str, Any]]:

@@ -1240,7 +1240,18 @@ export interface LineupDay {
   lost: number | null;
   start: number[];
   sit: number[];
+  /** The day's recommended sit (#482): players with a game left out together to protect close
+   * categories, the one joint gain (expected categories, or the matchup's odds in a one-win
+   * league) and each category it moves, its odds before and after. Null: nobody sits. */
+  sits?: LineupSits | null;
   playing?: number[];
+}
+
+export interface LineupSits {
+  players: number[];
+  gain: number;
+  unit: "categories" | "odds";
+  cats: { cat: Cat; before: number; after: number }[];
 }
 
 /** A held slot and its occupant (null: open); a cleared one blocks every add. */

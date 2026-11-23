@@ -1212,6 +1212,19 @@ test("a full bench keeps a hidden empty BN row: never read as no row, shown by h
   assert.deepEqual([got.outcome, got.steps[0].outcome, got.after["1013"]], ["set", "set", "BN"]);
 });
 
+test("a sit (#482): a starter to the bench with nobody in his place, through the full bench's hidden empty row", async () => {
+  const sit = swap(1009, "Util", "BN", null, 0);
+  const checked = X.checkSteps(X.readControls(form()), [sit], SLOTS);
+  assert.deepEqual(checked.steps.map((s) => [s.player, s.outcome, s.reason]), [[1009, "would_set", null]]);
+  assert.equal(checked.after["1009"], "BN");
+  const dom = swapDom({ empty: ["BN"] });
+  const got = await live(dom, [sit]);
+  assert.deepEqual(dom.touched, ["click 1009 Util", "click empty BN"]);
+  assert.deepEqual([got.outcome, got.steps[0].outcome, got.after["1009"]], ["set", "set", "BN"]);
+  // The slot he left stays open: nobody moved in.
+  assert.equal(Object.values(got.after).filter((slot) => slot === "Util").length, 1);
+});
+
 test("the empty row's slot may be on the row alone: it is matched all the same", async () => {
   const dom = swapDom({ empty: ["BN", "IL"], rowPos: true });
   const got = await live(dom, [], { returns: [COMEBACK] });

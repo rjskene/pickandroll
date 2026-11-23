@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -156,6 +156,8 @@ class Recommended:
     #: other day stays on the value path, a held player back this week counted as ever); None
     #: when the lineup is the one the projection already counts.
     chosen: Mapping[date, frozenset[int]] | None = None
+    #: The days whose recommended lineup sits players with a game (#482).
+    sits: Mapping[date, lu.Sit[int]] = field(default_factory=dict)
 
 
 def recommended(
@@ -198,7 +200,7 @@ def recommended(
     done = wk.daily_starters(active, playing, [d for d in span.days if d < first], p.slots, p.value)
     locked = _locked(reads.get(today), begun) if today in ahead and begun else None
     theirs = span.so_far_theirs[0] if span.so_far_theirs else {}
-    days = lu.win_starters(
+    win = lu.win_lineup(
         active,
         playing,
         ahead,
@@ -216,9 +218,16 @@ def recommended(
         started=Counter(k for lineup in done.values() for k in lineup),
         one_win=s.one_win,
     )
-    crowded = [d for d in ahead if sum(d in v for v in playing.values()) > len(by_value[d])]
+    days = win.days
+    crowded = [
+        d
+        for d in ahead
+        if sum(d in v for v in playing.values()) > len(by_value[d]) or d in win.sits
+    ]
     return Recommended(
-        days, {d: frozenset(k for k in days[d] if d in playing.get(k, ())) for d in crowded}
+        days,
+        {d: frozenset(k for k in days[d] if d in playing.get(k, ())) for d in crowded},
+        win.sits,
     )
 
 
@@ -270,15 +279,23 @@ def payload(
     active = list(p.roster)
     # The recommendation is the active roster's alone: a day page's player held now, or gone,
     # plays in the compare and never in the lineup (#196).
-    recs = recommended(built, season, today, span, first, begun).days
+    rec = recommended(built, season, today, span, first, begun)
+    recs = rec.days
 
     days = []
     mentioned: set[int] = {k for k, _ in p.roster} | {k for k, _ in p.held}
     positions = {k: pl.positions for k, pl in members.items()}
     for day in w.days():
         read = reads.get(day)
+        sat = rec.sits.get(day)
         line = lu.compare(
-            day, recs.get(day), read[0] if read else None, playing, p.slots, positions
+            day,
+            recs.get(day),
+            read[0] if read else None,
+            playing,
+            p.slots,
+            positions,
+            sat.players if sat is not None else (),
         )
         mentioned |= {k for _, k in line.yahoo or ()}
         days.append(
@@ -306,6 +323,7 @@ def payload(
                 "lost": line.lost,
                 "start": list(line.start),
                 "sit": list(line.sit),
+                "sits": _sits(sat, s.one_win),
                 # Whoever of mine plays that day: a bench player's game, a starter's none.
                 "playing": sorted(k for k in members if day in playing.get(k, ())),
             }
@@ -354,6 +372,22 @@ def payload(
         },
         "needs": [] if is_public else _needs(s, mine, ahead, reads, today),
         "players": {str(k): _player(players[k]) for k in sorted(mentioned) if k in players},
+    }
+
+
+def _sits(sit: lu.Sit[int] | None, one_win: bool) -> dict[str, Any] | None:
+    """A day's deliberate sit for the view (#482): the players sat together, their one joint
+    gain in ``unit`` (expected categories, or the matchup's odds in a one-win league), and each
+    category it moves, its odds before and after."""
+    if sit is None:
+        return None
+    return {
+        "players": list(sit.players),
+        "gain": round(sit.gain, 4),
+        "unit": "odds" if one_win else "categories",
+        "cats": [
+            {"cat": cat, "before": round(a, 4), "after": round(b, 4)} for cat, a, b in sit.cats
+        ],
     }
 
 

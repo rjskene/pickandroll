@@ -213,6 +213,14 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     set of today after the 05:00 daily is checked again by the 15:00 late pass anyway. It is
     widened to every set once a week of the presses' `diffs` shows Yahoo never undoes a swap of
     two players who both play.
+  A due press waits while a live lineup run sat a player today whose game has not begun (#482,
+  `sit_held`, the master's ruling of 2026-11-22): a step set to the bench from a starting slot with
+  nobody in his place, still on the bench by the day's last live run with a slot he may take
+  open, which Yahoo's press would fill with him again. The need is false, the reasons it waits
+  on under `held` and the players with their tip-offs under `sits`; once his tip-off passed the
+  press runs. A press before a pass's lineup run is unaffected (its run benches him again), and a
+  later day's sit holds nothing: that day's own runs solve it again. The cost: a player moved in
+  after the last lineup run of the day waits for the next slate's run to start.
 
   No press follows an add (#289): in the live public leagues every add the extension submits is
   a pending claim until Yahoo's overnight waiver run, so the press would find nothing new; a
