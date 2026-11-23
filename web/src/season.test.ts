@@ -118,6 +118,7 @@ import {
   chipTone,
   defaultWeek,
   outlookSummary,
+  outlookSummaryTitle,
   leanTone,
   matchupRecord,
   oddsGainLabel,
@@ -1707,14 +1708,37 @@ test("the season view's chips, the week it opens and its summary (#116)", () => 
   assert.equal(defaultWeek([{ week: 5, this_week: false }]), 5);
   assert.equal(defaultWeek([]), null);
   const summary = { weeks: 19, expected_wins: 7.33, expected_cats: 78.2, favoured: 4, toss_up: 1, underdog: 13, field: 1, unread: 0 };
-  assert.deepEqual(outlookSummary(summary), ["7.3 wins expected in the 19 regular weeks left", "4 favoured · 1 toss-up · 13 underdogs", "1 against the field"]);
-  assert.deepEqual(outlookSummary({ ...summary, weeks: 2, favoured: 0, toss_up: 0, underdog: 1, field: 1, unread: 1 }), [
+  const oneWin = { scoring: "categories", h2h: "one_win" } as const;
+  assert.deepEqual(outlookSummary(summary, oneWin), ["7.3 wins expected in the 19 regular weeks left", "4 favoured · 1 toss-up · 13 underdogs", "1 against the field"]);
+  assert.deepEqual(outlookSummary({ ...summary, weeks: 2, favoured: 0, toss_up: 0, underdog: 1, field: 1, unread: 1 }, oneWin), [
     "7.3 wins expected in the 2 regular weeks left",
     "1 underdog",
     "1 against the field",
     "1 without odds, counted as none",
   ]);
-  assert.deepEqual(outlookSummary({ ...summary, weeks: 1, unread: 1 }), ["1 regular week left, none with odds yet: no roster faced was read"]);
+  assert.deepEqual(outlookSummary({ ...summary, weeks: 1, unread: 1 }, oneWin), ["1 regular week left, none with odds yet: no roster faced was read"]);
+});
+
+test("the outlook shows the categories expected where the standings count them, and says which (#488)", () => {
+  const summary = { weeks: 19, expected_wins: 7.33, expected_cats: 41.18, favoured: 4, toss_up: 1, underdog: 13, field: 1, unread: 0 };
+  const each = { scoring: "categories", h2h: "each_category" } as const;
+  const unknown = { scoring: "categories", h2h: null } as const;
+  // Each category: both figures, one decimal, and a tooltip naming the one the standings count.
+  assert.equal(outlookSummary(summary, each)[0], "7.3 wins and 41.2 categories expected in the 19 regular weeks left");
+  assert.match(outlookSummaryTitle(each) ?? "", /standings count every category: the categories expected/);
+  // One win and points: the wins only, no tooltip.
+  for (const f of [{ scoring: "categories", h2h: "one_win" }, { scoring: "points", h2h: null }] as const) {
+    assert.equal(outlookSummary(summary, f)[0], "7.3 wins expected in the 19 regular weeks left");
+    assert.equal(outlookSummaryTitle(f), null);
+  }
+  // A format not read (null or absent): both, and a tooltip saying it was not read.
+  for (const f of [unknown, { scoring: "categories" } as const]) {
+    assert.equal(outlookSummary(summary, f)[0], "7.3 wins and 41.2 categories expected in the 19 regular weeks left");
+    assert.match(outlookSummaryTitle(f) ?? "", /format was not read/);
+  }
+  // The weeks named are the ones the outlook covers.
+  assert.equal(outlookSummary({ ...summary, weeks: 1, expected_wins: 0.6, expected_cats: 5.04 }, each)[0], "0.6 wins and 5.0 categories expected in the 1 regular week left");
+  assert.deepEqual(outlookSummary({ ...summary, weeks: 1, unread: 1 }, each), ["1 regular week left, none with odds yet: no roster faced was read"]);
 });
 
 test("the scorecard's week, season and moves lines in the scorer's units (#126)", () => {
