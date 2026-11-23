@@ -77,6 +77,10 @@ class League:
     #: The per-game value of any line (:func:`weekly.line_value`), so a received player's line
     #: scaled by the margin's search starts as that line would; None keeps his value.
     value_of: Callable[[wk.Rates], float] | None = None
+    #: The week's spread (#487, ``weekly.Noise``), the days ahead counted from ``first_day``;
+    #: None: the week before #487.
+    noise: wk.Noise | None = None
+    first_day: date | None = None
 
 
 @dataclass(frozen=True)
@@ -169,6 +173,8 @@ class Evaluator:
                 no_games=lg.no_games,
                 available_from=change.joins if change else None,
                 gone_from=change.leaves if change else None,
+                noise=lg.noise,
+                today=lg.first_day,
             )
             self._weeks[memo] = (tw, wk.finals(tw, span.so_far.get(team, {}), lg.cats))
         return self._weeks[memo]
