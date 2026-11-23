@@ -1397,31 +1397,32 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .gs-key .k-missed { width: 8px; height: 8px; border-radius: 50%; border: 1.5px dashed var(--accent); }
 .gs-body { display: flex; }
 .gs-labels { width: 92px; flex-shrink: 0; display: flex; flex-direction: column; }
-.gs-labels span { height: 13px; line-height: 13px; font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
-.gs-labels span i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
-.gs-labels .gs-axis-k { height: 14px; color: var(--dim); font-size: 10px; padding-left: 12px; }
+.gs-labels span { height: 22px; line-height: 22px; font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.gs-labels span i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.gs-labels .gs-axis-k { height: 16px; color: var(--dim); font-size: 11px; padding-left: 12px; }
 .gs-tracks { position: relative; flex: 1; min-width: 0; }
-.gs-hour { position: absolute; top: 0; bottom: 14px; width: 1px; background: var(--line); }
-.gs-lane { position: relative; height: 13px; border-bottom: 1px solid rgba(31, 41, 51, 0.6); }
-.gs-band { position: absolute; top: 3px; height: 7px; border-radius: 2px; background: var(--c); opacity: 0.12; }
-.gs-hit { position: absolute; top: 0; height: 13px; min-width: 14px; transform: translateX(-7px); padding: 0 7px; box-sizing: content-box; }
-.gs-bar { position: absolute; top: 2px; height: 9px; min-width: 3px; border-radius: 2px; background: var(--c); box-shadow: 0 0 0 1px var(--bg); }
+.gs-hour { position: absolute; top: 0; bottom: 16px; width: 1px; background: var(--line); }
+.gs-lane { position: relative; height: 22px; border-bottom: 1px solid rgba(31, 41, 51, 0.6); }
+.gs-band { position: absolute; top: 6px; height: 10px; border-radius: 2px; background: var(--c); opacity: 0.12; }
+.gs-hit { position: absolute; top: 0; height: 22px; min-width: 14px; transform: translateX(-7px); padding: 0 7px; box-sizing: content-box; }
+.gs-bar { position: absolute; top: 6px; height: 10px; min-width: 3px; border-radius: 2px; background: var(--c); box-shadow: 0 0 0 1px var(--bg); }
 .gs-bar.failed { background: var(--bad); } .gs-bar.idle { background: var(--dim); }
 .gs-bar.running { animation: fl-blink 0.9s infinite; }
-.gs-mark { position: absolute; top: 2px; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%; border: 1.5px solid var(--muted); background: var(--bg); }
+.gs-mark { position: absolute; top: 6px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; border: 1.5px solid var(--muted); background: var(--bg); }
 .gs-mark.missed { border: 1.5px dashed var(--accent); }
-.gs-mark.missed em { position: absolute; left: 11px; top: -2px; font-style: normal; font-size: 9.5px; color: var(--accent); white-space: nowrap; }
+.gs-mark.missed em { position: absolute; left: 12px; top: -3px; font-style: normal; font-size: 11px; color: var(--accent); white-space: nowrap; }
 .gs-mark.running { border-color: var(--c); background: var(--c); animation: fl-blink 0.9s infinite; }
-.gs-exec { position: absolute; top: 1px; width: 11px; height: 11px; margin-left: -5.5px; transform: rotate(45deg); border: 1.5px solid var(--mover); background: var(--bg); }
-.gs-exec.done { background: var(--mover); } .gs-exec.failed { border-color: var(--bad); background: var(--bad); }
-.gs-exec.running { background: var(--mover); animation: fl-blink 0.9s infinite; }
-.gs-exec b { position: absolute; left: 11px; top: -3px; transform: rotate(-45deg); font-size: 9.5px; font-weight: 600; color: var(--mover); }
-.gs-plain { position: absolute; top: 0; bottom: 14px; width: 7px; margin-left: -3px; cursor: default; }
+.gs-exec { position: absolute; top: 5px; width: 12px; height: 12px; margin-left: -6px; }
+.gs-exec::before { content: ""; position: absolute; inset: 1px; transform: rotate(45deg); border: 1.5px solid var(--mover); background: var(--bg); }
+.gs-exec.done::before { background: var(--mover); } .gs-exec.failed::before { border-color: var(--bad); background: var(--bad); }
+.gs-exec.running::before { background: var(--mover); } .gs-exec.running { animation: fl-blink 0.9s infinite; }
+.gs-exec b { position: absolute; z-index: 2; left: 11px; top: -7px; padding: 0 2px; border-radius: 2px; background: var(--bg); font-size: 10.5px; line-height: 11px; font-weight: 600; color: var(--mover); }
+.gs-plain { position: absolute; top: 0; bottom: 16px; width: 7px; margin-left: -3px; cursor: default; }
 .gs-plain::after { content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: var(--muted); opacity: 0.7; }
-.gs-axis { position: relative; height: 14px; }
-.gs-axis span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 9.5px; color: var(--dim); }
-.gs-now { position: absolute; top: -4px; bottom: 12px; width: 0; border-left: 1.5px solid var(--bad); pointer-events: none; }
-.gs-now b { position: absolute; bottom: -12px; left: 0; transform: translateX(-50%); font-size: 9.5px; color: var(--bad); background: var(--bg); padding: 0 2px; }
+.gs-axis { position: relative; height: 16px; }
+.gs-axis span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 11px; color: var(--dim); }
+.gs-now { position: absolute; top: -4px; bottom: 14px; width: 0; border-left: 1.5px solid var(--bad); pointer-events: none; }
+.gs-now b { position: absolute; bottom: -14px; left: 0; transform: translateX(-50%); font-size: 11px; color: var(--bad); background: var(--bg); padding: 0 2px; }
 .gs-tip { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 10px)); width: max-content; max-width: 460px; padding: 6px 9px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); color: var(--muted); font-size: 11px; line-height: 1.4; pointer-events: none; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
 .gs-tip .t { color: var(--text); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .gs-bar.running, .gs-mark.running, .gs-exec.running, .gs-key .k-run { animation: none; } }
