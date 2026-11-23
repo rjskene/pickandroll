@@ -177,6 +177,7 @@ from . import (
     season_passes,
     season_picks,
     season_pretip,
+    season_private,
     season_progress,
     season_queue,
     season_reads,
@@ -1053,6 +1054,10 @@ class SeasonService:
             # The exports this solve rests on, by their pull times on the Central clock (#355):
             # the key's stamp is their mtimes, so a kept answer names its own inputs.
             out["exports"] = exports_in_force(self.data_dir, season_pretip.CENTRAL)
+            # The private league's moves checked as the queue checks a public league's (#494):
+            # kept with the answer, so the landing row, the push and the moves view agree.
+            if self._is_private(league):
+                out["checks"] = self._private_checks(league, solved, out)
             at = self.clock()
             with self._page_lock:
                 for old in [k for k in self._moves_at if k[:3] == key[:3]]:
@@ -1069,6 +1074,26 @@ class SeasonService:
             return out
 
         return self.moves_cache.get(key, make)
+
+    def _is_private(self, league: str) -> bool:
+        """Whether ``league`` is the private league (its settings' ``public`` false)."""
+        return not leagues.load_settings(self.data_dir, league).get("public", True)
+
+    def _private_checks(
+        self, league: str, built: season_moves.Built, payload: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """The private league's moves checked by the queue's own checks (#494); a failure to
+        check suggests nothing and says why, never fails the solve."""
+        now = self.clock()
+        try:
+            _, flags, _ = self._flags(league)
+            levels = {k: f.level for k, f in flags.items()}
+            season = self.season(league)
+            return season_private.checks(
+                league, built, payload, season, levels, nba_today(now), now
+            )
+        except Exception as exc:  # noqa: BLE001 - the moves stand; the list says why it is empty
+            return season_private.failed(_failure(exc))
 
     def _solve_later(self, league: str, system: str, key: tuple[Any, ...]) -> None:
         """Solve ``key``'s moves on the page's thread, unless a page solve of it is on already;
@@ -1646,26 +1671,20 @@ class SeasonService:
             judged, need = self._rejudge(season, built, open_claims, floor, now)
             rejudged |= judged
             needs |= need
-            day = qa.LeagueDay(
-                league=league,
-                scoring=kind,
-                entry=entry,
-                mode=mode["mode"],
-                private=False,
-                protected=protected,
-                availability={
-                    a.player.yahoo_id: (a.availability, a.clears) for a in season.available
-                },
-                flags={k: f.level for k, f in flags.items()},
-                dropped=season_queue.dropped_recently(season, today),
-                budget=budget,
+            day = season_queue.league_day(
+                league,
+                kind,
+                entry,
+                mode["mode"],
+                season,
+                built.rule,
+                {k: f.level for k, f in flags.items()},
+                today,
                 cap=cap,
-                adds_left=left,
-                uses_faab=season.settings.uses_faab,
+                left=left,
                 kept=frozenset(e["id"] for e in keep),
                 done=len(holding),
                 open_claims=open_claims,
-                unread=season_queue.unread_weeks(entry.get("adds")),
             )
             builds[league] = qa.queue_of(day, today, floor, typical, knobs.get("faab_sizing"))
             rows.append(
@@ -2464,7 +2483,14 @@ class SeasonService:
             "moves": [{"add": m["add"], "drop": m["drop"]} for m in moves],
             "exports": exports,
             "markdown": season_pretip.markdown(
-                league, today, moves, names, teams, exports, str(best.get("status"))
+                league,
+                today,
+                moves,
+                names,
+                teams,
+                exports,
+                str(best.get("status")),
+                best.get("checks"),
             ),
         }
 
