@@ -7,13 +7,16 @@ from __future__ import annotations
 
 import json
 import os
+import random
 
 import pytest
 
 from pickandroll.api import season_knobs, season_moves
+from pickandroll.api import season_week as sw
 from pickandroll.api import seasons as season_api
 from pickandroll.season import Season
 from pickandroll.season import progress as pg
+from pickandroll.season import weekly as wk
 from tests.test_decisions import logged
 from tests.test_season import LEAGUE, season_client, strategy_league
 
@@ -131,12 +134,73 @@ def test_the_blend_system_rates_and_values_are_the_two_systems_mixed(client):
         for stat, b in bbm.rates[k].items():
             y = yahoo.rates[k].get(stat, 0.0)
             assert blend.rates[k][stat] == pytest.approx(0.75 * b + 0.25 * y)
-        assert blend.value[k] == pytest.approx(0.75 * bbm.value[k] + 0.25 * yahoo.value[k])
     for k in set(bbm.rates) - set(bbm.yahoo.rates):
-        assert blend.rates[k] == bbm.rates[k] and blend.value[k] == bbm.value[k]
+        assert blend.rates[k] == bbm.rates[k]
+    # Each system's per-game values are its own table valued once (#500), on one scale.
+    for rated in (bbm, yahoo, blend):
+        assert rated.value == pytest.approx(wk.per_game_values(rated.rates, season.settings.cats))
     assert blend.info["blend"] == 0.25 and "Blend" in blend.info["label"]
     # No weight: half and half.
     assert season_moves.system_rates(season, client.data_dir, "blend").info["blend"] == 0.5
+
+
+# --------------------------------------------------------------------------- one scale (#500)
+CATS9 = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
+BASE = {"pts": 14.0, "threes": 1.6, "reb": 5.5, "ast": 3.2, "stl": 0.9, "blk": 0.6, "tov": 1.7}
+BASE |= {"fgm": 5.2, "fga": 11.0, "ftm": 2.0, "fta": 2.6}
+#: The available players Yahoo lists: the league's weakest, far outside its best 156.
+AVAILABLE = range(170, 200)
+
+
+def league_lines() -> dict[int, dict[str, float]]:
+    """Two hundred made-up lines, best first: each a share of a base line, every stat a little
+    apart, so the best 156 are the same whatever the weakest thirty do below them."""
+    rng = random.Random(500)
+    return {
+        k: {s: round(v * (1.6 - k / 160) * rng.uniform(0.9, 1.1), 3) for s, v in BASE.items()}
+        for k in range(200)
+    }
+
+
+def systems(scale: float) -> tuple[sw.System, sw.System]:
+    """Basketball Monster's lines for every player, and Yahoo's for the available ones: theirs
+    times ``scale``."""
+    bbm = league_lines()
+    yahoo = {k: {s: v * scale for s, v in bbm[k].items()} for k in AVAILABLE}
+    return sw.System(bbm, {"label": "bbm"}), sw.System(yahoo, {"label": "yahoo"})
+
+
+def values(system: str, scale: float) -> dict[int, float]:
+    bbm, yahoo = systems(scale)
+    return season_moves._system(system, 0.5, bbm, yahoo, CATS9, None)[1]
+
+
+def test_yahoos_lines_equal_to_basketball_monsters_value_the_same_under_every_system():
+    # #500: valued on Yahoo's table alone, the available players were scored on the waiver
+    # wire's scale and marked up against the rostered players.
+    base = values("bbm", 1.0)
+    for system in ("yahoo", "blend"):
+        assert values(system, 1.0) == pytest.approx(base, abs=1e-9)
+
+
+def test_yahoos_lines_scaled_down_lower_the_available_and_leave_the_rostered():
+    base = values("bbm", 1.0)
+    for system in ("yahoo", "blend"):
+        got = values(system, 0.8)
+        assert all(got[k] < base[k] - 0.1 for k in AVAILABLE)
+        assert {k: got[k] for k in base if k not in AVAILABLE} == pytest.approx(
+            {k: base[k] for k in base if k not in AVAILABLE}, abs=1e-9
+        )
+    # The blend lies between the two: Yahoo's half of the way down.
+    assert all(values("yahoo", 0.8)[k] < values("blend", 0.8)[k] < base[k] for k in AVAILABLE)
+
+
+def test_basketball_monsters_values_are_its_table_valued_alone():
+    # The bbm system is as it was: Yahoo's lines never reach it.
+    bbm, yahoo = systems(0.5)
+    rates, value, info = season_moves._system("bbm", None, bbm, yahoo, CATS9, None)
+    assert rates == bbm.rates and info == {"label": "bbm"}
+    assert value == wk.per_game_values(bbm.rates, CATS9)
 
 
 # --------------------------------------------------------------------------- at solve time
