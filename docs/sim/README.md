@@ -208,8 +208,9 @@ live league's recorded season: the week against the pairing's opponent (in a rou
 bracket, the round's: **A bracket week**), three weeks against the
 field, the free agents landing tomorrow (today in a same-day league), the weekly add limit net of
 the adds made, the keep rule,
-the protection floor, the plan floor and the daily cap from the knobs (every one of the twelve is
-checked against the engine's own bounds; a missing knob is refused, below **The knobs**). Three
+the protection floor, the plan floor and the daily cap from the knobs (every one is checked
+against the engine's own bounds; a missing knob of the first twelve is refused, below **The
+knobs**). Three
 tiers decide on it. **Exact** is the live route: single swaps on every candidate, the recommended
 set on the three-week horizon with the season guard (an arm's `guard` may switch it off, "The
 season guard and the week's stake" below), the streaming plan beside it (or the strategy
@@ -411,10 +412,13 @@ What a bracket week does not model, each plainly:
 
 ## The knobs, the fields and the season term (`sim/policy.py`, PR C)
 
-**Twelve knobs.** An arm's spec names every knob: the engine's ten live ones
-(`season.progress.LIVE_KNOBS`, read through `sim/engine.py`) and the simulator's two.
-`policy.check_knobs` refuses a missing knob, a name that is not one, and a value outside the
-engine's own bounds (`progress.refused`), naming the knob and the reason:
+**Seventeen knobs.** An arm's spec names the first twelve: the engine's ten live ones
+(`season.progress.LIVE_KNOBS`, read through `sim/engine.py`) and the simulator's two. The
+take-in's five (`policy.TAKEIN_KNOBS`, PR take-in: live's odds calibration, below) take live's
+value when an arm leaves them out, so an arm file written before the take-in plays live's engine
+of now; the arm's record names all seventeen. `policy.check_knobs` refuses a missing knob of the
+twelve, a name that is not one, and a value outside the engine's own bounds (`progress.refused`,
+`recent.refused`, `spread.refused`), naming the knob and the reason:
 
 | knob | kind | bounds | default |
 |---|---|---|---|
@@ -429,10 +433,82 @@ engine's own bounds (`progress.refused`), naming the knob and the reason:
 | `three_weight` | number | 0 to 1 | 0.33 |
 | `season_weight` | number | 0 or more, finite | 0 |
 | `playoff_weight` | number | 0 or more, finite | 1 |
+| `later_weeks` | choice | `legal`, `uncapped` | `legal` |
+| `rate_shrink` | number | 0 to 1 | live's (`recent.DEFAULTS`) |
+| `rate_shrink_games` | number | 1 to 30 | live's (`recent.DEFAULTS`) |
+| `rate_cv` | number | 0 to 1 | live's (`spread.DEFAULTS`) |
+| `miss_rate` | number | 0 to 0.3 | live's (`spread.DEFAULTS`) |
 
 None stays a value only where the engine's default is None (`blend`, `stash_threshold`,
-`faab_sizing`); anywhere else it is refused. Gate 5 runs at the twelve defaults
-(`policy.KNOB_DEFAULTS`); no knob file is read.
+`faab_sizing`); anywhere else it is refused, the take-in's four rates included. Gate 5 runs at the
+defaults (`policy.KNOB_DEFAULTS`), which since the take-in hold live's odds calibration; no knob
+file is read.
+
+**Live's odds calibration** (PR take-in). Live's engine changed three times on 2026-11-23
+(#485, #486, #487). The simulator takes each in as a knob of the arm, live's value by default,
+with a value that plays the simulator as it was before, so a screen can price each change:
+
+- **`later_weeks`** (#485). `legal`, live's rule: every team's later weeks are projected on its
+  whole roster, held slots included, each player held out until his told return date and each
+  day's active spots given to the most valuable who can play (`weekly.legal`); this week is as it
+  was. `uncapped`: the simulator before the take-in, the team's active players with no cap and no
+  return dates. Live has no such knob; it is kept so the change can be measured. Under `legal`
+  the field's members are every rostered player in this week too, as live passes them. The seat's
+  own roster is its active players under either rule.
+  - The return dates are the world's (`World.status_on`): an absence heard after the news lag,
+    with the date the managers were told, for every team. That is news a manager has, as live
+    reads ESPN's for every team. But ESPN's is sometimes missing or poor, and the told date is
+    the truth with a couple of days' noise either way, so the simulator's later weeks know the
+    field's returns better than live's do. That gap is not modelled.
+- **`rate_shrink` and `rate_shrink_games`** (#486). The seat's beliefs are blended toward the
+  lines it has seen (`recent.blend`, the engine's own). The recent lines (`World.recent_on`) are
+  the recorded lines dated in the 7 and 14 days before the day, per game over the games played,
+  so the no-peek check holds with the blend on. The 7-day window is read when it holds enough of
+  a player's games, else the 14-day one, as live.
+  - The blended line is the problem's `rates` and `value`: the near horizons, every team's week
+    and the candidates. The seat's lineup ranks on it too.
+  - The season's figures stay on the beliefs as read: `season_rates` and `drop_value` (the
+    season horizon, the guard and a forced drop read them, as live), the keep rule's inputs, the
+    scorer, the season term, and the stake's and the guard's season figure. A drop forced by a
+    landing add keeps the unblended value.
+  - At `rate_shrink` 0 nothing is blended, and `rate_shrink_games` reads nothing.
+  - The windows are always fresh. Live's export can be a few days old; that staleness is not
+    modelled.
+  - **The split seats.** Live blends the first source's line only, never the second's. So
+    `yahoo`'s rostered players, and the available players the second stand-in does not project,
+    read the first's line blended; the available players it projects keep its line as read.
+  - Under `blend`, a player both project reads `(1 − share) × the first's blended line + share ×
+    the second's own belief`. The world holds the second stand-in's belief for it (`run.World`'s
+    `seconds`, from `cli.seconds_of`), and a world without it refuses to blend such a seat.
+- **`rate_cv` and `miss_rate`** (#487). The week's spread is widened (`spread.noise_of`) in every
+  team's week and in the seat's own weeks in the search (`MoveProblem.noise`), counted from the
+  day.
+  - The world marks no player Q, D or P, only O heard after the lag. So the status rates never
+    fire, and the healthy rate with its shape by days ahead covers every missed game.
+  - Not modelled: the tag before a game, and a tagged player's higher miss chance this week.
+
+**Who takes them.** The seat, and a mirror rival, which takes the arm's five as it takes its
+other knobs. So a row's two worlds differ in their mirror rivals too, as for every knob a mirror
+takes (the lead's decision). A market or a static rival builds no problem and takes none. Its
+lineup ranks on the line as read, as every team's did before.
+
+**The lineup rule** is still the simulator's own: the most valuable set (`policy.starters_of`),
+now on the blended value for the seat and its mirror rivals. Live's lineup (`lineup.win_lineup`,
+#483, #484), with #487's miss chance and spread, is not mirrored.
+
+**An INJ with a date** (#485, the engine's own). Since #485 the engine brings a player marked INJ
+with a return date back in the later weeks of the seat's own horizons (`moves.dated`,
+`comes_back`, `project_mine`), where before an INJ stayed out of every horizon. It reached the
+simulator with no knob, because the simulator's problem carries `returns`. It never fires in a
+replay, where the world marks only O; only a made-up fixture can make one. No version stepped
+for it (the lead's decision).
+
+**All off is the version before.** With `later_weeks: uncapped` and the three rates at 0
+(`policy.TAKEIN_OFF`, the tests' own arms), a season plays as the simulator before the take-in,
+outcome for outcome. `test_sim_takein_equality` holds it on the made-up league:
+- both tiers, the queue's rule and an arm that executes its plan on floors of -1;
+- held slots, points, waivers by priority, FAAB and continuous, both formats and same-day adds;
+- a `yahoo` and a `blend` split seat.
 
 **Five fields.** An arm may also name five fields of its own, on the arm and on its seat
 (`policy.Fields`, in the seat's repr, so two seats that differ in one never share a solve):
@@ -796,6 +872,9 @@ built:
 | `season_weight` | exact, surrogate: with a `stake` the term counts a game after the running week `1 − stake × L` times, and the figure as it was at `stake` 0; under `queue` on the three weeks' set only, not in the plans' gate and not in the season guard, which never reads it (the payload's `notes`) | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read; in a FAAB run also a seat that bids on an arm whose `bid` weighs the season (`bid.season` above 0), bracket read (PR F2) | no term and no such `bid`, or no bracket |
 | `three_weight` | exact executing `queue` (PR E): the weight of the three weeks in the queue's score, 0 in a week of the bracket | any other arm: nothing else weighs a week plan against a set |
+| `later_weeks`, `rate_cv`, `miss_rate` | exact, surrogate, a mirror rival: every team's week and the seat's own in the search (PR take-in) | the ranking tier holds no odds and a static seat makes no move |
+| `rate_shrink` | every seat: the near horizons on the weighing tiers, and on any tier the seat's lineup (PR take-in) | |
+| `rate_shrink_games` | the same, while `rate_shrink` is above 0 | at `rate_shrink` 0 nothing is blended |
 | `system` | the arm's own seat, on a replay that names the two sources' stand-ins | a run without stand-ins |
 | `blend` | the same, when the arm's `system` is `blend` | no stand-ins, or another system |
 | `faab_sizing` | in a FAAB run (PR Fb), a seat that bids by the live rule: exact, surrogate, a mirror rival | no budget in the world (no waivers, or waivers by priority); the ranking tier holds no gain in the engine's units and bids $0 |
@@ -1131,7 +1210,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
   `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
-  the run's league rules ("The league shapes"). The payload (`replay_version` 21) keys by season
+  the run's league rules ("The league shapes"). The payload (`replay_version` 22) keys by season
   what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
@@ -1215,7 +1294,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   for the cells and the world, `--passes`, `--confirm`, `--max-minutes`, and writes a folder under
   `data/sim/tunes/`. It recommends; it promotes nothing.
 
-An arm's spec file names its tier, every one of the twelve knobs, its opponents and what it
+An arm's spec file names its tier, every one of the twelve knobs (the take-in's five may be left
+to live's values), its opponents and what it
 executes (`executes`: `three`, the default, `weighted` or `queue`, **The queue's rule**; with
 `three` or `weighted` it may name `with_plan` and `execute_plan`, the streaming plan beside the
 set, and with `queue` neither), may name its five fields (their defaults otherwise), its `guard`
@@ -1314,9 +1394,11 @@ name whose seat reads the week, which the decision's key now keeps apart on two 
 (**The decision's key**); 19 since the bracket's rounds (PR bracket), its figures version
 18's for a seat that executes the three weeks' set alone and names no `bid` on the week (**A
 bracket week**); 20 since the union pool as an arm's choice (PR pool), its figures version
-19's with the field left off; and 21 since a league whose free-agent adds play the same day (PR
+19's with the field left off; 21 since a league whose free-agent adds play the same day (PR
 today, `--lineup-from today`), its figures version 20's with the rule left off (**A league whose
-adds play the same day**). Each step, and each of the screen's and the tune's, has its mark in
+adds play the same day**); and 22 since live's odds calibration (PR take-in), its figures
+version 21's with every change of it off (**Live's odds calibration**), while an arm that names
+none of its knobs now plays live's engine of 2026-11-23. Each step, and each of the screen's and the tune's, has its mark in
 the capability log (**The capability log**, PR capabilities): a version stepped without a mark
 fails the simulator's tests.
 
@@ -2685,6 +2767,13 @@ added by the PR that builds it, and no flag invents a nudge.
 | `bid.rival_cap` | to on | surrogate | |
 | `bid.shade` | to on, at `q` 0.9 once 10 wins are seen | surrogate | |
 | `guard_pool` | to 30, the size of the list the live search takes (PR pool) | exact | |
+| `later_weeks` | to the other rule (PR take-in) | surrogate | |
+| `rate_shrink` | to 0, and to half and one and a half times the baseline's | surrogate | |
+| `rate_shrink_games` | to half and one and a half times the baseline's | surrogate | |
+| `rate_cv` | to 0, and to half and one and a half times the baseline's | surrogate | |
+| `miss_rate` | to 0, and to half and one and a half times the baseline's | surrogate | |
+| `rate_cv` (row `noise-off`) | the spread off: `rate_cv` and `miss_rate` both to 0 | surrogate | |
+| `later_weeks` (row `all-off`) | all off: `uncapped`, and `rate_shrink`, `rate_cv` and `miss_rate` to 0 | surrogate | |
 
 The seven `bid.` rows are the bid policy's (PR F2): keys of the arm's `bid` block, named by their dotted
 path (`--levers bid.pace.k`) and read only in a FAAB run. A baseline that names no `bid` holds
@@ -2694,16 +2783,36 @@ as the baseline does; at `k` 1 for `bid.pace.reserve`, since a reserve moves not
 baseline that names a pace at `k` 0 keeps its own `shape` and `reserve` in the reserve's row, at
 the list's `k` 1 in both arms. The
 shade goes on at the list's block (`q` 0.9, `least` 10). The path's `shape` has no row.
-The last row is the union pool's (PR pool): the guard's list at the size the live search
+The union pool's row (PR pool) is the guard's list at the size the live search
 takes, with the season guard blocking in both arms. On a baseline whose guard is `off` it is
 not read, and the row says so.
+
+**The take-in's rows** (PR take-in, **Live's odds calibration**). Each change is priced from the
+new baseline:
+- One row a knob, each of its nudges one at a time. A rate's nudges multiply the baseline's
+  value, so a baseline at 0 lists them **not played** with the reason.
+- `noise-off`: #487, which is one change in two knobs.
+- `all-off`: every change at once. Its arm B is the simulator before the take-in.
+
+The rows that undo one change do not add up to `all-off`: the gap is how the changes work
+together. There is no row for the blend's window, which is a constant of the engine, not a
+knob; `rate_shrink_games` is its lever. `--levers rate_cv` names both of `rate_cv`'s rows, and
+`--levers later_weeks` both of its.
+
+**All off against an earlier screen** (`screen.before`). The all-off row's arm B, on the same
+seed and paths, must play what an earlier screen's arm A played on the surrogate tier from the
+same baseline, path for path, as the take-in's equality test holds on the made-up league.
+`screen.before(earlier, all_off)` reads the two pair records' `by_path`. It counts the paths
+that agree, lists the ones that differ, and lists the paths only one record stands on. A record
+written before the trace keeps no `by_path` and is not compared.
 
 The tier each lever is played on, in both arms, whatever tier the baseline names (the cheapest
 that reads the lever):
 
-- **the surrogate tier**, twenty-one levers: `protection_floor`, `daily_cap`, `stash_threshold`,
+- **the surrogate tier**, twenty-six levers: `protection_floor`, `daily_cap`, `stash_threshold`,
   `faab_sizing`, `season_weight`, `playoff_weight`, `pool`, `min_gain`, `weeks_ahead`,
-  `surrogate_days`, `system`, `blend`, `guard`, `stake`, and the bid policy's seven;
+  `surrogate_days`, `system`, `blend`, `guard`, `stake`, the bid policy's seven, and the
+  take-in's five (`later_weeks` and `rate_cv` each on the list twice);
 - **the exact tier**, seven levers: `plan_floor_cats` and `plan_floor_points` (each on the list
   twice), `horizon_weight`, `three_weight`, `executes`, `execute_plan`, `guard_pool`.
 
@@ -2814,7 +2923,8 @@ baseline. The SE is over the paths, not over the season's own chance.
 - Each pair is its own unit. When it ends its record is written to
   `data/sim/screens/<name>/<lever>-<nudge>.json`: the pair's record as `replay` writes it, with
   one `screen` block (the screen's name and version, the row, and its result).
-- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 6 (5 before
+- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 7 (6 before
+  the take-in's seven rows joined the list; 5 before
   the union pool's row joined the list and four of its counts joined the ones "did nothing"
   sets aside; 4 before
   the bid policy's seven rows joined the list and `value_won` joined the counts "did nothing"
