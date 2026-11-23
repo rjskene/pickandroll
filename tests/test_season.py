@@ -1532,6 +1532,11 @@ def test_the_outlook_gives_every_week_left_against_its_opponent_or_the_field(cli
     s, regular = o["summary"], weeks[:19]
     assert (s["weeks"], s["field"], s["unread"]) == (19, 1, 0)
     assert s["expected_wins"] == pytest.approx(sum(w["win"] for w in regular), abs=0.01)
+    # And the categories expected (#488), shown beside the wins in an each-category league: the
+    # same weeks' sum, each week's from the same per-category odds as its win.
+    assert s["expected_cats"] == pytest.approx(sum(w["expected"] for w in regular), abs=0.01)
+    for w in regular:
+        assert w["expected"] == pytest.approx(sum(c["p_win"] for c in w["cats"]), abs=1e-3)
     named = [w["win"] for w in regular if w["opponent"] is not None]
     assert s["favoured"] == sum(1 for x in named if x >= 0.6)
     assert s["underdog"] == sum(1 for x in named if x <= 0.4)

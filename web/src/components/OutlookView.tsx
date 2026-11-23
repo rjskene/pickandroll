@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, type OutlookPayload, type OutlookWeek, type ProjectionSystem, type SeasonView } from "../api";
-import { catValue, chipTone, dayLabel, daysLeftLabel, defaultWeek, gainLabel, leanTone, matchupRecord, oddsGainLabel, oddsLabel, outlookSummary, playersById, recordLabel } from "../season";
+import { catValue, chipTone, dayLabel, daysLeftLabel, defaultWeek, gainLabel, leanTone, matchupRecord, oddsGainLabel, oddsLabel, outlookSummary, outlookSummaryTitle, playersById, recordLabel } from "../season";
 
 const CHIP_TITLE: Record<ReturnType<typeof chipTone>, string> = {
   good: "favoured: 60% or better to win",
@@ -52,7 +52,7 @@ export default function OutlookView({
           <span className="sv-record">{o.record ?? "no record"}</span>
           <span className="muted">today</span>
         </div>
-        <p className="sv-summary">{outlookSummary(o.summary).join(" · ")}</p>
+        <p className="sv-summary" title={outlookSummaryTitle(s) ?? undefined}>{outlookSummary(o.summary, s).join(" · ")}</p>
         <select value={system} onChange={(e) => setSystem(e.target.value as ProjectionSystem)} aria-label="Projection" title={o.system.fallback ?? o.system.label}>
           {(["bbm", "yahoo"] as const).map((x) => (
             <option key={x} value={x}>

@@ -103,8 +103,20 @@ def week_block(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> dict[str, Any] | N
     }
 
 
-def _week(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> dict[str, Any]:
-    return {"before": week_block(ev, []), "after": week_block(ev, moves)}
+def week_number(built: Built) -> int | None:
+    """The week the solve's week horizon is (#488): this week, or a Sunday read's week with no
+    days left (#209), which the scorecard must never take for the week after it."""
+    weeks = built.horizons["week"].get("weeks") or []
+    return int(weeks[0]) if weeks else None
+
+
+def _week(built: Built, ev: mv.Evaluator, moves: Sequence[mv.Move]) -> dict[str, Any]:
+    """This week before and after ``moves``, with the week it is (``week``, #488)."""
+    return {
+        "week": week_number(built),
+        "before": week_block(ev, []),
+        "after": week_block(ev, moves),
+    }
 
 
 def knobs(built: Built) -> dict[str, Any]:
@@ -248,7 +260,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "held": rec["held"],
                 "comebacks": rec["comebacks"],
                 "gain": rec["gain"],
-                "week": _week(ev, _moves_of(moves)),
+                "week": _week(built, ev, _moves_of(moves)),
                 "season_guard": guard_record(rec.get("season_guard")),
                 # The add reserve (#436): what each move adds on the queue's score, and the set
                 # it held back when it held one back.
@@ -270,7 +282,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "held": plan["held"],
                 "comebacks": plan["comebacks"],
                 "gain": {h: round(v - none[h], 3) for h, v in plan["value"]["plan"].items()},
-                "week": _week(ev, _moves_of(moves)),
+                "week": _week(built, ev, _moves_of(moves)),
             }
         )
     wp = payload.get("week_plans")
@@ -306,7 +318,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                     for h in built.problem.horizons
                 },
                 "gain": w["total"],
-                "week": _week(ev, model),
+                "week": _week(built, ev, model),
                 **_reserve_set(built, ev, model),
             }
         )
@@ -361,7 +373,7 @@ def picks_set(built: Built, picks: Mapping[str, Any]) -> dict[str, Any]:
             h: season_moves.comebacks_rows(mv.comebacks(p, h, model)) for h in p.horizons
         },
         "gain": {h: round(ev.gain(h, model), 3) for h in season_moves.HORIZONS},
-        "week": _week(ev, model),
+        "week": _week(b, ev, model),
     }
 
 
@@ -439,7 +451,7 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
                 "source": point.get("source"),
                 "moves": moves,
                 "gain": point.get("gain"),
-                "week": _week(ev, _moves_of(moves)),
+                "week": _week(built, ev, _moves_of(moves)),
                 "season_guard": guard_record(point.get("season_guard")),
             }
         )
