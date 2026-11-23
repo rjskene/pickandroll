@@ -114,8 +114,10 @@ def test_the_push_lists_the_passing_moves_and_names_the_floor():
     lines = push([{"add": 1, "drop": 2}], c).splitlines()
     assert lines[1:3] == [
         "- add Ayo Dosunmu (CHI), drop Jalen Smith (CHI)",
-        "- each clears the checks: the floor is +3 points of the matchup's win odds over the "
-        "three weeks",
+        (
+            "- each clears the checks: the floor is +3 points of the matchup's win odds over the "
+            "three weeks"
+        ),
     ]
     assert "Kevin Love" not in "\n".join(lines)
 
@@ -186,7 +188,9 @@ def test_the_push_the_landing_row_and_the_moves_view_agree_on_the_passing_moves(
     assert [(x["add"], x["drop"]) for x in t["moves"]] == passing
     assert b["moves"] == len(passing) and b["checks"] == c
     # The row's gain is its move's own, not the set's.
-    assert b["gain_of"] == "move" and b["gain"] == b["move"]["gain"] == max(gain[k] for k in passing)
+    assert b["gain_of"] == "move" and b["gain"] == b["move"]["gain"] == max(
+        gain[k] for k in passing
+    )
     assert "each clears the checks: the floor is +0.1 expected categories" in t["markdown"]
     # Nothing is queued or clicked in the private league.
     assert client.post("/autopilot/queue/build").json()["leagues"][0]["status"] == "private"
@@ -200,8 +204,9 @@ def test_a_floor_no_move_clears_empties_every_surface(client):
     assert m["checks"]["moves"] and not any(x["passes"] for x in m["checks"]["moves"])
     assert b["set"] == [] and b["move"] is None and b["moves"] == 0 and b["gain"] is None
     assert t["moves"] == []
-    assert "- no move clears the checks: the floor is +5 expected categories over the three weeks" in (
-        t["markdown"]
+    assert (
+        "- no move clears the checks: the floor is +5 expected categories over the three weeks"
+        in (t["markdown"])
     )
 
 
