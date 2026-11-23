@@ -100,6 +100,15 @@ games.
   gives the games until the next morning's export. A matchup week that does not end on the
   coming Sunday needs the export's calendars set to it and the same dates given with `--start`
   and `--end`.
+- **Later weeks on a legal roster (#485).** A week after this one plays every team, mine
+  included, on its active spots (the league's slots less IL, IL+ and NA): each day the most
+  valuable players who can play that day hold them, a day without a game still holding the
+  spot, and only their games count. An O or INJ with an ESPN return date is out until that day,
+  for every team, and plays from it; an O without one is back next Monday, an INJ without one
+  stays out. A held player takes a spot from his day back and the least valuable player gives
+  it up. One projection (`season_week.project_team`) serves the moves' field, the Season view
+  and the Week view. This week is the out rule's, as above, for every team. The moves'
+  projection of my own roster keeps the comebacks below, which already keep it legal.
 - **Starters.** Each day the players with a game fill the startable slots (the roster less BN,
   IL, IL+ and NA), best first by the chosen system's per-game value (a z-sum over the league's
   categories, or fantasy points). Augmenting paths let a starter move to another slot to make
@@ -154,8 +163,9 @@ the add limit of the week in which it takes effect.
 
 An IL move defers a drop; it does not avoid it (#97). The player moved comes back on the first
 day of the first week the out rule lets him play: next Monday for an O, or ESPN's return date
-when that is later, and he is held out until then. An INJ, OFS, SUSP or NA player stays out of
-every horizon and costs nothing. On the day he comes back, the set drops its least valuable
+when that is later, and he is held out until then. An INJ with an ESPN return date comes back
+on it (#485); an OFS, SUSP or NA player, or an INJ with no date, stays out of every horizon and
+costs nothing. On the day he comes back, the set drops its least valuable
 active player by per-game value, the returning player included, and the drawer names that drop
 ("From Nov 4, X goes when Y returns"). This uses the starters' own ranking; it does not re-value
 every choice.
@@ -1562,7 +1572,8 @@ then UI to evaluate available waiver options"). The flow:
 
    This week is the move model's own (the same span, opponent and week so far as the Matchup
    view). A later week is projected the same way from its Monday with today's rosters (nobody
-   added or dropped; an O sits out this week only). Its opponent is the one the league page
+   added or dropped), every team on its legal roster with ESPN's return dates (#485, "Later
+   weeks on a legal roster" above). Its opponent is the one the league page
    shown for that week pairs me with. A week whose pairs were never read, and a playoff week,
    is played against the field: its odds and finals are the average over every other team
    whose roster was read. The playoffs are the settings page's weeks (#107); before it is

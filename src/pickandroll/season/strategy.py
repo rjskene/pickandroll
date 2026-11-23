@@ -289,7 +289,7 @@ def _days(
     if span.games is not None and key in span.games:
         n = max(0, min(int(span.games[key]), len(played)))
         played = played[len(played) - n :]
-    elif wk.is_out(player, span.this_week, key in problem.no_games):
+    elif wk.is_out(player, span.this_week, key in problem.no_games, mv.dated(problem, key)):
         played = []
     if key in avail:
         played = [d for d in played if d >= avail[key]]
