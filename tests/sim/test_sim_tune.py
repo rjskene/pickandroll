@@ -266,6 +266,57 @@ def test_every_lever_of_the_list_has_its_nudge_and_its_nudge_again_or_none():
         "bid.week-up": 0.5,
         "bid.week-up-again": 0.75,
     }
+    # The take-in's (PR take-in), from live's values: a rate's half and one and a half times are
+    # taken again by the lever itself, until the knob's bounds refuse; its step to 0 goes on by
+    # the same difference, below the minimum; a rule, the spread off and all off have none.
+    live = base({k: policy.KNOB_DEFAULTS[k] for k in policy.TAKEIN_KNOBS})
+    assert at(live, "later_weeks") == {"later_weeks-uncapped": "uncapped", "all-off": "uncapped"}
+    assert at(live, "rate_shrink") == {
+        "rate_shrink-0": 0.0,
+        "rate_shrink-0-again": "rate_shrink -0.5 is below its minimum 0",
+        "rate_shrink-half": 0.25,
+        "rate_shrink-half-again": 0.125,
+        "rate_shrink-more": 0.75,
+        "rate_shrink-more-again": "rate_shrink 1.125 is above its maximum 1",
+    }
+    assert at(live, "rate_shrink_games") == {
+        "rate_shrink_games-half": 2.0,
+        "rate_shrink_games-half-again": 1.0,
+        "rate_shrink_games-more": 6.0,
+        "rate_shrink_games-more-again": 9.0,
+    }
+    assert at(live, "rate_cv") == {
+        "rate_cv-0": 0.0,
+        "rate_cv-0-again": "rate_cv -0.25 is below its minimum 0",
+        "rate_cv-half": 0.125,
+        "rate_cv-half-again": 0.0625,
+        "rate_cv-more": 0.375,
+        "rate_cv-more-again": 0.5625,
+        "noise-off": 0.0,
+    }
+    assert at(live, "miss_rate") == {
+        "miss_rate-0": 0.0,
+        "miss_rate-0-again": "miss_rate -0.07 is below its minimum 0",
+        "miss_rate-half": 0.035,
+        "miss_rate-half-again": 0.0175,
+        "miss_rate-more": 0.105,
+        "miss_rate-more-again": 0.1575,
+    }
+    # From the tests' arms, every change off (``sim_league.KNOBS``): a rate at 0 has nothing to
+    # multiply, all off is the current value, and with no blend its games are not read.
+    assert at(spec, "later_weeks") == {
+        "later_weeks-legal": "legal",
+        "all-off": "the current value",
+    }
+    assert at(spec, "rate_cv") == {
+        "rate_cv-0": "the current value",
+        "rate_cv-half": "a rate at 0 has no step: the nudge multiplies",
+        "rate_cv-more": "a rate at 0 has no step: the nudge multiplies",
+        "noise-off": "the current value",
+    }
+    assert at(spec, "rate_shrink_games") == {
+        "rate_shrink_games": "rate_shrink is 0: there is no blend"
+    }
     # ``with_plan`` is off the list since PR E: no lever of a season (``screen.NOT_LEVERS``).
     assert "with_plan" not in sc.NAMES and "with_plan" in sc.NOT_LEVERS
     # Every row of the list: here, or in the table's test below (the sizing's two).
