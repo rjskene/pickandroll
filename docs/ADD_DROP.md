@@ -720,6 +720,17 @@ out, any of the Moves card's four weeks.
   so a held player back this week keeps his games there, though the search itself counts the
   active roster only. The opponent's week stays by value, so the search is never circular. The
   Moves card and the streaming plans keep value's starters.
+- **Sits to protect close categories (#482, the user's ruling of 2026-11-22).** On those same
+  days, a day with no surplus included, every subset of the day's chosen set is scored the same
+  way (`lineup.win_lineup`): the best replaces it only by a gain of `SIT_MARGIN` (0.05 expected
+  categories, or 0.05 of the matchup's odds in a one-win league, a higher bar), and the players it
+  leaves out sit with their slots open: a low-percentage shooter can lose a close FG% or FT%, a
+  high-turnover player a close TO, where his counting stats swing nothing. Nobody starts in a sat
+  player's place, a locked player is never sat, and there is no last-day rule: early in a week the
+  odds are wide and a sit rarely pays. A day starts ten or so, so the search is about
+  1,024 subsets a day. The Lineup view lists a sat player under Sit, marked, with the categories
+  the sit moves and its one joint gain; the executor benches him with no fill, and Start Active
+  waits while he is sat (`sit_held`, [AUTOPILOT](AUTOPILOT.md)).
 - **First day.** A day before the first day a change counts (the move model's first day, or
   tomorrow in a league whose changes count from tomorrow) shows Yahoo's lineup only.
 - **Yahoo's lineup.** My team page shown for the day (`lineup/<team>/<day>`), or for today the

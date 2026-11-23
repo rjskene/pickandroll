@@ -2,6 +2,7 @@
 // available table's filters and sort, the week projection's totals and odds (#93) and the moves'
 // gains (#94) with their rest of the season (#151), the strategy panel's (#110) and the
 // scorecard's (#126). No React, so `npm test` runs them under Node.
+import { CAT_LABEL } from "./api.ts";
 import type {
   AddBasis,
   AllModesAnswer,
@@ -23,6 +24,7 @@ import type {
   LineupMode,
   LineupAlert,
   LineupDay,
+  LineupSits,
   LineupPayload,
   LineupRunLog,
   LineupStepLog,
@@ -589,8 +591,29 @@ export function lineupGrid(p: Pick<LineupPayload, "slots" | "days">): { slot: st
  * Yahoo's. */
 export function benchPlaying(d: LineupDay): number[] {
   const plays = new Set(d.playing ?? []);
+  const sat = new Set(d.recommended ? (d.sits?.players ?? []) : []);
   const bench = d.recommended ? (d.bench ?? []) : (d.yahoo?.slots ?? []).filter((x) => x.slot === "BN").map((x) => x.player);
-  return bench.filter((k) => plays.has(k));
+  return bench.filter((k) => plays.has(k) && !sat.has(k));
+}
+
+/** A day's Sit row (#482): Yahoo's starters to take out, then the recommended sits Yahoo already
+ * has on the bench, each once; ``protect`` marks a recommended sit. */
+export function sitList(d: LineupDay): { player: number; protect: boolean }[] {
+  const sat = new Set(d.sits?.players ?? []);
+  const out = d.sit.map((k) => ({ player: k, protect: sat.has(k) }));
+  const listed = new Set(d.sit);
+  for (const k of d.sits?.players ?? []) if (!listed.has(k)) out.push({ player: k, protect: true });
+  return out;
+}
+
+/** A recommended sit's words (#482): "Recommended sit, with P2: protects TO 30% → 86%, FG% 41% →
+ * 55% · +0.21 expected categories won". */
+export function sitText(sits: LineupSits, name: (id: number) => string, player?: number): string {
+  const others = sits.players.filter((k) => k !== player).map(name);
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const cats = sits.cats.map((c) => `${CAT_LABEL[c.cat] ?? c.cat} ${pct(c.before)} → ${pct(c.after)}`).join(", ");
+  const gain = sits.unit === "odds" ? `+${(sits.gain * 100).toFixed(1)} points of matchup odds` : `+${sits.gain.toFixed(2)} expected categories won`;
+  return `Recommended sit${others.length ? `, with ${others.join(", ")}` : ""}: ${cats ? `protects ${cats}` : "protects close categories"} · ${gain}`;
 }
 
 /** "daily lineups, a change counts today (the settings page)". */

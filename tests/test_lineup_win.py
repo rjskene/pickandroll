@@ -122,7 +122,7 @@ def test_a_near_tie_keeps_yahoos_starters_and_a_real_gain_does_not():
 
 
 def test_a_day_with_no_surplus_comes_out_as_by_value_and_keeps_its_slots_filled():
-    # 4 hurts the percentage, and nobody sits only to protect it.
+    # 4 hurts the percentage, by less than SIT_MARGIN (#482): nobody sits to protect it.
     rates = {1: SCORER, 2: PASSER, 4: line(pts=4.0, fgm=1.0, fga=12.0)}
     value = {**VALUE, 4: 1.0}
     roster = [p(1, "PG"), p(2, "SG"), p(4, "C")]

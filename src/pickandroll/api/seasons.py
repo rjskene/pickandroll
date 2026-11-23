@@ -154,6 +154,7 @@ from ..season import autopilot as qa
 from ..season import moves as mv
 from ..season import record as season_rec
 from ..season import status as st
+from ..season import weekly as wk
 from ..sources import boxscores
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
@@ -2364,8 +2365,9 @@ class SeasonService:
                 continue
             week = season.calendar.week_of(today) if season and season.calendar else None
             start = week.start if week is not None else today - timedelta(days=today.weekday())
+            slots = wk.starting_slots(season.settings.roster) if season is not None else None
             need = season_autopilot.start_active_need(
-                self.data_dir, league, mode, start, roster, today
+                self.data_dir, league, mode, start, roster, today, now, slots
             )
             if stop:
                 need = {**need, "need": False}

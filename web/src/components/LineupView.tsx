@@ -14,6 +14,8 @@ import {
   playersById,
   ruleText,
   runLine,
+  sitList,
+  sitText,
   stepText,
   weekdayLabel,
   type LineupCell,
@@ -156,14 +158,26 @@ function Grid({ p, name }: { p: LineupPayload; name: (id: number) => string }) {
             </tr>
           ))}
           <tr className="lv-sub">
-            <td className="dim" title="Yahoo's starters to take out of the starting slots: no game, or a better player in his slot">
+            <td
+              className="dim"
+              title="Yahoo's starters to take out of the starting slots: no game, or a better player in his slot. A recommended sit (marked) leaves his slot open to protect close categories"
+            >
               Sit
             </td>
-            {p.days.map((d) => (
-              <td key={d.date} className="bad" title={d.sit.map(info).join("\n") || undefined}>
-                {d.sit.map((k) => shortName(name(k))).join(", ")}
-              </td>
-            ))}
+            {p.days.map((d) => {
+              const list = sitList(d);
+              const title = list.map((x) => (x.protect && d.sits ? `${info(x.player)}\n${sitText(d.sits, name, x.player)}` : info(x.player))).join("\n");
+              return (
+                <td key={d.date} className="bad" title={title || undefined}>
+                  {list.map((x, i) => (
+                    <span key={x.player}>
+                      {i > 0 && ", "}
+                      {x.protect ? <span className="lv-protect">{shortName(name(x.player))}</span> : shortName(name(x.player))}
+                    </span>
+                  ))}
+                </td>
+              );
+            })}
           </tr>
           <tr className="lv-sub">
             <td className="dim" title="bench players who play that day: the slots are full of players worth more, or none fits them">

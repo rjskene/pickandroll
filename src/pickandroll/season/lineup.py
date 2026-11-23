@@ -11,7 +11,9 @@ same and are not a difference.
 On a crowded day of the current week against a named opponent, the set is the largest one with
 the most expected categories won this week (:func:`win_starters`, #314), or in a league whose
 standings count one win per matchup the best odds of winning it (#397); a near-tie keeps
-Yahoo's starters. Every other day, week and league ranks by the general per-game value.
+Yahoo's starters. A day's chosen set gives way to a smaller one that gains :data:`SIT_MARGIN`
+(#482): the players it leaves out sit to protect close categories, their slots open. Every other
+day, week and league ranks by the general per-game value.
 
 A league whose lineups change weekly sets one lineup for the week (:func:`weekly_lineup`): the
 most valuable set over the week's games, each player worth his games times his per-game value.
@@ -35,7 +37,7 @@ and the rest still applies. Held slots are never touched.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Collection, Hashable, Mapping, Sequence
+from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
@@ -57,6 +59,13 @@ TIE = 0.015
 #: times the chance the category decides the week, about 0.3 to 0.5, so 0.015 categories is about
 #: 0.005 to 0.0075 of odds; the thin end (the master's ruling on #397).
 TIE_ODDS = 0.005
+#: What a day's smaller set must gain over its chosen set to sit the players it leaves out (#482,
+#: the user's ruling of 2026-11-22): a low-percentage shooter can lose a close FG% or FT%, a
+#: high-turnover player a close TO, where his counting stats swing nothing. The same number in
+#: both units: expected categories, or the matchup's odds in a one-win league (a higher bar).
+SIT_MARGIN = 0.05
+#: A category a sit moves, for the view: its odds change by at least this much.
+SIT_MOVES = 0.01
 
 
 @dataclass(frozen=True)
@@ -138,7 +147,8 @@ def _legal_sets[K: Hashable](
     rows: Sequence[tuple[K, Sequence[str]]], slots: Sequence[str]
 ) -> list[frozenset[K]]:
     """Every set of ``rows`` of the largest size the ``slots`` can hold: leaving a slot empty for
-    a player who could fill it is never a choice."""
+    a player who could fill it is never a choice here; only :func:`_sit` leaves one open, by
+    :data:`SIT_MARGIN` (#482)."""
 
     def held(keys: Sequence[K]) -> int:
         return len(wk.starters([(k, pos[k]) for k in keys], slots, dict.fromkeys(keys, 1.0)))
@@ -148,7 +158,32 @@ def _legal_sets[K: Hashable](
     return [frozenset(c) for c in combinations(pos, size) if held(c) == size]
 
 
-def win_starters[K: Hashable](
+@dataclass(frozen=True)
+class Sit[K: Hashable]:
+    """A day's deliberate sit (#482): ``players`` with a game whom the slots could hold, left
+    out together for ``gain`` (expected categories, or the matchup's odds in a one-win league),
+    and each category whose odds that moves by :data:`SIT_MOVES` or more, ``(cat, before,
+    after)``."""
+
+    players: tuple[K, ...]
+    gain: float
+    cats: tuple[tuple[str, float, float], ...]
+
+
+@dataclass(frozen=True)
+class WinLineup[K: Hashable]:
+    """:func:`win_lineup`'s answer: each day's starters by slot, and the days with a sit."""
+
+    days: dict[date, dict[K, str]]
+    sits: dict[date, Sit[K]] = field(default_factory=dict)
+
+
+def win_starters[K: Hashable](*args: Any, **kwargs: Any) -> dict[date, dict[K, str]]:
+    """Each day's starters by slot (:func:`win_lineup`'s ``days``)."""
+    return win_lineup(*args, **kwargs).days
+
+
+def win_lineup[K: Hashable](
     roster: Sequence[tuple[K, Player]],
     playing: Mapping[K, Sequence[date]],
     days: Sequence[date],
@@ -162,7 +197,7 @@ def win_starters[K: Hashable](
     locked: Mapping[date, Locked[K]] | None = None,
     started: Mapping[K, int] | None = None,
     one_win: bool = False,
-) -> dict[date, dict[K, str]]:
+) -> WinLineup[K]:
     """Each of ``days``' starters by slot, for the most expected categories won this week against
     ``theirs`` (the opponent's finals), or with ``one_win`` (#397) the best odds of winning the
     matchup (``weekly.matchup_won``). ``yahoo`` is a day's starters as read, ``locked`` its
@@ -177,6 +212,11 @@ def win_starters[K: Hashable](
     nothing here depends on the projection these starters go on to feed.
 
     A locked player is out of the search: one on the lineup holds his slot, one off it stays off.
+
+    Then every subset of the day's chosen set is scored the same way, a day with no surplus
+    included (#482): the best replaces the chosen set only by a gain of :data:`SIT_MARGIN`, and the
+    players it leaves out sit, with nobody started in their place. A day with ``n`` free starters
+    scores ``2**n`` subsets; every subset of a legal set is legal (the slots form a matroid).
     """
     yahoo = yahoo or {}
     locked = locked or {}
@@ -186,9 +226,12 @@ def win_starters[K: Hashable](
 
     won, tie = (wk.matchup_won, TIE_ODDS) if one_win else (wk.expected_won, TIE)
 
-    def expected() -> float:
+    def odds() -> list[wk.CategoryOdds]:
         week = wk.team_week({k: wk.PlayerWeek(n, n) for k, n in counts.items()}, rates, None)
-        return won(wk.odds_of(wk.finals(week, so_far, cats), theirs, cats))
+        return wk.odds_of(wk.finals(week, so_far, cats), theirs, cats)
+
+    def expected() -> float:
+        return won(odds())
 
     def add(keys: Collection[K], by: int) -> None:
         for k in keys:
@@ -216,15 +259,19 @@ def win_starters[K: Hashable](
         add(picks[day], 1)
         add([k for k in fixed.on if k in counts and day in playing.get(k, ())], 1)
 
+    sits: dict[date, Sit[K]] = {}
     for day in days:
         sets = _legal_sets(free[day], open_slots[day])
-        if len(sets) < 2:
-            continue
         anchor = picks[day]
         add(anchor, -1)
-        scored = {s: score(s) for s in sets}
-        best = max(sets, key=lambda s: (scored[s], sorted(map(str, s))))
-        picks[day] = best if scored[best] - scored[anchor] >= tie else anchor
+        if len(sets) >= 2:
+            scored = {s: score(s) for s in sets}
+            best = max(sets, key=lambda s: (scored[s], sorted(map(str, s))))
+            picks[day] = best if scored[best] - scored[anchor] >= tie else anchor
+        sit = _sit(picks[day], score, add, odds)
+        if sit is not None:
+            sits[day] = sit
+            picks[day] = picks[day] - set(sit.players)
         add(picks[day], 1)
 
     out: dict[date, dict[K, str]] = {}
@@ -233,7 +280,42 @@ def win_starters[K: Hashable](
         placed = wk.starters(rows, open_slots[day], value)
         kept = locked.get(day, Locked()).on
         out[day] = {**{k: slot for k, slot in kept.items() if k in positions}, **placed}
-    return out
+    return WinLineup(out, sits)
+
+
+def _sit[K: Hashable](
+    chosen: frozenset[K],
+    score: Callable[[frozenset[K]], float],
+    add: Callable[[Collection[K], int], None],
+    odds: Callable[[], list[wk.CategoryOdds]],
+) -> Sit[K] | None:
+    """The day's sit (#482): the subset of ``chosen`` that scores best, when it gains
+    :data:`SIT_MARGIN` over ``chosen``; on a tie the larger subset, then the one whose sorted
+    players come first. ``score``, ``add`` and ``odds`` are :func:`win_lineup`'s, with the day's
+    own starts out of the counts."""
+    keys = sorted(chosen, key=str)
+    full = score(chosen)
+    best, best_score = chosen, full
+    for size in range(len(keys) - 1, -1, -1):
+        for kept in combinations(keys, size):
+            subset = frozenset(kept)
+            value = score(subset)
+            if value > best_score:
+                best, best_score = subset, value
+    if best_score - full < SIT_MARGIN:
+        return None
+    add(chosen, 1)
+    before = {o.cat: o.p_win for o in odds()}
+    add(chosen, -1)
+    add(best, 1)
+    after = {o.cat: o.p_win for o in odds()}
+    add(best, -1)
+    moved = tuple(
+        (cat, before[cat], after[cat])
+        for cat in before
+        if abs(after[cat] - before[cat]) >= SIT_MOVES
+    )
+    return Sit(tuple(sorted(chosen - best, key=str)), best_score - full, moved)
 
 
 def compare(
@@ -243,11 +325,13 @@ def compare(
     playing: Mapping[int, Sequence[date]],
     slots: Sequence[str],
     positions: Mapping[int, Sequence[str]] | None = None,
+    sits: Collection[int] = (),
 ) -> DayLineup[int]:
     """One day: the recommended starters (``recommended``, a player's slot) against Yahoo's
     lineup as read (``yahoo``); a player starts when his slot starts and he plays that day.
     ``slots`` are the starting slots; ``positions`` the roster's (Yahoo's spots give their
-    own), for the fewest starters to sit."""
+    own), for the fewest starters to sit. ``sits`` are the day's deliberate sits (#482): each
+    one Yahoo starts sits too, with nobody to start in his place."""
 
     def plays(k: int) -> bool:
         return day in playing.get(k, ())
@@ -271,6 +355,8 @@ def compare(
             for sp in yahoo
             if sp.slot.upper() not in wk.NOT_STARTING and sp.player.yahoo_id not in rec
         ]
+        deliberate = [k for k in out if k in sits]
+        out = [k for k in out if k not in sits]
         if start and out:
             # The recommended starters first, then as many of the others as still fit: a
             # starter who plays never does (the recommended set is the largest that can).
@@ -279,6 +365,7 @@ def compare(
             weight = {**dict.fromkeys(out, 1.0), **dict.fromkeys(started, 2.0)}
             held = wk.starters([(k, pos.get(k, ())) for k in weight], slots, weight)
             sit = tuple(k for k in out if k not in held)
+        sit = (*sit, *deliberate)
     return DayLineup(
         day,
         by_slot(recommended, slots) if recommended is not None else None,

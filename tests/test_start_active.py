@@ -328,3 +328,81 @@ def test_the_digest_counts_the_leagues_it_ran_in_and_names_a_failure(client):
     assert lines[1] == (
         f"- League {LEAGUE}: moves Wed Start Active failed (An error occurred, please try again)"
     )
+
+
+# --------------------------------------------------------------------------- a sit held (#482)
+SLOTS = ["PG", "SG", "Util"]
+
+
+def sit_run(player: int, tip, after: dict, minutes: int = 1, **step) -> dict:
+    """A live lineup run of today that set ``player`` to the bench with nobody in his place."""
+    x = {
+        "player": player,
+        "from_slot": "Util",
+        "to_slot": "BN",
+        "with": None,
+        "tip": tip.isoformat() if tip is not None else None,
+        "outcome": "set",
+        "control": {"kind": "select", "slot": "Util", "options": ["PG", "Util", "BN"]},
+        **step,
+    }
+    at = (NOW + timedelta(minutes=minutes)).isoformat()
+    return {"at": at, "day": DAY.isoformat(), "mode": "live", "steps": [x], "after": after}
+
+
+def test_a_sit_set_today_holds_the_press_until_his_tip_off(client):
+    strategy_league(client)
+    live_league(client)
+    roster = row(client)["roster"]
+    # A claim landed since the last press: a press is due.
+    before = {"players": roster["players"][1:], "held": []}
+    started = sa_body(mode="live", outcome="started", message="6 lineups updated", roster=before)
+    assert client.post(URL, json=started).status_code == 200
+    assert (row(client)["need"], row(client)["reasons"]) == (True, ["roster_changed"])
+    sat = roster["players"][1]
+    tip = NOW + timedelta(hours=2)
+    ap.append_run(client.data_dir, LEAGUE, sit_run(sat, tip, {str(sat): "BN"}), DAY)
+    r = row(client)
+    assert (r["need"], r["reasons"], r["held"]) == (False, ["sit_held"], ["roster_changed"])
+    assert r["sits"] == [{"player": sat, "tip": tip.isoformat()}]
+    # His game began: the press runs.
+    client.app.state.seasons.clock = lambda: tip + timedelta(minutes=1)
+    r = row(client)
+    assert (r["need"], r["reasons"]) == (True, ["roster_changed"])
+    assert "sits" not in r
+
+
+def test_only_a_sit_start_active_would_undo_holds_the_press(tmp_path):
+    league, now = "1", NOW
+    tip = now + timedelta(hours=1)
+
+    def held(*rs, slots=SLOTS) -> list:
+        for r in rs:
+            ap.append_run(tmp_path, league, r, DAY)
+        out = ap.sat_today(tmp_path, league, DAY, now, slots)
+        for p in (tmp_path / "leagues").glob("*/autopilot/*.json"):
+            p.unlink()
+        return out
+
+    full = {"1": "PG", "2": "SG", "3": "Util", "9": "BN"}
+    # The slot he left is open and he may take it: held.
+    assert held(sit_run(9, tip, {"1": "PG", "2": "SG", "9": "BN"})) == [
+        {"player": 9, "tip": tip.isoformat()}
+    ]
+    # Every slot he may take is filled: Start Active leaves him be.
+    assert held(sit_run(9, tip, full)) == []
+    # An open slot he may not take: the same.
+    assert held(sit_run(9, tip, {"1": "PG", "3": "Util", "9": "BN"})) == []
+    # No game today (no tip-off), or a game already begun.
+    assert held(sit_run(9, None, {"9": "BN"})) == []
+    assert held(sit_run(9, now - timedelta(minutes=1), {"9": "BN"})) == []
+    # A swap with a player in his place, a step not set, or a dry run.
+    assert held(sit_run(9, tip, {"9": "BN"}, **{"with": 4})) == []
+    assert held(sit_run(9, tip, {"9": "BN"}, outcome="skipped")) == []
+    assert held({**sit_run(9, tip, {"9": "BN"}), "mode": "dry_run"}) == []
+    # A later live run of the day started him again.
+    again = {**sit_run(9, tip, {"9": "Util"}, minutes=5), "steps": []}
+    assert held(sit_run(9, tip, {"9": "BN"}), again) == []
+    # Another day's run.
+    other = {**sit_run(9, tip, {"9": "BN"}), "day": (DAY + timedelta(days=1)).isoformat()}
+    assert held(other) == []

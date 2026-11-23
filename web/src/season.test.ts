@@ -137,6 +137,8 @@ import {
   keptPlayers,
   keptWhy,
   benchPlaying,
+  sitList,
+  sitText,
   executorText,
   bidLabel,
   bidStrikable,
@@ -1294,6 +1296,35 @@ test("the lineup grid takes each slot's recommended starter, or a past day's Yah
   assert.deepEqual(benchPlaying(ahead), [9]);
   assert.deepEqual(benchPlaying(past), [9]);
   assert.equal(weekdayLabel("2026-10-22"), "Thu 22");
+});
+
+test("a recommended sit (#482) leaves the bench row for the sit row, with its categories and its one joint gain", () => {
+  const sits = {
+    players: [7, 9],
+    gain: 0.214,
+    unit: "categories" as const,
+    cats: [
+      { cat: "tov" as const, before: 0.3, after: 0.86 },
+      { cat: "fg_pct" as const, before: 0.41, after: 0.554 },
+    ],
+  };
+  // 7 is on Yahoo's lineup still, 9 already on its bench; 4 plays and stays on the bench.
+  const d = lineupDay({ recommended: [{ slot: "PG", player: 1 }], bench: [4, 7, 9], sit: [3, 7], sits, playing: [1, 4, 7, 9] });
+  assert.deepEqual(benchPlaying(d), [4]);
+  assert.deepEqual(sitList(d), [
+    { player: 3, protect: false },
+    { player: 7, protect: true },
+    { player: 9, protect: true },
+  ]);
+  const name = (id: number) => `P${id}`;
+  assert.equal(sitText(sits, name, 7), "Recommended sit, with P9: protects TO 30% → 86%, FG% 41% → 55% · +0.21 expected categories won");
+  assert.equal(
+    sitText({ ...sits, players: [9], unit: "odds", gain: 0.0612, cats: [] }, name, 9),
+    "Recommended sit: protects close categories · +6.1 points of matchup odds",
+  );
+  // No sit: the rows as before.
+  const plain = lineupDay({ recommended: [], bench: [4], sit: [3], playing: [4] });
+  assert.deepEqual([benchPlaying(plain), sitList(plain)], [[4], [{ player: 3, protect: false }]]);
 });
 
 test("the lineup view says the rule, the week, the held slots and the alerts in words", () => {

@@ -747,6 +747,7 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
 .lv-grid th, .lv-grid td.num { text-align: left; }
 .lv-grid th.first { color: var(--accent); }
 .lv-grid td.lv-start { background: rgba(245, 185, 66, 0.14); color: var(--accent); font-weight: 600; }
+.lv-grid td .lv-protect { font-weight: 600; text-decoration: underline dotted; text-underline-offset: 2px; }
 .lv-grid tr.lv-sub td { border-top: 1px solid var(--line); font-size: 11px; }
 .lv-grid tfoot tr:first-child td { border-top: 1px solid var(--line-2); }
 .lv-held-block { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--line-2); }
