@@ -4852,16 +4852,20 @@ def cmd_tune(args: argparse.Namespace) -> int:
     whole_hours = (
         args.expected_hours if args.expected_hours is not None else search_hours + confirm_all
     )
-    rows = [r for n in (*names, *names2) for r in listed[n]]
+    # Each row with the name it is searched under: a list lever's own, or an override's (PR
+    # dynamic knobs), whose rows name their split lever (``knob@axis``) and are timed under the
+    # override's name.
+    named_rows = [(n, r) for n in (*names, *names2) for r in listed[n]]
+    rows = [r for _, r in named_rows]
     texts = []
-    for r in rows:
+    for n, r in named_rows:
         if r.status != sc.PLAY:
             texts.append(sc.status_words(r.payload()))
             continue
-        e = estimates[r.lever]
+        e = estimates[n]
         texts.append(
             f"a pair of {e['tasks']} tasks, one of the lever's took {e['seconds_one']:.1f}s, "
-            f"about {pair_hours(r.lever):.2f} h"
+            f"about {pair_hours(n):.2f} h"
         )
     print(
         f"the tune {name}, its plan: {args.passes} pass(es) over {len(names)} lever(s) in this "

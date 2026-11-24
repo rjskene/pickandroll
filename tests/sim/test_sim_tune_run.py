@@ -1021,9 +1021,9 @@ def test_a_tune_is_resumed_only_on_the_spec_it_was_started_with(data: Path, whol
         assert f"refused: the tune 'whole' was started with another spec ({why}" in out
         assert "name this one another (--name)" in out and "its plan" not in out
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(tn, "TUNE_VERSION", 2)
+        mp.setattr(tn, "TUNE_VERSION", tn.TUNE_VERSION + 1)
         code, out = tune(data, name="whole")
-    assert code == 2 and "tune_version: started with 1, now 2" in out, out
+    assert code == 2 and "tune_version: started with 2, now 3" in out, out
     assert record(data, "whole") == whole[0]
     # A pair's file holding other arms than this tune's value refuses the run by name.
     file = reader.tune_pair_path(data, "whole", "p1-pool-45")
