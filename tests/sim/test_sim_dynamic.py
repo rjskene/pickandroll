@@ -14,6 +14,7 @@ import json
 from dataclasses import replace
 from typing import Any
 
+import numpy as np
 import pytest
 
 from pickandroll.sim import counts as ct
@@ -21,6 +22,7 @@ from pickandroll.sim import nopeek, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
+from pickandroll.sim import stake as stk
 from pickandroll.sim import trace as tr
 from pickandroll.sim import tune as tn
 from pickandroll.sim.lab import trace_view
@@ -112,6 +114,27 @@ def test_standing_reads_the_finished_weeks_against_the_swing_left():
     # A league whose bracket is not read keeps the shape it had: its bracket says it all.
     unread = replace(setup, spec=None, bracket_unread="not read")
     assert policy.shape_of(unread) == policy.Shape(bracket=False)
+
+
+def test_a_seat_exactly_one_swing_from_the_line_is_safe_or_behind():
+    """The cut itself is past the line: ``z`` exactly 1 is ``safe`` and exactly -1 ``behind``
+    (:data:`policy.STANDING_CUT`), as a real season's last regular week can put a seat, a lead
+    of half a week with no regular week after. The same four teams in the last regular week (a
+    swing of one), one week's spread the root of a quarter: week 1 ranked, week 2 every matchup
+    tied, week 3 teams 1 and 2 tied and team 3 over team 4. Teams 1 and 2 on two, team 3 on one
+    and a half: half a week each side of the line, one swing."""
+    setup = make_setup(teams=4, weeks=5)
+    spec = setup.spec
+    assert spec.pairings[3] == ((1, 2), (3, 4)) and max(spec.regular_weeks) == 4
+    assert stk.variance(spec) == 0.25 and policy.STANDING_CUT == 1.0
+    totals = ranked_totals(setup, [1, 3])
+    totals[2] = {t: dict(totals[1][1]) for t in setup.teams}
+    totals[3][2] = dict(totals[3][1])
+    table = stk.table_before(spec, totals, 4)
+    assert {r.team: stk.measure(r, spec) for r in table} == {1: 2.0, 2: 2.0, 3: 1.5, 4: 0.5}
+    assert [stk.lead(table, spec, t) for t in setup.teams] == [0.5, 0.5, -0.5, -1.5]
+    got = {t: policy.standing_of(spec, totals, t, 4) for t in setup.teams}
+    assert got == {1: "safe", 2: "safe", 3: "behind", 4: "behind"}
 
 
 def test_the_situation_reads_the_runner_s_standing_else_the_state_s_finished_weeks():
@@ -258,6 +281,41 @@ def test_a_mirror_rival_decides_in_its_own_situation_never_the_seat_s():
     )
 
 
+def test_a_seat_and_a_mirror_rival_search_on_the_knobs_in_force(monkeypatch):
+    """Catches ``Seat.decide`` or ``Mirror.decide`` handing the search the base knobs
+    (``policy.in_force(knobs, NOWHERE)``): a knob only the search reads (``season_weight``,
+    ``rate_cv``) reaches a season through ``decide`` alone, as neither the runner's cap nor its
+    blend reads it. The seat in team 1 and a mirror rival in team 2 hand ``policy.problem_of``
+    each override in its own situation and the base elsewhere."""
+    setup = make_setup(teams=4, weeks=5)
+    a = checked(
+        arm("A", "surrogate", "mirror"),
+        **ov(season_weight__phase__run_in=1.0, rate_cv__standing__behind=0.4),
+    )
+    seat, rival = a.seat(), rn.opponents_of(setup, a, 1)[2]
+    assert isinstance(rival, op.Mirror)
+    handed: list[tuple[int, float, float]] = []
+
+    def problem_of(setup_, state, team, knobs, *rest) -> None:
+        """Keeps the knobs handed and builds no problem, so ``decide`` decides nothing."""
+        handed.append((team, knobs["season_weight"], knobs["rate_cv"]))
+
+    monkeypatch.setattr(policy, "problem_of", problem_of)
+    g = np.random.default_rng(0)
+    for week, where, want in (
+        (2, "safe", (0.0, 0.0)),
+        (4, "safe", (1.0, 0.0)),
+        (2, "behind", (0.0, 0.4)),
+        (4, "behind", (1.0, 0.4)),
+    ):
+        day = next(w.start for w in setup.calendar.weeks if w.number == week)
+        state = replace(initial(setup), day=day, standing={1: where, 2: where})
+        handed.clear()
+        assert seat.decide(setup, state, 1, {}, {}, {}, g) is policy.NONE
+        assert rival.decide(setup, state, 2, {}, {}, {}, g) is policy.NONE
+        assert handed == [(1, *want), (2, *want)], (week, where)
+
+
 def test_a_stash_override_stays_the_seat_s_own():
     knobs = policy.check_arm_knobs(
         {**KNOBS, **ov(stash_threshold__phase__run_in=0.5, daily_cap__phase__run_in=2)}
@@ -394,6 +452,24 @@ def test_an_override_acts_in_its_situation_alone():
     assert tm.digest(plain) != tm.digest(over)
 
 
+@pytest.mark.parametrize(("tier", "rivals"), [("exact", "static"), ("static", "mirror")])
+def test_an_override_only_the_search_reads_moves_the_season_in_its_situation(tier, rivals):
+    """``season_weight`` above 0 in the run-in alone, a knob the runner does not read: the
+    season parts from the one with no override through the search alone, and only from the
+    run-in. An exact seat against static rivals is moved by its own ``decide``; a static seat's
+    mirror rivals, which name the arm's knobs, by theirs."""
+    setup = make_setup(weeks=5)
+    base = replace(arm("A", tier, rivals), knobs={**KNOBS, **ON})
+    named = checked(base, **ov(season_weight__phase__run_in=1.0))
+    plain, rp = season_records(setup, base)
+    over, ro = season_records(setup, named)
+    assert rp.breaches == () and ro.breaches == ()
+    start = first_day_of(setup, "run_in")
+    before = [r for r in plain if r.day < start]
+    assert before and tm.digest(before) == tm.digest([r for r in over if r.day < start])
+    assert tm.digest(plain) != tm.digest(over)
+
+
 def test_an_override_of_the_blend_moves_that_morning_s_blend_and_lineup():
     """``rate_shrink`` 0 at its base and live's in the middle weeks: the seat's blend is None in
     the opening and live's in the middle (``run.blend_of``), and the first day that parts the
@@ -421,6 +497,32 @@ def test_an_override_of_the_blend_moves_that_morning_s_blend_and_lineup():
         setup, replace(base, knobs={**base.knobs, "rate_shrink": ON["rate_shrink"]})
     )
     assert min(r.day for r in whole if nopeek.digest(r) != nopeek.digest(by[r.day])) < middle
+
+
+@pytest.mark.parametrize(
+    ("where", "read"),
+    [
+        ("phase.opening", True),
+        ("standing.line", True),
+        ("phase.middle", False),
+        ("standing.safe", False),
+    ],
+)
+def test_the_season_scale_reads_the_knobs_in_force_on_its_day(where, read):
+    """The season scale (``run.scale_on``) is measured on the path's first simulated day on the
+    seat's knobs in force there: the opening, and the line (no week is finished). An arm whose
+    base ``rate_cv`` is live's and that names 0 in the opening (or on the line) has the scale of
+    the arm whose base is 0 and not its own base's; named in the middle weeks (or for a safe
+    seat), its base's."""
+    setup = make_setup(weeks=5)
+    w = replay_of(setup, 2, 0)
+    base = replace(arm("A", "surrogate", "market"), knobs={**KNOBS, **ON})
+    zero = replace(base, knobs={**base.knobs, "rate_cv": 0.0})
+    as_base, as_zero = rn.scale_on(setup, w, base, 1), rn.scale_on(setup, w, zero, 1)
+    assert as_base is not None and as_zero is not None
+    assert as_base != as_zero  # rate_cv moves the scale, or the test has no power
+    named = checked(base, **{f"rate_cv@{where}": 0.0})
+    assert rn.scale_on(setup, w, named, 1) == (as_zero if read else as_base)
 
 
 def test_a_run_that_names_an_override_counts_every_arm_s_days_in_each_situation():
