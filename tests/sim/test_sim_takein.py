@@ -12,8 +12,9 @@ Three changes, each a knob of the arm with live's value by default:
   seat's own weeks in the search.
 
 Here: the recent lines and the blend, the problem's two lines, a returning player in a later
-week, the split seats' available side, the rivals, the lineup and the no-peek check with the
-blend on. Every change off is ``test_sim_takein_equality``'s; each change in every league is
+week, the split seats' available side, the rivals, the lineup, what each decision, lineup and
+season scale is handed (the lead's mutants: each test names the break it catches) and the
+no-peek check with the blend on. Every change off is ``test_sim_takein_equality``'s; each change in every league is
 ``test_sim_takein_cross``'s. The knobs' bounds and reads are ``test_sim_knobs``'."""
 
 from __future__ import annotations
@@ -29,10 +30,20 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim.engine import rc, spr, wk
+from pickandroll.sim.shapes import TODAY
 from pickandroll.sim.state import initial
 from tests.sim.sim_league import KNOBS, arm, make_setup, recorded_lines
 from tests.sim.test_no_peek import DAYS, SEED, WEIGHTS, recorded
-from tests.sim.test_sim_split import FIRST, SECOND, SOURCES, fixed_of, second_of
+from tests.sim.test_sim_split import (
+    FIRST,
+    SECOND,
+    SOURCES,
+    armed,
+    fixed_of,
+    second_of,
+    variant_of,
+    world_of,
+)
 
 #: The take-in's five at live's values (every change on).
 ON = {k: policy.KNOB_DEFAULTS[k] for k in policy.TAKEIN_KNOBS}
@@ -363,6 +374,142 @@ def test_a_pair_of_split_seats_plays_with_every_change_on_and_off(split_world):
     assert set(got) >= {"a", "b", "delta"}
     assert all(e.result is not None and e.breaches == () for e in ends) and len(ends) == 2
     assert len(days[0]) == len(days[1]) > 0 and days[0] != days[1]
+
+
+# --------------------------------------------------------------------------- what each is handed
+def test_a_seat_and_a_mirror_rival_that_blend_decide_on_the_blended_table_and_no_other_does(
+    monkeypatch,
+):
+    """Catches ``simulate`` handing ``decide`` no blended table (``more = {}`` in place of
+    ``{"blended": ...}``). Two variants of the no-peek league: a seat that blends with mirror
+    rivals of its arm, and a seat at ``rate_shrink`` 0 with market rivals. Every decision of the
+    first seat and of a mirror rival is handed ``World.blended_on``'s table on the day's rosters,
+    and the second seat and a market rival none (a market rival's ``decide`` takes no table)."""
+    setup, lines = recorded()
+    w = rn.replay_world(setup, lines, 1, SEED, 0, WEIGHTS)
+    a = arm("A", "surrogate", "mirror", **ON)
+    z = arm("Z", "surrogate", "market", **{**ON, "rate_shrink": 0.0})
+    variants = [
+        {**rn.opponents_of(setup, a, 1), 1: a.seat()},
+        {**rn.opponents_of(setup, z, 1), 1: z.seat()},
+    ]
+    handed: list[tuple[str, int, bool, bool]] = []
+
+    def spy(cls, kind):
+        real = cls.decide
+
+        def decide(self, setup_, state, team, beliefs, *args, **kw):
+            blended = kw.get("blended")
+            if blended is not None:
+                want = w.blended_on(state.day, None, rn.rostered_of(state), *BLEND)
+                handed.append((kind(self), team, blended == want, blended != beliefs))
+            else:
+                handed.append((kind(self), team, False, False))
+            if cls is op.Market:
+                assert "blended" not in kw
+            return real(self, setup_, state, team, beliefs, *args, **kw)
+
+        monkeypatch.setattr(cls, "decide", decide)
+
+    spy(op.Seat, lambda s: s.name)
+    spy(op.Mirror, lambda s: "mirror")
+    spy(op.Market, lambda s: "market")
+    rn.simulate(setup, w, variants)
+    kinds = {k for k, *_ in handed}
+    assert kinds == {"A", "mirror", "Z", "market"}, kinds
+    for kind, team, same, _ in handed:
+        if kind in ("A", "mirror"):
+            assert same, (kind, team)
+    assert not any(same for kind, _, same, _ in handed if kind in ("Z", "market"))
+    # The blend moved some line the seat or a mirror rival was handed, or the test has no power.
+    assert any(moved for kind, _, _, moved in handed if kind in ("A", "mirror"))
+
+
+def test_a_split_seat_s_lineup_after_a_same_day_landing_ranks_on_the_table_read_after_it(
+    monkeypatch,
+):
+    """Catches ``simulate`` keeping the morning's blended tables for the day's lineups after a
+    same-day landing (the line ``blends[vi] = _blends(...)`` after it removed). In a same-day
+    league a ``yahoo`` seat with every change on, beside market rivals: each day's lineup of the
+    seat is set on the values of ``World.blended_on``'s table on the rosters after the landing.
+    A split table follows the rosters (a player added today reads the first's blended line, no
+    longer the second's), so on a day something landed the morning's table is another; such a
+    day comes, or the test has no power. About 3 s."""
+    base, lines = recorded()
+    setup = replace(base, lineup_from=TODAY)
+    first = {k: {s: v * 1.1 for s, v in r.items()} for k, r in setup.projection.items()}
+    arms = armed(("Y", "yahoo", None))
+    arms = {"Y": replace(arms["Y"], knobs={**arms["Y"].knobs, **ON})}
+    label = arms["Y"].forecaster
+    w = world_of(setup, lines, first, second_of(first), arms)
+    variant = variant_of(setup, arms, {1: "Y"})
+    real = policy.starters_of
+    seen: list[tuple[date, bool]] = []
+
+    def starters_of(setup_, state, team, day, status, values):
+        if team == 1:
+            table = w.blended_on(day, label, rn.rostered_of(state), *BLEND)
+            seen.append((day, values == wk.per_game_values(table, setup.cats, None)))
+        return real(setup_, state, team, day, status, values)
+
+    monkeypatch.setattr(policy, "starters_of", starters_of)
+    landed: set[date] = set()
+
+    def keep(r: rn.DayRecord) -> None:
+        if any(r.landed.values()):
+            landed.add(r.day)
+
+    (res,) = rn.simulate(setup, w, [variant], on_day=keep)
+    assert not res.breaches, res.breaches[:2]
+    assert seen and all(same for _, same in seen), [d for d, same in seen if not same][:3]
+    assert landed, "nothing landed the day it was made: the test has no power"
+
+
+def test_a_split_label_s_blended_table_is_read_on_each_set_of_rostered_players(split_world):
+    """Catches ``_Tables.blended`` keeping one table a day for a split label (its key
+    ``(label, None, blend)``). Two states whose rostered players differ by one give a split
+    label two tables, each ``World.blended_on``'s on its own rostered set, and the run's plain
+    label one table for both."""
+    setup, _, arms, w, second = split_world
+    day = DAYS[1]
+    one = initial(setup)
+    (k, slot), *rest = one.rosters[1]
+    f = min(p for p in one.pool if p in second)
+    two = replace(one, rosters={**one.rosters, 1: ((f, slot), *rest)}, pool=(one.pool - {f}) | {k})
+    label = arms["Y"].forecaster
+    tables = rn._Tables(w, day, [label], setup.cats, None)
+    for state in (one, two):
+        table, values = tables.blended(label, state, BLEND)
+        want = w.blended_on(day, label, rn.rostered_of(state), *BLEND)
+        assert table == want and values == wk.per_game_values(want, setup.cats, None)
+    a = w.blended_on(day, label, rn.rostered_of(one), *BLEND)
+    b = w.blended_on(day, label, rn.rostered_of(two), *BLEND)
+    assert a != b  # the two rostered sets give two tables, or the test has no power
+    assert tables.blended(None, one, BLEND) is tables.blended(None, two, BLEND)
+
+
+def test_the_season_scale_s_problem_is_built_on_the_blended_table(made_up, monkeypatch):
+    """Catches ``scale_on`` building its problem without the blend (``None`` in place of the
+    ``blended_on`` argument). With the blend on, the problem the season scale reads is handed
+    ``World.blended_on``'s table on the scale's day and rosters; at ``rate_shrink`` 0 none."""
+    setup, _, w, _ = made_up
+    real = policy.problem_of
+    handed: list[tuple[object, object]] = []
+
+    def problem_of(setup_, state, team, knobs, beliefs, status, returns, weeks_ahead, *more):
+        handed.append((state, more[0] if more else None))
+        return real(setup_, state, team, knobs, beliefs, status, returns, weeks_ahead, *more)
+
+    monkeypatch.setattr(policy, "problem_of", problem_of)
+    on = arm("A", "surrogate", "market", **ON)
+    assert rn.scale_on(setup, w, on, 1) is not None
+    ((state, blended),) = handed
+    assert blended is not None
+    assert blended == w.blended_on(state.day, None, rn.rostered_of(state), *BLEND)
+    handed.clear()
+    off = arm("Z", "surrogate", "market", **{**ON, "rate_shrink": 0.0})
+    rn.scale_on(setup, w, off, 1)
+    assert [b for _, b in handed] == [None]
 
 
 # --------------------------------------------------------------------------- no peek
