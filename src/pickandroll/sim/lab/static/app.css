@@ -20,11 +20,15 @@ code { font: 11px ui-monospace, Menlo, monospace; color: var(--dim); }
 .brand { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
 .brand b, .brand span { font: 700 22px var(--display); letter-spacing: 0.06em; }
 .brand span { color: var(--accent); }
-nav { display: flex; gap: 2px; overflow-x: auto; flex: 1; }
+/* The tabs keep their width (a narrow page wraps them); the status text yields: it wraps under
+   them, and a line longer than the page is cut, its full text on hover (PR live screen). */
+nav { display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 auto; min-width: 0; }
 nav a { font: 600 15px var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); padding: 16px 11px 14px; text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; }
 nav a:hover { color: var(--text); }
 nav a.on { color: var(--text); border-color: var(--accent); }
-.state { color: var(--muted); font-size: 12px; white-space: nowrap; display: flex; align-items: center; gap: 7px; }
+.state { color: var(--muted); font-size: 12px; white-space: nowrap; display: flex; align-items: center; gap: 7px; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.state .st { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.state .dot { flex: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
 .dot.run { background: var(--good); }
 .dot.bad { background: var(--bad); }

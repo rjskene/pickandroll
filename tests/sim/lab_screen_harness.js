@@ -12,7 +12,7 @@ const fs = require("fs");
 const [screenJs, appJs, modelF, viewF, nextF, emptyF] = process.argv.slice(2);
 const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
 const model = read(modelF), view = read(viewF), next = read(nextF), empty = read(emptyF);
-const out = { problems: [], marks: [], escaped: 0, start: null, board: {}, pair: false, clock: "", play: {}, at_start: {}, at_end: {}, pick: null, poll: {}, failed: {}, empty: null, missing: null, runs_link: false };
+const out = { problems: [], marks: [], escaped: 0, start: null, board: {}, pair: false, clock: "", play: {}, at_start: {}, at_end: {}, pick: null, rows: {}, poll: {}, failed: {}, empty: null, missing: null, runs_link: false };
 const el = (id) => {
   const e = { id, hidden: false, value: "", textContent: "", className: "", style: { setProperty() {} }, classList: { toggle() {} }, addEventListener() {}, setAttribute() {}, offsetHeight: 40, offsetWidth: 90, offsetLeft: 12, offsetTop: 30, clientWidth: 360, contains: () => true, html: "" };
   Object.defineProperty(e, "innerHTML", { get() { return this.html; }, set(v) { this.html = v; } });
@@ -63,9 +63,12 @@ const poll = () => intervals.filter((x) => x.f).map((x) => x.ms);
   const s0 = SC.state();
   out.start = { loaded: s0.loaded, live: s0.live, name: s0.name, polling: s0.polling, every: poll() };
   look("screen, first draw");
+  out.draw_error = get("sc-err").textContent;
   out.board = count();
   out.pair = get("sc-pair").html.includes("The pair");
   out.clock = get("sc-now-box").html;
+  out.rows = {};
+  for (const m of get("sc-board").html.matchAll(/<button class="sc-row[^"]*" data-sc="row" data-v="([^"]*)">([\s\S]*?)<\/button>/g)) out.rows[m[1]] = m[2];
   // The story from its start: the marks at the start and the end.
   SC.act("scrub", "0"); look("start"); out.at_start = count();
   SC.act("scrub", String(view.story.length)); look("end"); out.at_end = count();

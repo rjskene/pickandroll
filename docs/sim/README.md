@@ -3442,7 +3442,8 @@ what it found and how far to trust it. Five parts: a pure model (`lab/model.py`,
 boundary test reads), a pure view of a trace (`lab/trace_view.py`, in the core too, PR viewer),
 the records' reader (`lab/records.py`), a stdlib HTTP server (`lab/server.py`), and the page
 (`lab/static/`: plain script and style, no build step, served beside the module; the Season
-tab's player is `season.js`).
+tab's player is `season.js`, the Screen tab's `screen.js`). A pure view of a screen as it is
+played (`lab/screen_view.py`, PR live screen) sits in the core beside the trace's.
 
 **What it never does.** It answers `GET` only; any other method gets 405. It writes nothing, plays
 nothing and starts no process (the code's commit is read from the checkout's `.git` files, not by
@@ -3460,7 +3461,11 @@ naming the error's kind, never a dropped connection); `/explainer` is the explai
 (`--explainer`) wrapped in a plain document for the Explainer tab's frame, or a short page saying
 none was given; `/healthz` answers `ok`. `/api/traces` lists the traces as the model does, and
 `/api/trace/<name>` is one trace as the Season tab plays it (its view, kept until its file
-changes). A name that is not a trace's shape (letters, digits, `-` and `_`, as the `trace`
+changes). `/api/screen/<name>` is one screen as the Screen tab shows it (PR live screen): a
+name that is not a folder's shape (letters, digits, `-` and `_`, up to sixty) or not a folder of
+`data/sim/screens/` once resolved (a link out of it is not followed) is not found; a record that
+cannot be read or is not a screen is refused by name (422), unless an earlier read of it was
+good (below). A name that is not a trace's shape (letters, digits, `-` and `_`, as the `trace`
 command makes it) or not a file of `data/sim/traces/` is not found, before any path is made of
 it; a file there that is not JSON, not a trace or a trace of another version is refused by name
 (422). Each answer carries `no-store`, `nosniff` and `no-referrer`.
@@ -3552,7 +3557,9 @@ and the model lists those gaps (`generated.lacks`).
 
 **The notes file** (`--notes`, JSON, the lead's). An object whose sections are all optional:
 
-- `state`: `{"running": text or null, "text": text}`, the header's line;
+- `state`: `{"running": text or null, "text": text}`, the header's line, and optionally
+  `pieces`, the planned pieces in words, one line the Screen tab shows (PR live screen; the lab's
+  version 2);
 - `queue`: items of `title`, `what`, `state` (`word`, `running`, `later`, `done` or `planned`),
   and optionally `size` and `say`;
 - `assessments`: items of `date` (YYYY-MM-DD), `level` (`ok`, `watch` or `problem`) and `text`,
@@ -3580,9 +3587,12 @@ file".
 assessments); Knobs (one ruleset, or the first two side by side with whether a shared row agrees
 or splits, by outcome, raw or in SEs, by lever or best first); Checks (the luck bars and the flags
 a ruleset, the seasons' ledger, the assessment log); Runs (the table, the time line, the short
-looks, the traces, the tunes); Season (**The Season tab** below); Openings (the proposals and the
+looks, the traces, the tunes; a screen's name opens it on the Screen tab); Season (**The Season
+tab** below); Screen (**The Screen tab** below); Openings (the proposals and the
 openings from the notes); Explainer (a frame of `/explainer` under the header). The layout holds from a wide
-screen to a phone. A row's tip shows on hover, or on a tap on a touch screen (a tap elsewhere
+screen to a phone. The tabs keep their width and wrap on a narrow page; the header's line yields
+to them: it wraps under the tabs, and a line longer than the page is cut, its full text on
+hover. A row's tip shows on hover, or on a tap on a touch screen (a tap elsewhere
 hides it). Everything drawn from a record goes through the page's escape, numbers included.
 While the tab is visible the page asks for the model about once a minute and draws again only
 when the model was built again, keeping the reader's tab, Knobs switches and scroll (the
@@ -3647,6 +3657,54 @@ one column in the order above, the lanes fit a phone's width without a sideways 
 charts are drawn at their panel's own width so their labels keep their size. Players' names are
 shown: the page is the lead's, on the box, and a trace lives under `data/` only.
 
+**The Screen tab** (PR live screen) shows a screen as it is played: the one in play, else the
+one paused between pieces, else the latest, and any other from a picker. It reads only what a
+screen already writes: its record (`screen.json`, written whole when a piece starts, after each
+pair and when the piece ends) and, of each played pair's record, only when it started and
+landed (each file read once while it is unchanged); the notes' `state.pieces` gives the plan.
+It changes nothing a replay, a screen or a tune plays or writes. From the top:
+
+- **the bar**: play and pause over the screen's history, the clock, a scrubber, three speeds,
+  and a strip of the pieces (an open one marked), the pauses between them and each landing; a
+  "Now" button follows the screen as it is played. The page asks for the screen again every
+  fifteen seconds while it is in play or paused and the tab is visible, and a reader at now
+  stays at now: a pair that lands appears without a reload;
+- the screen's state (in play: a piece is open; paused between pieces, never "failed"; finished;
+  not started), its league, measure, seasons, forecaster, seed, paths a pair, whether the
+  baseline's knobs are as played (the record's `resolved`, version 8 on) or as given, and its
+  rule in its own words;
+- **the board**: every row in the list's order, grouped by lever under the lab's label (an
+  override's row says its situation), each marked played (its difference B less A on the
+  league's measure, its SE, whether it cleared one SE and which way, and the record's own
+  "survives"; a pair that did nothing says that alone), in play, waiting, or not played (with
+  the record's words for why);
+- **the clock**: the pair in play since when, and how far it has come; the counts played and
+  left; the work left by the screen's own estimates, and once a pair has landed, the work left
+  at the pace so far (the landed pairs' time over their own estimates, the pairs left taken at
+  that share), each with when it would end if played on without a pause; each piece, its
+  start and end and why it stopped;
+- **the pair**: the one in play (or a row tapped), as two arms: the lever's values A and B, what
+  both arms set (the tier), and the baseline's other knobs, the same in both;
+- **the cautions**: a screen sizes and never judges (a lever that survives is a candidate for the
+  tune, never a winner); one season and one seed; the capability it was played on, and when the
+  simulator has moved since, that it is not set beside a screen of the current engine without
+  saying so; and what is an estimate.
+
+What is an **estimate**: how far the pair in play has come is the time since its piece started
+or the last pair landed, against that pair's estimate in the record (`seconds_one` times
+`tasks` over the piece's workers, taken before the first pair), never above the whole: past
+it the pair reads "longer than estimated". The work left is the same estimates (and the pace so
+far), in pieces: the screen plays between the box's quiet hours, which its record does not
+know, so the end it gives is "played on without a pause", not a time of day. What it **cannot
+know**: whether an open piece is still playing or was stopped from outside before it wrote its
+end (a piece that is not the last and has no end is said to have stopped without writing it).
+A record that is half written or cannot be read while the page asks again keeps the last good
+read on the page, saying why and when; the screen writes its files whole (beside, then
+renamed), so that is rare. The model is pure (a record and a clock handed in), and the board is
+shaped so a tune's steps could take it later. Screen versions 6 and 8 are read; a record
+without its rows, its `left` or its pieces is refused by name. The lab's model names each
+screen's folder and its state (the lab's version 2).
+
 **The capabilities** (PR capabilities) are read from the capability log (below) and the notes'
 `engine` section:
 
@@ -3684,7 +3742,8 @@ shown: the page is the lead's, on the box, and a trace lives under `data/` only.
 
 **`lab --check`** builds the model once and prints a line a section, counts and words only:
 what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
-the traces by their check's level, the capabilities (now, the last update, the versions the runs
+the traces by their check's level, a screen in play or paused (`live:`, its name, its state and
+its pairs played and left; PR live screen), the capabilities (now, the last update, the versions the runs
 were played on, what the simulator is behind live in, the runs of an engine live has left), the
 seasons' ledger, the notes, the
 explainer and what is not recorded. Then it exits.

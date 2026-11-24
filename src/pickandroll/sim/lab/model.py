@@ -196,6 +196,30 @@ LEVERS: Mapping[str, Mapping[str, str]] = {
         "label": "Guard's list size",
         "words": "the size of the guard's list the exact tier's pools take beside their best pool",
     },
+    # The take-in's (PR take-in; labels since PR live screen): the odds calibration's knobs.
+    "later_weeks": {
+        "label": "Later weeks' roster",
+        "words": (
+            "the roster a team's later week is projected on: legal (live's: held slots, told "
+            "return dates, each day's active spots) or uncapped (the simulator's rule before)"
+        ),
+    },
+    "rate_shrink": {
+        "label": "Recent-form weight",
+        "words": "the most weight a player's recent form takes in his per-game line; 0 blends none",
+    },
+    "rate_shrink_games": {
+        "label": "Recent-form games",
+        "words": "the games in the recent window at which recent form takes half its weight",
+    },
+    "rate_cv": {
+        "label": "Line's error (spread)",
+        "words": "the per-game line's own error as a share of it, which widens the week's spread",
+    },
+    "miss_rate": {
+        "label": "Missed games (spread)",
+        "words": "the chance a healthy player misses a started game, which discounts the games",
+    },
 }
 #: A tier in the page's words.
 TIERS = {
@@ -1786,7 +1810,8 @@ def _ruleset_card(
     best_up = max(better, key=z, default=None)
     screens = [x for x in mine if x["kind"] == "screen"]
     latest = screens[-1] if screens else None
-    base_cell = (baseline or {}).get("cells", [None])[0] if baseline else None
+    # A baseline whose pair file holds no cells has none (a model that fails here fails whole).
+    base_cell = ((baseline or {}).get("cells") or [None])[0] if baseline else None
     stages = _stages(rs, rk, m, base_cell, best_up, tunes)
     tuned = [t["name"] for t in tunes if t["ruleset"] == rk]
     for st, run in zip(

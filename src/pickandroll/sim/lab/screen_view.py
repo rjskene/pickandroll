@@ -53,6 +53,11 @@ SIZES_WORDS = (
     "A screen sizes and never judges: a lever that survives is a candidate for the tune, not a "
     "finding, and no lever here is called a winner."
 )
+#: The line beside the work left at the pace so far.
+PACE_WORDS = (
+    "At the pace so far: the pairs landed in this screen took this share of their own estimates, "
+    "and the pairs left are taken at the same share. An estimate too."
+)
 OUTSIDE_WORDS = (
     "The record cannot tell a piece still playing from one stopped from outside before it wrote "
     "its end."
@@ -73,6 +78,15 @@ def when(x: Any) -> datetime | None:
 
 def _iso(t: datetime | None) -> str | None:
     return None if t is None else t.isoformat()
+
+
+def label_of(name: str) -> str:
+    """A lever's or an override's name as the page says it: the lab's label for the knob, and an
+    override's situation after it (``rate_cv@standing.behind`` is "Line's error (spread) ·
+    standing behind")."""
+    knob, _, where = str(name).partition("@")
+    label = md.lever_label(knob)
+    return f"{label} · {where.replace('.', ' ')}" if where else label
 
 
 def _int(x: Any, default: int) -> int:
@@ -294,17 +308,20 @@ def _arms(
         else []
     )
     same = [
-        {"label": str(k), "a": sc.shown(v), "b": sc.shown(v)}
+        {"label": label_of(str(k)), "a": sc.shown(v), "b": sc.shown(v)}
         for k, v in base.items()
         if k != name and k not in both
     ]
     arm = spec.get("arm") or {}
     return {
-        "differ": differ,
+        "differ": [x | {"label": label_of(x["label"])} for x in differ],
         "both": [{"label": k, "value": v} for k, v in both.items()],
         "same": same,
         "tier": row.get("tier"),
-        "names": {"a": "the baseline", "b": f"{name} nudged" if differ else "the baseline"},
+        "names": {
+            "a": "the baseline",
+            "b": f"{label_of(name)} nudged" if differ else "the baseline",
+        },
         "opponents": sc.shown((arm.get("opponents") or {}).get("kind")),
     }
 
@@ -392,8 +409,9 @@ def view(
         out = {
             "key": key,
             "lever": lever,
-            "label": md.lever_label(lever),
+            "label": label_of(lever),
             "override": row.get("override"),
+            "override_label": None if not row.get("override") else label_of(row["override"]),
             "nudge": row.get("nudge"),
             "values": None
             if not values
@@ -430,6 +448,7 @@ def view(
         if work_left is None or live["state"] not in (md.IN_PLAY, md.PAUSED)
         else _iso(now + timedelta(seconds=work_left))
     )
+    pace = pace_of(story, left, record, workers, prog, now, live["state"])
     capability = md.capability_of(spec.get("replay_version"))
     now_cap = cap.current()
     earlier = (
@@ -509,6 +528,7 @@ def view(
         "work_left": work_left,
         "unbroken_end": unbroken,
         "unknown_estimates": len(work) - len(known),
+        "pace": pace,
         "plan": plan,
         "pieces_words": PIECES_WORDS,
         "piece_words": piece_words,
@@ -519,6 +539,44 @@ def view(
         "cautions": cautions,
         "now": _iso(now),
         "kept": None,
+    }
+
+
+def pace_of(
+    story: Mapping[str, Any],
+    left: list[str],
+    record: Mapping[str, Any],
+    workers: int,
+    prog: Mapping[str, Any] | None,
+    now: datetime,
+    state: str,
+) -> dict[str, Any] | None:
+    """The work left at the pace so far: the pairs landed in the screen took ``ratio`` of their
+    own estimates (their spans' time over their estimates, each pair with an estimate), and the
+    pairs left are taken at that ratio, less the time the pair in play has had. None until a pair
+    has landed, or when no pair is left."""
+    done = [
+        s
+        for s in story["spans"]
+        if s["landed"] and s["to"] is not None and s.get("estimate") and s["estimate"] > 0
+    ]
+    if not done or not left or state not in (md.IN_PLAY, md.PAUSED):
+        return None
+    ratio = sum(s["to"] - s["from"] for s in done) / sum(s["estimate"] for s in done)
+    ests = [estimate_seconds(record, k, workers) for k in left]
+    known = [e * ratio for e in ests if e is not None]
+    if not known:
+        return None
+    work = sum(known)
+    if prog is not None and prog.get("estimate"):
+        work -= min(prog["elapsed"], prog["estimate"] * ratio)
+    work = max(0.0, work)
+    return {
+        "ratio": ratio,
+        "pairs": len(done),
+        "work_left": work,
+        "unbroken_end": _iso(now + timedelta(seconds=work)),
+        "words": PACE_WORDS,
     }
 
 
@@ -550,11 +608,17 @@ __all__ = [
     "ESTIMATE_WORDS",
     "IN_PLAY",
     "NOT_PLAYED",
+    "OUTSIDE_WORDS",
+    "PACE_WORDS",
+    "PIECES_WORDS",
     "PLAYED",
+    "SIZES_WORDS",
     "WAITING",
     "board_at",
     "estimate_seconds",
+    "label_of",
     "not_a_screen",
+    "pace_of",
     "pieces_of",
     "progress",
     "story_of",

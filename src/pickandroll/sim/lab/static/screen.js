@@ -14,6 +14,7 @@
   const at = (off) => (S.v && S.v.story.start && isNum(off) ? when(new Date(Date.parse(S.v.story.start) + off * 1000).toISOString()) : "n/a");
   const span = (sec) => (!isNum(sec) ? "n/a" : sec < 3600 ? Math.round(sec / 60) + " min" : (sec / 3600).toFixed(1) + " h");
   const signed = (v, d) => (!isNum(v) ? "n/a" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d));
+  const rowName = (r) => (r ? r.override_label || r.nudge || r.key : "");
   const screens = (M) => ((M && M.runs) || []).filter((r) => r.kind === "screen");
 
   // ------------------------------------------------------------------ the board at a moment
@@ -75,7 +76,8 @@
     const v = S.v;
     return `<section class="panel"><span class="k">The clock</span><div id="sc-now-box"></div>
       <p class="sub">${esc(v.counts.played)} played · ${esc(v.counts.left)} left · ${esc(v.counts.not_played)} not played · ${esc(v.counts.rows)} rows</p>
-      ${v.work_left == null ? "" : `<p class="sc-left">Work left: about ${esc(span(v.work_left))} of play <small>(an estimate${v.unknown_estimates ? `; ${esc(v.unknown_estimates)} pair(s) with none` : ""})</small>, in pieces.${v.unbroken_end ? ` Played on without a pause it would end about ${esc(when(v.unbroken_end))}.` : ""}</p>`}
+      ${v.work_left == null ? "" : `<p class="sc-left">Work left by the screen's own estimates: about ${esc(span(v.work_left))} of play <small>(an estimate${v.unknown_estimates ? `; ${esc(v.unknown_estimates)} pair(s) with none` : ""})</small>, in pieces.${v.unbroken_end ? ` Played on without a pause it would end about ${esc(when(v.unbroken_end))}.` : ""}</p>`}
+      ${v.pace ? `<p class="sc-left">At the pace so far: about ${esc(span(v.pace.work_left))} of play <small>(an estimate: the ${esc(v.pace.pairs)} pair(s) landed took ${esc(Math.round(100 * v.pace.ratio))}% of their estimates)</small>, in pieces. Played on without a pause it would end about ${esc(when(v.pace.unbroken_end))}.</p>` : ""}
       <p class="sub">${esc(v.pieces_words)}</p>
       ${v.plan ? `<p class="sc-plan"><b>The plan:</b> ${esc(v.plan)}</p>` : `<p class="sub">No plan for the pieces in the notes.</p>`}
       <ul class="sc-pieces">${v.story.pieces.map((p, i) => `<li>${esc(v.piece_words[i])} <span class="sub">· from ${esc(when(p.started_at))}${p.finished_at ? ` to ${esc(when(p.finished_at))}` : ""} · ${esc(p.workers)} worker(s)</span></li>`).join("")}</ul>
@@ -89,9 +91,11 @@
     const m = markAt(r, t), on = r.key === S.pick ? " on" : "";
     const vals = r.values ? `${esc(r.values.a)} → ${esc(r.values.b)}` : "";
     let body = "";
-    if (m === "played" && r.result) {
+    if (m === "played" && r.result && r.result.did_nothing) {
+      body = `<small class="sc-v">did nothing</small>`;
+    } else if (m === "played" && r.result) {
       const res = r.result;
-      const verdict = res.did_nothing ? "did nothing" : res.survives ? "survives the rule" : "inside one SE";
+      const verdict = res.survives ? "survives the rule" : "inside one SE";
       body = `${res.cells.map((c) => cell(c, res.cells.length > 1)).join("")}<small class="sc-v">${esc(verdict)}${res.voided ? ` · ${esc(res.voided)} path(s) voided` : ""}</small>`;
     } else if (m === "in play") {
       const p = progressAt(spanAt(r.key, t), t);
@@ -101,7 +105,7 @@
     } else {
       body = `<small>${esc(r.status || "not played")}${r.why ? ": " + esc(r.why) : ""}</small>`;
     }
-    return `<button class="sc-row m-${m.replace(" ", "-")}${on}" data-sc="row" data-v="${esc(r.key)}"><span class="sc-n"><b>${esc(r.override || r.nudge || r.key)}</b><small>${vals}</small></span><span class="sc-b">${body}</span></button>`;
+    return `<button class="sc-row m-${m.replace(" ", "-")}${on}" data-sc="row" data-v="${esc(r.key)}"><span class="sc-n"><b>${esc(rowName(r))}</b><small>${vals}</small></span><span class="sc-b">${body}</span></button>`;
   }
   function board(t) {
     const v = S.v, by = Object.fromEntries(v.rows.map((r) => [r.key, r]));
@@ -118,7 +122,7 @@
     if (!r) return `<section class="panel"><span class="k">The pair</span><p class="empty">No pair to show.</p></section>`;
     const a = r.arms, m = markAt(r, t);
     return `<section class="panel"><span class="k">The pair · ${esc(m)}</span>
-      <div class="sv-lever"><b>${esc(r.label)}</b>${r.values ? ` <span>${esc(r.values.a)} → ${esc(r.values.b)}</span>` : ""}<small>${esc(r.nudge || "")}${r.override ? ` · ${esc(r.override)}` : ""} · ${esc(r.tier || "")} · ${esc(v.world.paths)} paths · rivals ${esc(a.opponents)}</small></div>
+      <div class="sv-lever"><b>${esc(r.label)}</b>${r.values ? ` <span>${esc(r.values.a)} → ${esc(r.values.b)}</span>` : ""}<small>${esc(r.nudge || "")}${r.override_label ? ` · ${esc(r.override_label)}` : ""} · ${esc(r.tier || "")} · ${esc(v.world.paths)} paths · rivals ${esc(a.opponents)}</small></div>
       <div class="kdiff kh"><span></span><b class="ca">A · ${esc(a.names.a)}</b><b class="cb">B · ${esc(a.names.b)}</b></div>
       ${a.differ.map(krow).join("") || `<p class="sub">No value differs: ${esc(r.status || "")}${r.why ? ", " + esc(r.why) : ""}.</p>`}
       ${a.both.length ? `<p class="sub sc-both">Set in both arms: ${a.both.map((x) => `${esc(x.label)} ${esc(x.value)}`).join(" · ")}</p>` : ""}
@@ -142,7 +146,7 @@
     S.key = key;
     $("sc-board").innerHTML = board(t);
     const nb = $("sc-now-box");
-    if (nb) nb.innerHTML = ip ? `<p class="sc-ip">In play: <b>${esc((v.rows.find((r) => r.key === ip) || {}).override || ip)}</b> since ${esc(at(sp.from))}, ${esc(pr.words)} <small>(an estimate)</small></p>` : `<p class="sc-ip">${esc(stateAt(t))}: no pair in play.</p>`;
+    if (nb) nb.innerHTML = ip ? `<p class="sc-ip">In play: <b>${esc(v.rows.find((r) => r.key === ip).label)} · ${esc(rowName(v.rows.find((r) => r.key === ip)))}</b> since ${esc(at(sp.from))}, ${esc(pr.words)} <small>(an estimate)</small></p>` : `<p class="sc-ip">${esc(stateAt(t))}: no pair in play.</p>`;
     const pp = $("sc-pair");
     if (pp) pp.innerHTML = pairPanel(t);
   }

@@ -303,9 +303,16 @@
   const pageKey = () => { const id = (location.hash || "#overview").slice(1); return PAGES[id] ? id : "overview"; };
   function header() {
     const s = M.notes && M.notes.state, g = M.generated;
-    const line = s ? `<span class="dot ${s.running ? "run" : ""}"></span>${esc(s.text)}` : `<span class="dot"></span>no notes file · built ${day(g.at)}`;
-    document.getElementById("state").innerHTML = stale ? `<span class="dot bad"></span>${esc(stale)}; the page shows the last model` : line;
+    // The status text yields to the tabs: cut when the page is narrow, its full text on hover.
+    const text = stale ? `${stale}; the page shows the last model` : s ? s.text : `no notes file · built ${day(g.at)}`;
+    const el = document.getElementById("state");
+    el.innerHTML = `<span class="dot ${stale ? "bad" : s && s.running ? "run" : ""}"></span><span class="st">${esc(text)}</span>`;
+    el.title = text;
+    topHeight();
   }
+  // The top bar's height, for what sticks under it: it grows when the status text wraps under the tabs.
+  function topHeight() { document.documentElement.style.setProperty("--toph", document.querySelector(".top").offsetHeight + "px"); }
+  window.addEventListener("resize", topHeight);
   // keep: a redraw of the same tab after the model changed keeps the reader's scroll.
   function render(keep) {
     const key = pageKey(), y = window.scrollY;
@@ -313,7 +320,7 @@
     header();
     TIPS.length = 0; tipEl.hidden = true;
     page.classList.toggle("bleed", key === "explainer");
-    document.documentElement.style.setProperty("--toph", document.querySelector(".top").offsetHeight + "px");
+    topHeight();
     page.innerHTML = PAGES[key][1]();
     if (window.SeasonView) { if (key === "season") window.SeasonView.mount(document.getElementById("season-view"), M); else window.SeasonView.stop(); }
     if (window.ScreenView) { if (key === "screen") window.ScreenView.mount(document.getElementById("screen-view"), M); else window.ScreenView.stop(); }
