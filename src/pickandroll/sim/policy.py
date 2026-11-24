@@ -1339,7 +1339,10 @@ def rival_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
     refused where the knobs are checked."""
     if not stash_named(knobs):
         return dict(knobs)
-    return {**{k: v for k, v in knobs.items() if not _stash_key(k)}, "stash_threshold": None}
+    # The base keeps its place in the dict (a rival's repr is its decisions' key).
+    out = {k: v for k, v in knobs.items() if not (is_override(k) and _stash_key(k))}
+    out["stash_threshold"] = None
+    return out
 
 
 def bracket_days(setup: Setup) -> frozenset[date]:
@@ -2431,8 +2434,10 @@ class Shape:
     standins: bool = False
     waivers: str = "none"
     h2h: str = ONE_WIN
-    #: Whether the league has a cut line (PR dynamic knobs): a field of at least one team and
-    #: fewer than all of them, so ``standing`` names a situation. The label leaves it out.
+    #: Whether a league whose bracket is read has a cut line (PR dynamic knobs): a field of at
+    #: least one team and fewer than all of them, so ``standing`` names a situation. True where
+    #: the bracket is not read, which ``bracket`` says (so such a league's shape is as before).
+    #: The label leaves it out.
     line: bool = True
 
     @property
@@ -2462,7 +2467,7 @@ def shape_of(setup: Setup) -> Shape:
         spec is not None,
         waivers=setup.waivers,
         h2h=setup.h2h,
-        line=spec is not None and 1 <= spec.playoff_teams < len(setup.teams),
+        line=spec is None or 1 <= spec.playoff_teams < len(setup.teams),
     )
 
 

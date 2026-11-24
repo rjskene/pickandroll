@@ -109,6 +109,9 @@ def test_standing_reads_the_finished_weeks_against_the_swing_left():
     assert policy.standing_of(everyone, three, 1, 4) is None
     assert not policy.shape_of(replace(setup, spec=everyone)).line
     assert policy.shape_of(setup).line
+    # A league whose bracket is not read keeps the shape it had: its bracket says it all.
+    unread = replace(setup, spec=None, bracket_unread="not read")
+    assert policy.shape_of(unread) == policy.Shape(bracket=False)
 
 
 def test_the_situation_reads_the_runner_s_standing_else_the_state_s_finished_weeks():
@@ -263,6 +266,8 @@ def test_a_stash_override_stays_the_seat_s_own():
     assert rival["stash_threshold"] is None and "stash_threshold@phase.run_in" not in rival
     assert rival["daily_cap@phase.run_in"] == 2
     assert rn.stash_named([rn.Arm("A", "exact", knobs, {"kind": "mirror"})])
+    # The base keeps its place: a rival's repr is its decisions' key.
+    assert list(rival)[: len(policy.KNOBS)] == list(policy.KNOBS)
 
 
 def test_the_decision_key_holds_the_overrides_in_force_only_for_an_arm_that_names_one():

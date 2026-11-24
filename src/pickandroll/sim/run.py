@@ -979,14 +979,21 @@ class _Tables:
 
 
 def blend_of(
-    strat: Any, setup: Setup, state: SimState, team: int, week: int
+    strat: Any,
+    setup: Setup | None = None,
+    state: SimState | None = None,
+    team: int | None = None,
+    week: int | None = None,
 ) -> tuple[float, float] | None:
     """The recent-form blend ``team``'s strategy reads in week ``week`` (#172, PR take-in): an
     arm's seat's or its mirror rival's, on its knobs in force that morning (``policy.blend_of``
-    of ``policy.knobs_on``, PR dynamic knobs); None for a market or a static rival, which holds
-    no knob and believes the run's forecaster as read, and for a seat at ``rate_shrink`` 0."""
+    of ``policy.knobs_on``, PR dynamic knobs; with no league, state and team given, on its base
+    knobs); None for a market or a static rival, which holds no knob and believes the run's
+    forecaster as read, and for a seat at ``rate_shrink`` 0."""
     if not isinstance(strat, op.Seat | op.Mirror):
         return None
+    if setup is None or state is None or team is None:
+        return policy.blend_of(policy.in_force(strat.knobs, policy.NOWHERE))
     return policy.blend_of(policy.knobs_on(strat.knobs, setup, state, team, week))
 
 
