@@ -3718,7 +3718,12 @@ a finished path (B ahead, behind or level on the measure; a path the audit will 
 such), and the mean of the paths that stand so far with their count, worded "so far, n of N
 paths". The screen's rule reads a whole pair, so a pair in play is never set against it. A file
 whose pair has landed is the record's to say, and one that says its pair was stopped inside its
-tasks, or that no open piece is playing, is said as such: nothing of that pair is recorded. The
+tasks, or names a pair that is not the one in play, is said as such (nothing of that pair is
+recorded) and nothing of it is drawn on the pair in play. A file that names the pair in play and
+has gone quiet, last written longer ago than three times one path's own time (the pair's
+`seconds_one` in the screen's estimates, `screen_view.QUIET_PATHS`), is said in words: no path
+has come back since, and the piece may have been stopped from outside. With no estimate for the
+pair nothing is said of it, and the file's time is still shown. The
 story replays a landed pair's paths from its record's `by_path`, a mark a path drawn evenly over
 the pair's time (the record keeps no time for a path, and the page says so). A pair record
 written since PR trace keeps `by_path`; one written before does not, and its pair replays as a bar

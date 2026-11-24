@@ -91,6 +91,7 @@
       ${v.plan ? `<p class="sc-plan"><b>The plan:</b> ${esc(v.plan)}</p>` : `<p class="sub">No plan for the pieces in the notes.</p>`}
       <ul class="sc-pieces">${v.story.pieces.map((p, i) => `<li>${esc(v.piece_words[i])} <span class="sub">· from ${esc(when(p.started_at))}${p.finished_at ? ` to ${esc(when(p.finished_at))}` : ""} · ${esc(p.workers)} worker(s)</span></li>`).join("")}</ul>
       ${v.cut ? `<p class="sv-err">${esc(v.cut)}</p>` : ""}
+      ${v.in_play && v.in_play.so_far && v.in_play.so_far.quiet ? `<p class="sv-err">${esc(v.in_play.so_far.quiet)} The progress file was last written ${esc(when(v.in_play.so_far.updated_at))}.</p>` : ""}
       ${v.in_play && v.in_play.so_far ? `<p class="sub">${esc(v.in_play.so_far.note)}</p>` : ""}
       ${v.spread_words ? `<p class="sub">${esc(v.spread_words)}</p>` : ""}
       <p class="sub">${esc(v.outside_words)}</p></section>`;

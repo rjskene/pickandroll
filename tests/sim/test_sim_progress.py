@@ -260,6 +260,26 @@ def test_a_screen_keeps_its_pair_in_play_s_progress_and_records_it_as_without(
     # At the end the file is gone, and the screen's records are byte for byte a run's without it.
     folder = reader.screen_dir(watched, name)
     assert not (folder / reader.PROGRESS_FILE).exists()
+    # The last look against the pair's own record: every task named once, each with its season,
+    # forecaster and path as the record keeps them (the tasks' order: by season, forecaster,
+    # then path), and each path's difference that path's B less A on the measure (``by_path``).
+    last = seen[-1]["file"]
+    pair = json.loads((folder / reader.pair_file(last["key"])).read_text())
+    assert pair["audit"]["paths_voided"] == 0
+    stood = [
+        (int(t), label, row)
+        for t, cells in pair["by_path"]["by_season"].items()
+        for label, rows in cells.items()
+        for row in sorted(rows, key=lambda r: r["path"])
+    ]
+    assert len(stood) == tasks
+    assert sorted(x["task"] for x in last["paths"]) == list(range(tasks))
+    for x in last["paths"]:
+        t, label, row = stood[x["task"]]
+        assert (x["season"], x["forecaster"], x["path"]) == (t, label, row["path"])
+        assert x["difference"] == row["b"][MEASURE] - row["a"][MEASURE] and not x["voided"]
+    # The timed task is the one named first, at the pair's start.
+    assert seen[0]["file"]["paths"][0]["task"] == last["paths"][0]["task"]
     assert not list(folder.glob("*.partial"))
     monkeypatch.setattr(ss, "PROGRESS", False)
     monkeypatch.setattr(ss.PairWatch, "start", lambda *a: pytest.fail("no watch when it is off"))

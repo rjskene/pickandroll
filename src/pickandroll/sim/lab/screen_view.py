@@ -73,6 +73,16 @@ SPREAD_WORDS = (
     "A landed pair's paths are drawn evenly over its time: its record keeps each path's outcome "
     "(by_path), not when it came back."
 )
+#: How many times one path's own time (its pair's ``seconds_one`` in the screen's estimates) the
+#: progress file of the pair in play may go unwritten before the view says no path has come back
+#: since: a pool of workers brings a path back about every ``seconds_one`` over its workers, so
+#: three whole paths' time with none back is long. With no estimate for the pair the view says
+#: nothing of it (it cannot say how long a path should take); the file's time is still shown.
+QUIET_PATHS = 3.0
+QUIET_WORDS = (
+    f"No path has come back for more than {QUIET_PATHS:g} times one path's own time in the "
+    "screen's estimate: the piece may have been stopped from outside."
+)
 #: A path's side by the sign of its difference, B less A.
 SIDES = {1: "ahead", -1: "behind", 0: "level"}
 OUTSIDE_WORDS = (
@@ -454,13 +464,30 @@ def _mark(row: Mapping[str, Any], in_play: str | None) -> str:
 
 
 def so_far_of(
-    span: Mapping[str, Any] | None, progress: Mapping[str, Any] | None
+    span: Mapping[str, Any] | None,
+    progress: Mapping[str, Any] | None,
+    now: datetime | None = None,
+    one: float | None = None,
 ) -> dict[str, Any] | None:
     """The pair in play's paths so far, from the run's progress file: tasks done of the total
     (the bar), each path's mark, and the count and mean of those that stand, worded "so far, n
-    of N paths"; None without a progress file for it (the view falls back to the estimate)."""
+    of N paths"; None without a progress file for it (the view falls back to the estimate).
+    ``quiet``: :data:`QUIET_WORDS` when at ``now`` the file was last written longer ago than
+    :data:`QUIET_PATHS` times ``one``, one path's own time (the pair's ``seconds_one``); None
+    otherwise, and always without ``one``."""
     if span is None or progress is None or progress.get("key") != span.get("key"):
         return None
+    last_write = when(progress.get("updated_at"))
+    quiet = (
+        QUIET_WORDS
+        if now is not None
+        and _num(one)
+        and one > 0
+        and last_write is not None
+        and progress.get("state") == "playing"
+        and (now - last_write).total_seconds() > QUIET_PATHS * one
+        else None
+    )
     marks = span.get("marks") or []
     total = int(progress.get("tasks") or 0)
     done = len(marks)
@@ -475,6 +502,7 @@ def so_far_of(
         "updated_at": progress.get("updated_at"),
         "words": f"so far, {done} of {total} paths",
         "note": SO_FAR_WORDS,
+        "quiet": quiet,
     }
 
 
@@ -490,8 +518,8 @@ def cut_words(progress: Mapping[str, Any] | None, in_play: str | None, state: st
     if state != md.IN_PLAY or progress.get("key") != in_play:
         return (
             f"{progress.get('key')}: its progress file was last written at "
-            f"{progress.get('updated_at')} with {done} of {total} paths back, and no piece is "
-            "playing it now: the piece stopped inside that pair, and nothing of it is recorded"
+            f"{progress.get('updated_at')} with {done} of {total} paths back, and it is not the "
+            "pair in play now: a piece stopped inside that pair, and nothing of it is recorded"
         )
     return None
 
@@ -606,7 +634,13 @@ def view(
     shown = in_play or (left[0] if left else (order[-1] if order else None))
     workers = pieces[-1]["workers"] if pieces else 1
     prog = progress_of(open_span, story)
-    so_far = so_far_of(open_span, progress)
+    one = ((record.get("timing") or {}).get("estimates") or {}).get(in_play or "")
+    so_far = so_far_of(
+        open_span,
+        progress,
+        now,
+        (one or {}).get("seconds_one") if isinstance(one, Mapping) else None,
+    )
     cut = cut_words(progress, in_play, live["state"])
     work = [estimate_seconds(record, k, workers) for k in left]
     known = [w for w in work if w is not None]
@@ -790,6 +824,8 @@ __all__ = [
     "PACE_WORDS",
     "PIECES_WORDS",
     "PLAYED",
+    "QUIET_PATHS",
+    "QUIET_WORDS",
     "SIZES_WORDS",
     "WAITING",
     "board_at",

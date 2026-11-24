@@ -11,6 +11,7 @@ a stub DOM in node.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -374,6 +375,10 @@ def test_an_earlier_screen_version_is_read_and_one_without_its_pieces_is_refused
     old = screen_record({"daily_cap-minus": 0.5}, [piece(0, 500, ["daily_cap-minus"])], version=6)
     old["spec"]["replay_version"] = 21
     assert "resolved" not in old and scv.not_a_screen(old) is None
+    assert scv.not_a_screen({**old, "timing": {"estimates": {}}}) == (
+        "a screen record of version 6 with no pieces under its timing: the view needs when each "
+        "piece ran"
+    )
     v = scv.view("s-old", old, landings({"daily_cap-minus": 400}), clock(600))
     assert v["screen_version"] == 6 and v["baseline"]["knobs_from"] == "as given"
     assert v["earlier_engine"] is True
@@ -487,6 +492,45 @@ def test_the_pair_in_play_shows_its_paths_so_far_from_the_progress_file():
         assert v["in_play"]["so_far"] is None and v["cut"] is None
 
 
+def test_another_pair_s_file_draws_nothing_on_the_pair_in_play_and_is_said_in_words():
+    """A piece is open on one pair and the folder's file names another, neither in play nor
+    landed (a piece before was stopped inside it): nothing of it is drawn on the pair in play."""
+    other = progress_file("rate_cv-plus", [(700, 2.0, False), (750, -2.0, False)], at_=760)
+    v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1000), progress=other)
+    assert v["state"]["state"] == md.IN_PLAY and v["in_play"]["key"] == "rate_cv-minus"
+    open_span = next(s for s in v["story"]["spans"] if s["to"] is None)
+    assert open_span["key"] == "rate_cv-minus" and open_span["marks"] is None
+    assert all(s["marks"] is None for s in v["story"]["spans"])
+    assert v["in_play"]["so_far"] is None
+    assert v["in_play"]["words"] == "about 50% of its estimate"  # the estimate, as without a file
+    assert v["cut"] == (
+        f"rate_cv-plus: its progress file was last written at {at(760)} with 2 of 4 paths back, "
+        "and it is not the pair in play now: a piece stopped inside that pair, and nothing of it "
+        "is recorded"
+    )
+
+
+@pytest.mark.parametrize(
+    ("seconds", "quiet"),
+    [(1000, None), (1300, scv.QUIET_WORDS)],  # 40 s, then 340 s, since the last write
+)
+def test_a_progress_file_gone_quiet_is_said_after_three_paths_time(seconds, quiet):
+    """The pair's own path takes ``seconds_one`` (100 s here): the file last written at 960 s is
+    quiet past 960 + 3 x 100 s. With no estimate for the pair, nothing is said at any clock."""
+    prog = progress_file("rate_cv-minus", [(800, 0.5, False), (960, -0.25, False)], at_=960)
+    v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(seconds), progress=prog)
+    assert v["in_play"]["so_far"]["quiet"] == quiet
+    assert scv.QUIET_PATHS * EST["seconds_one"] == 300
+    no_estimate = json.loads(json.dumps(IN_PLAY))
+    del no_estimate["timing"]["estimates"]["rate_cv-minus"]
+    v = scv.view("s-live", no_estimate, IN_PLAY_LANDED, clock(9000), progress=prog)
+    assert v["in_play"]["so_far"]["done"] == 2 and v["in_play"]["so_far"]["quiet"] is None
+    # A file that says the pair was cut is not "quiet": its own words say what happened.
+    cut = {**prog, "state": "cut", "why": "made-up words"}
+    v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1300), progress=cut)
+    assert v["cut"] == "rate_cv-minus: made-up words" and v["in_play"]["so_far"]["quiet"] is None
+
+
 def test_a_progress_file_whose_pair_has_landed_is_the_record_s_to_say():
     prog = progress_file("daily_cap-plus", [(500, 1.0, False)], at_=790)
     v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1000), progress=prog)
@@ -508,8 +552,8 @@ def test_a_pair_stopped_inside_its_tasks_is_said_from_its_progress_file():
     v = scv.view("s-live", STOPPED, IN_PLAY_LANDED, clock(2000), progress=stale)
     assert v["cut"] == (
         f"rate_cv-minus: its progress file was last written at {at(805)} with 1 of 4 paths back, "
-        "and no piece is playing it now: the piece stopped inside that pair, and nothing of it is "
-        "recorded"
+        "and it is not the pair in play now: a piece stopped inside that pair, and nothing of it "
+        "is recorded"
     )
     assert v["in_play"] is None
 
@@ -607,6 +651,13 @@ def test_the_landings_are_read_from_the_pairs_own_records_once_each(tmp_path):
     path = str(f.resolve())
     kept[path] = (*kept[path][:2], {"started_at": None, "finished_at": "kept"})
     assert rd.screen_landings(folder, IN_PLAY, kept)["daily_cap-minus"]["finished_at"] == "kept"
+    # A pair file whose time or size changed is read again (its kept read is not used for ever).
+    f.write_text(json.dumps({"kind": "replay", "started_at": None, "finished_at": at(450)}))
+    st = f.stat()
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    again = rd.screen_landings(folder, IN_PLAY, kept)
+    assert again["daily_cap-minus"]["finished_at"] == at(450)
+    assert kept[path][2]["finished_at"] == at(450)
     # A pair file that is not JSON is left out; the rest are read.
     f.write_text("{")
     assert set(rd.screen_landings(folder, IN_PLAY, {})) == {"daily_cap-plus"}
