@@ -271,8 +271,8 @@ LOG: tuple[Mark, ...] = (
     Mark(
         "replay-23", "2026-11-24", DYNAMIC_PR, "seat", "Dynamic knobs",
         "A knob may take another value by the seat's situation, the season's phase or its "
-        "standing against the cut line; the screen splits a lever by situation and the tune "
-        "searches overrides last. None named, version 22's.",
+        "standing at the cut line; the screen splits levers by situation and the tune searches "
+        "overrides last.",
         replay_version=23,
         screen_version=8,
         tune_version=2,

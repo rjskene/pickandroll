@@ -141,7 +141,7 @@ def test_every_flag_of_a_run_s_cells_and_world_is_a_key_of_the_screen_s_spec():
 
 def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: Path, whole):
     rec, out = whole
-    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 7)
+    assert (rec["kind"], rec["name"], rec["screen_version"]) == ("screen", "whole", 8)
     assert rec["note"] == ss.SCREEN_NOTE and rec["rule"] == sc.RULE
     assert rec["measure"] == "matchup_wins" and rec["hold_out"] == 2025
     assert len(rec["fit_sha"]) == 64 and rec["fit_file"].endswith("fit.json")
@@ -242,7 +242,7 @@ def test_a_pair_s_record_is_a_replay_s_with_one_screen_block(data: Path, whole):
     row = rows_of(rec)["surrogate_days-monday"]
     assert got["screen"] == {
         "name": "whole",
-        "screen_version": 7,
+        "screen_version": 8,
         **{k: v for k, v in row.items() if k != "file"},
     }
     assert got["screen"]["both"] == {} and got["screen"]["tier"] == "surrogate"

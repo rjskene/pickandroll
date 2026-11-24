@@ -510,6 +510,86 @@ outcome for outcome. `test_sim_takein_equality` holds it on the made-up league:
 - held slots, points, waivers by priority, FAAB and continuous, both formats and same-day adds;
 - a `yahoo` and a `blend` split seat.
 
+**The take-in's five are pinned** (PR dynamic knobs). They are live's defaults, read from the
+engine, so a change to live's code changes what every arm that leaves them out plays.
+`test_sim_knobs` pins the five this replay version plays. If that test fails, live's defaults
+have moved: that is a capability change, so step the replay version, add an `engine` mark to the
+capability log and move the pin.
+
+**Dynamic knobs** (PR dynamic knobs). A knob may take another value in a named situation: an
+**override**, named in the arm's `knobs` as `knob@axis.situation`
+(`"daily_cap@standing.behind": 3`). Where no override names the situation, the knob's base value
+holds. The question an override answers is the user's: does a setting that follows the season beat
+the best static one, on seasons it was not chosen on?
+
+- **The axes** (`policy.AXES`, `policy.SITUATIONS`). Each has cut points fixed before any run,
+  never tuned.
+  - `phase`, from the league's calendar alone, known before the draft (`policy.phase_of`). With
+    `R` regular weeks and `T = round(R / 3)`, `opening` is the first `T` regular weeks, `run_in`
+    the last `T`, `middle` the weeks between, and `bracket` the bracket's weeks. Thirds give
+    each situation about as many days.
+  - `standing`, the seat's place against the cut line as the stake reads it
+    (`policy.standing_of`). It uses the standings over the regular weeks finished before this one
+    (the running week is not read). The seat's lead over the cut line is taken in units of one
+    week's spread and divided by the swing the later regular weeks can make, `sqrt(2n + 1)` for
+    `n` of them. At `z >= 1` the seat is `safe`, at `z <= -1` it is `behind`, otherwise it is on
+    the `line` (`policy.STANDING_CUT`). Before a week is finished every seat is on the line. In a
+    bracket week, or in a league with no cut line, the axis names no situation and the base holds.
+    The runner sets each team's standing once a week (`SimState.standing`), as it sets the stake.
+  - **Budget waits.** A third axis, the dollars left against the bid pace's path, is not built.
+    The pace already scales a bid by exactly that reading, only `faab_sizing` has a reason to
+    follow it, the private ruleset has no budget, and one axis fewer is one set fewer of crossing
+    tests. The place in the week is not an axis either: on the surrogate tier `surrogate_days`
+    already screens the solve days.
+- **Refused by name** (`policy.check_overrides`, `policy.season_of`):
+  - `system` and `blend`, which are fixed at setup;
+  - one knob on two axes;
+  - every situation of an axis overridden on one knob, which would leave the base never read;
+  - an override equal to its base, or outside the knob's own bounds;
+  - more than three overrides (`policy.MAX_OVERRIDES`, a cap on a schedule's freedom set before
+    any run);
+  - `playoff_weight@phase.bracket`, since in a bracket week the term is
+    `season_weight × playoff_weight`, one product (name `season_weight@phase.bracket`);
+  - `season_weight@standing.*` beside a stake above 0: the stake already scales the term by the
+    standing, so the two would say it twice;
+  - a name that is no knob, axis or situation.
+  - A run whose league has no bracket read refuses any override, as it refuses a stake
+    (`run.override_refused`).
+- **Not refused.** An override that the tier or the league never reads is allowed. The reads table
+  has a row for every override the arm names (`policy.override_reads`): the knob's own reason
+  where the knob is not read; "the league's bracket is not read, so phase is not cut"; "the league
+  has no cut line, so standing names no situation"; and "a bracket week's queue weighs the week
+  alone (live's rule), so three_weight@phase.bracket is never read". A knob above 0 in only some
+  situations (`season_weight`, `rate_shrink`) counts as above 0 for what it opens, the stake
+  among them.
+- **Where the override is read.** `policy.in_force` resolves the knobs in one place, and a seat
+  and a mirror rival call it each morning in their own situation (`opponents.in_force`). The
+  resolved knobs feed `policy.problem_of`, the executor's daily cap (`run._cap`), the blend
+  toward recent form for the decisions and the lineup (`run.blend_of`), and the season scale on
+  day one (the opening, and the line). A mirror rival reads its own situation, never the seat's.
+  `problem_of`, the tiers and the code that mirrors the engine see plain knobs: `problem_of`
+  refuses an override's name, so a caller that forgets to resolve fails loudly. A market or a
+  static rival holds no knobs and takes no override.
+- **The cache.** The runner's decision key gains the overrides in force that morning
+  (`policy.forced_on`), since the state's key holds neither the totals nor the standing. A
+  strategy that names none keeps the key it had.
+- **What already moves.** The stake scales the later part of the season term by the standing.
+  `playoff_weight` already weighs the bracket's games, `three_weight` is already 0 in a bracket
+  week, and the bid pace already follows the budget. An override of any other knob, on either axis,
+  is new.
+- **The record.** A replay's record keeps each arm's knobs as played (`resolved`: every knob's
+  base value, the take-in's five included where the spec leaves them out, and every override)
+  beside the specs as given. A screen's record keeps the baseline's. In a run where an arm names
+  an override, every arm's seat counts its days in each situation (`counts.SITUATIONS`:
+  `days_opening` to `days_behind`), so a reader sees how much of a season an override governed.
+  A trace's day carries each overridden knob's value in force under its own name, which the
+  viewer charts, and a `situation` block. A trace with no override is byte for byte as before
+  (no trace version step).
+- **An arm that names none plays as before**, outcome for outcome: `test_sim_dynamic` holds it
+  on the made-up league, as `test_sim_takein_equality` does.
+- **Live has no reader for an override.** A schedule that wins is a finding for the user. Taking
+  it to live needs their ruling and a change asked on #172.
+
 **Five fields.** An arm may also name five fields of its own, on the arm and on its seat
 (`policy.Fields`, in the seat's repr, so two seats that differ in one never share a solve):
 
@@ -1210,7 +1290,7 @@ Each command runs as `python -m pickandroll.sim <command>`:
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
   `--scoring points` (with `--points`), `--held`, `--waivers` (with `--waiver-days` and
   `--waiver-rule`, and under `faab` `--budget`, `--rival-scale` and `--rival-bids`) and `--h2h` set
-  the run's league rules ("The league shapes"). The payload (`replay_version` 22) keys by season
+  the run's league rules ("The league shapes"). The payload (`replay_version` 23) keys by season
   what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
@@ -2825,6 +2905,32 @@ that reads the lever):
 
 No lever is played on the static or the ranking tier.
 
+**Split levers** (PR dynamic knobs, `screen.SPLITS`). A screen can ask whether a knob's best value
+depends on the situation (**Dynamic knobs**, above). One rule, written before any result, makes the
+split levers. Every lever of the list whose name is a knob that takes an override, and whose nudge
+moves that knob alone, has a split lever on each axis, named `knob@axis` (thirty in all). Its rows
+are the lever's own nudges, each in one situation of the axis alone:
+
+- arm A is the lever's own arm A;
+- arm B is A with the override `knob@axis.situation` at the nudge's value, the nudge taken from
+  the knob's value in force in A in that situation;
+- its pair is keyed `knob@axis.situation-tag`, and the row keeps its `override`;
+- its `values` are `a`, the value in force in A in that situation, and `b`, B's override.
+
+The spread-off and all-off rows move several knobs at once and have no split lever. A split lever
+is played only when `--levers` names it, as `knob@axis` or one situation, `knob@axis.situation`. A
+screen that names none plays the list as before. A split row that an override's refusal meets (for
+example `playoff_weight@phase.bracket`, or a nudge equal to the base) is listed as not played, with
+the refusal's words. It does not refuse the screen.
+
+If a lever's split rows agree in sign, a schedule adds nothing over the static value. If they
+disagree, a schedule can beat every static value. A screen sizes this; it never judges it.
+
+Before a split row is read, the occupancy of each situation is read from the counts
+(`days_opening` to `days_behind`). If a situation holds under a tenth of the seat's days in a
+ruleset, the lead is told before anything else is played, and any new cut is fixed in writing
+before an outcome is read. No cut moves after a result.
+
 **The queue's rule on the list** (PR E):
 
 - **A plan floor is on the list twice**: where the streaming plan is drawn and executed beside
@@ -3083,6 +3189,35 @@ when its folder is started, and no flag lets a caller pick after seeing a figure
 - **A later pass does not play a pair again.** A lever whose current arm no step has changed
   since its last try would be the same two arms on the same paths. The step takes the earlier
   pass's result, says so, and names that pair's file (`same_as`).
+
+**The second stage: overrides** (PR dynamic knobs, `tune.DYNAMIC_RULE`). After the static search
+stops, its final arm is the static best, and a second stage starts from it. Its levers are
+override names (`knob@axis.situation`), fixed before any pair: the surviving split rows of the
+screen named, strongest first by the first stage's rule, or those `--overrides` names. An
+override's values are:
+
+- none, which is the current arm;
+- each of its split lever's nudges in that situation, taken from the knob's value in force there;
+- each of those nudges again.
+
+The choice follows the first stage's rule. The second stage plays one pass. It stops when the arm
+holds three overrides (`policy.MAX_OVERRIDES`) or when the pass takes nothing. A value the arm
+cannot hold is not played, with the refusal's words: a second axis on a knob already overridden,
+one override too many, or an override's own refusal. Its pairs are keyed `d1-…` beside the first
+stage's `p1-…`, and each step names its `stage`. A tune that names no override, and whose screen
+has no surviving split row, has no second stage and records what it did before.
+
+**Against over-fitting**:
+
+- the cut points are constants;
+- an arm holds three overrides at most;
+- the confirmation is on a season the search did not play;
+- the confirmation sets **the dynamic best against the static best** beside the final set against
+  the baseline (`confirmation.against_static`, `confirm-static-*` pairs), each against the run's
+  rivals and against static ones, so the record and the lab hold both ends.
+
+When the first stage moved nothing, the static best is the baseline, and the record says so
+instead (`tune.STATIC_IS_BASE`).
 
 **The confirmation, and why a season is withheld.** A search picks the values that did best on
 the seasons it played. Some of that is the values and some is those seasons' luck, and the search

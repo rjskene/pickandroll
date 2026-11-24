@@ -55,6 +55,28 @@ def test_the_knobs_are_the_live_ten_the_simulators_two_and_the_take_ins_five():
     assert list(policy.check_knobs(KNOBS)) == list(policy.KNOBS)
 
 
+#: The take-in's five as this replay version plays them by default (#172, PR dynamic knobs): live's
+#: values on the day they were taken in (main ``26e67fd``, replay version 22). They are read from
+#: live's engine (``recent.DEFAULTS``, ``spread.DEFAULTS``), so a change there changes what every
+#: arm that leaves them out plays.
+PINNED_FIVE = {
+    "later_weeks": "legal",
+    "rate_shrink": 0.5,
+    "rate_shrink_games": 4.0,
+    "rate_cv": 0.25,
+    "miss_rate": 0.07,
+}
+
+
+def test_the_take_in_s_five_are_the_ones_this_replay_version_plays():
+    got = {k: policy.KNOB_DEFAULTS[k] for k in policy.TAKEIN_KNOBS}
+    assert got == PINNED_FIVE, (
+        f"live's defaults moved: {got} against {PINNED_FIVE}. That is a capability change of "
+        "the simulator: step the replay version (cli.REPLAY_VERSION), add an engine mark to the "
+        "capability log (capabilities.LOG) and move this pin"
+    )
+
+
 @pytest.mark.parametrize(
     ("change", "error", "words"),
     [
