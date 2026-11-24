@@ -269,12 +269,12 @@ def test_the_decision_key_holds_the_overrides_in_force_only_for_an_arm_that_name
     setup = make_setup(teams=4, weeks=5)
     state = replace(initial(setup), standing={1: "behind"})
     plain = arm("A", "surrogate", "static").seat()
-    key = rn.decision_key(plain, setup, state, 1, 2)
+    key = rn.decision_key(setup, state, 1, plain, 2)
     assert len(key) == 5
     named = checked(arm("A", "surrogate", "static"), **ov(daily_cap__standing__behind=3)).seat()
-    got = rn.decision_key(named, setup, state, 1, 2)
+    got = rn.decision_key(setup, state, 1, named, 2)
     assert len(got) == 6 and got[-1] == ("daily_cap@standing.behind",)
-    assert rn.decision_key(named, setup, replace(state, standing={1: "line"}), 1, 2)[-1] == ()
+    assert rn.decision_key(setup, replace(state, standing={1: "line"}), 1, named, 2)[-1] == ()
 
 
 # --------------------------------------------------------------------------- the reads table
@@ -392,9 +392,11 @@ def test_an_override_acts_in_its_situation_alone():
 def test_an_override_of_the_blend_moves_that_morning_s_blend_and_lineup():
     """``rate_shrink`` 0 at its base and live's in the middle weeks: the seat's blend is None in
     the opening and live's in the middle (``run.blend_of``), and the first day that parts the
-    season from the one with no blend is a middle day, its lineup among what parts them."""
-    setup = make_setup(weeks=5)
-    base = replace(arm("A", "exact", "market"), knobs={**KNOBS, **ON, "rate_shrink": 0.0})
+    season from the one with no blend is a middle day, its lineup among what parts them. The
+    blend over the whole season parts the opening already. Seven players a team, so a lineup
+    has a bench to choose from; mirror rivals, which blend too."""
+    setup = make_setup(weeks=5, spots=7)
+    base = replace(arm("A", "exact", "mirror"), knobs={**KNOBS, **ON, "rate_shrink": 0.0})
     named = checked(base, **{"rate_shrink@phase.middle": ON["rate_shrink"]})
     state = initial(setup)
     assert rn.blend_of(named.seat(), setup, state, 1, 1) is None
@@ -410,6 +412,10 @@ def test_an_override_of_the_blend_moves_that_morning_s_blend_and_lineup():
     assert parted and min(parted) >= middle
     lineup = [r.day for r in over if r.starters.get(1) != by[r.day].starters.get(1)]
     assert lineup and setup.week_of(min(lineup)).number in (2, 3)
+    whole, _ = season_records(
+        setup, replace(base, knobs={**base.knobs, "rate_shrink": ON["rate_shrink"]})
+    )
+    assert min(r.day for r in whole if nopeek.digest(r) != nopeek.digest(by[r.day])) < middle
 
 
 def test_a_run_that_names_an_override_counts_every_arm_s_days_in_each_situation():

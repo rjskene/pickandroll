@@ -605,6 +605,21 @@ SEASON_NOTE = {
         "least one add of the head (a move that gains more than min_gain): how often the cut "
         "before the guard costs the search an add",
     },
+    # PR dynamic knobs: every arm's seat, in a run where an arm names an override.
+    ct.SITUATIONS_COUNTED: {
+        "days_opening": "simulated days in the first third of the regular weeks (phase "
+        "opening), whether or not the arm names an override there",
+        "days_middle": "simulated days in the regular weeks between the opening and the run-in "
+        "(phase middle)",
+        "days_run_in": "simulated days in the last third of the regular weeks (phase run_in)",
+        "days_bracket": "simulated days in the bracket's weeks (phase bracket)",
+        "days_safe": "simulated regular days the seat led the cut line by one swing or more, "
+        "from the weeks finished before the day's (standing safe)",
+        "days_line": "simulated regular days the seat was within one swing of the cut line "
+        "(standing line), every day before a week is finished among them",
+        "days_behind": "simulated regular days the seat trailed the cut line by one swing or "
+        "more (standing behind)",
+    },
 }
 
 
