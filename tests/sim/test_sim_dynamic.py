@@ -588,3 +588,46 @@ def test_the_second_stage_reads_a_screen_s_surviving_split_rows_and_the_first_st
     with pytest.raises(ValueError):
         tn.order_of({**screen, "rows": rows[1:]}, None)
     assert tn.split_order_of({**screen, "rows": rows[:1]}, None) == []
+
+
+# --------------------------------------------------------------------------- no peek
+def peek_records(setup, lines) -> dict:
+    """The no-peek check's season (``test_no_peek``) with an override on each axis: an exact seat
+    among the market that blends in the run-in alone, and a surrogate seat among its mirror that
+    takes a second add while on the line and blends while behind it."""
+    from tests.sim.test_no_peek import SEED, WEIGHTS
+
+    a = checked(arm("A", "exact", "market"), **ov(rate_shrink__phase__run_in=0.5))
+    b = checked(
+        arm("B", "surrogate", "mirror"),
+        **ov(daily_cap__standing__line=2, rate_shrink__standing__behind=0.5),
+    )
+    got = {}
+
+    def keep(r: rn.DayRecord) -> None:
+        got[(r.day, r.variant)] = nopeek.digest(r)
+
+    w = rn.replay_world(setup, lines, 1, SEED, 0, WEIGHTS)
+    variants = [{**rn.opponents_of(setup, x, 1), 1: x.seat()} for x in (a, b)]
+    rn.simulate(setup, w, variants, on_day=keep)
+    return got
+
+
+@pytest.mark.parametrize("which", [1, 2])
+def test_a_seat_with_an_override_on_each_axis_does_not_see_past_the_day(which):
+    """The standing reads the weeks finished before the running one and the phase the calendar,
+    so a seat that follows either knows nothing dated after the day: its records through the day
+    are the same in a world that differs after it, and some record after it differs."""
+    from tests.sim.test_no_peek import DAYS, SEED, recorded
+
+    setup, lines = recorded()
+    day = DAYS[which]
+    assert policy.phase_of(setup.spec, setup.week_of(day).number) == policy.RUN_IN
+    base = peek_records(setup, lines)
+    got = peek_records(setup, nopeek.perturb(lines, rn.game_days_of(setup), day, SEED))
+    assert set(got) == set(base)
+    first = nopeek.first_difference(base, got)
+    assert first is not None, "the change after the day reached no record: it tested nothing"
+    assert first[0] > day, f"a record on {first[0]} saw past {day}: {first[2]}"
+    same = [key for key in base if key[0] <= day]
+    assert same and all(base[key] == got[key] for key in same)

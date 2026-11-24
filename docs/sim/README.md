@@ -2703,7 +2703,13 @@ every other count and in every seat's row, 0 for a seat that does not take the r
 `plan_steps`, the steps of those plans queued (a free agent's add for the next morning, or the same
 day in a same-day league, or a
 claim placed; whether each landed is in `landed`, `gone` and the claim counts with every other
-move). A streaming plan executed beside a set is not counted there. A pair (`--arms`) adds the
+move). A streaming plan executed beside a set is not counted there. In a run where an arm names
+an override (PR dynamic knobs; a run that names none has no such keys), after the queue's, on
+every arm's seat whatever its tier and on no rival's: the simulated days the seat spent in each
+situation (`counts.SITUATIONS`), `days_opening`, `days_middle`, `days_run_in` and
+`days_bracket` by the week's phase, and `days_safe`, `days_line` and `days_behind` by its
+standing that week. The standing's three sum to the regular weeks' days, and every day before a
+week is finished is a `days_line` day. A pair (`--arms`) adds the
 rivals'
 seats as one row, both arms' seasons pooled. The landing counters are per seat on the state
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state
@@ -3192,20 +3198,24 @@ when its folder is started, and no flag lets a caller pick after seeing a figure
 
 **The second stage: overrides** (PR dynamic knobs, `tune.DYNAMIC_RULE`). After the static search
 stops, its final arm is the static best, and a second stage starts from it. Its levers are
-override names (`knob@axis.situation`), fixed before any pair: the surviving split rows of the
-screen named, strongest first by the first stage's rule, or those `--overrides` names. An
-override's values are:
+override names (`knob@axis.situation`), fixed before any pair (`tune.split_order_of`): the
+surviving split rows of the screen named, strongest first by the first stage's rule, or those
+`--overrides` names (with a screen too, those the screen played first). An override's values
+are:
 
 - none, which is the current arm;
 - each of its split lever's nudges in that situation, taken from the knob's value in force there;
 - each of those nudges again.
 
-The choice follows the first stage's rule. The second stage plays one pass. It stops when the arm
-holds three overrides (`policy.MAX_OVERRIDES`) or when the pass takes nothing. A value the arm
-cannot hold is not played, with the refusal's words: a second axis on a knob already overridden,
-one override too many, or an override's own refusal. Its pairs are keyed `d1-…` beside the first
-stage's `p1-…`, and each step names its `stage`. A tune that names no override, and whose screen
-has no surviving split row, has no second stage and records what it did before.
+The choice follows the first stage's rule. The second stage plays one pass over its levers, and
+stops early when the arm holds three overrides (`policy.MAX_OVERRIDES`, `tune.FULL`). A value the
+arm cannot hold is not played, with the refusal's words: a second axis on a knob already
+overridden, or an override's own refusal. Its pairs are keyed `d1-…` beside the first stage's
+`p1-…`, and each step names its `stage`. The record keeps the stage's rule (`dynamic_rule`) and
+its order (`overrides_order`; the spec's `overrides`), and the final set keeps the static best
+(`static_best`), the overrides held (`overrides`) and, when the cap stopped the stage, why
+(`dynamic_stop`). A tune that names no override, and whose screen has no surviving split row, has
+no second stage and plays what it played before.
 
 **Against over-fitting**:
 
@@ -3717,7 +3727,13 @@ For each arm, each day:
   - `stake` and the week's `L` as the seat reads it, or as it would read it for an arm that
     reads none (`reads_stake` says which);
   - the adds this week and today against their caps;
-  - under FAAB, the dollars left and the pace's factor, None where the pace has no bound.
+  - under FAAB, the dollars left and the pace's factor, None where the pace has no bound;
+  - each at the value in force that morning (PR dynamic knobs); for an arm that names
+    overrides, each knob they name too, under its own name, at its value in force. The viewer
+    charts a number that moves, so a schedule shows as a step.
+- `situation` (PR dynamic knobs), only for an arm that names an override: the day's `phase`
+  and the seat's `standing`. An arm that names none has the day it had before, byte for byte,
+  so the trace's version does not move.
 - `decision`:
   - the tier and its solves (a surrogate's day off is the tier with no solve), the set, its
     held-slot moves, the plan's steps and whether the plan led;

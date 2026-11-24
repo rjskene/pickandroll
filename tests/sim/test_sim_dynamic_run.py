@@ -92,9 +92,9 @@ def test_a_replay_keeps_each_arm_s_knobs_as_played_beside_the_specs(replayed):
     assert p["replay_version"] == ss.REPLAY_VERSION == 23
     assert p["specs"] == {"a": BASE, "b": DYN}
     a, b = p["resolved"]["a"]["knobs"], p["resolved"]["b"]["knobs"]
-    # Every knob, the take-in's five at live's default where the spec leaves them out, then the
-    # override.
-    assert list(a) == list(policy.KNOBS) and list(b) == [*policy.KNOBS, "daily_cap@standing.behind"]
+    # Every knob, the take-in's five at live's default where the spec leaves them out, and the
+    # override (the record's keys are written sorted).
+    assert set(a) == set(policy.KNOBS) and set(b) == {*policy.KNOBS, "daily_cap@standing.behind"}
     assert {k: a[k] for k in policy.TAKEIN_KNOBS} == {k: KNOBS[k] for k in policy.TAKEIN_KNOBS}
     assert b["daily_cap@standing.behind"] == 3 and b["daily_cap"] == a["daily_cap"] == 2
 
@@ -127,7 +127,7 @@ def test_a_screen_plays_a_split_lever_only_when_named(data: Path):
     assert set(rows) == {f"{lever}-minus", f"{lever}-plus"}
     for tag, value in (("minus", 1), ("plus", 3)):
         row = rows[f"{lever}-{tag}"]
-        assert row["status"] == sc.PLAY and row["override"] == lever
+        assert row["status"] == sc.PLAYED and row["override"] == lever
         assert row["values"] == {"a": 2, "b": value}
         pair = reader.read_screen_pair(data, "split", f"{lever}-{tag}")
         assert pair["specs"]["b"]["knobs"][lever] == value
