@@ -2937,6 +2937,27 @@ Before a split row is read, the occupancy of each situation is read from the cou
 ruleset, the lead is told before anything else is played, and any new cut is fixed in writing
 before an outcome is read. No cut moves after a result.
 
+**The first set** (the design's, with the lead's decision of 2026-11-24). Four split levers are
+screened first in each ruleset, each with a reason to vary. They are chosen from the first
+screens' survivors, which were played before the take-in and so are advisory only:
+
+| split lever, as `--levers` names it | why | rows |
+|---|---|---|
+| `season_weight@phase` | survived in both rulesets; the season term's worth against the week changes as the season runs out, and nothing moves it by phase now | 8: two nudges in each phase (they wait on the season scale, as the lever's own rows do) |
+| `daily_cap@phase` | survived in both, in opposite directions; the cap after the draft and the cap in the run-in are different uses | 8 |
+| `daily_cap@standing.safe` and `daily_cap@standing.line` | a seat that is safe may churn less, one on the line more | 4 of the lever's six |
+| `stash_threshold@phase` | survived in both; a stash pays only with games left after the return, and those run out in the run-in | 8: from none to 0 and to 0.25 in each phase |
+
+That is 28 rows a ruleset, beside the static rows already on the list. `daily_cap@standing` names
+`safe` and `line` alone, because a look's occupancy led the first standing levers there. `behind`
+governed too few days to size, and a seat that far behind seldom reaches the best finish whatever
+it does. Its days play the arm's base value. The list keeps all six rows; the names given choose. A
+`behind` row joins only by a later written decision, and is recorded in the lab's assessment log as
+a row added after the first set was read. Occupancy is read again on the screen's own baseline and
+paths before that screen is announced. Not first: the take-in's five (no screen has played them
+yet, and the fresh screens come first) and the exact tier's levers (an exact pair costs many times
+a surrogate's).
+
 **The queue's rule on the list** (PR E):
 
 - **A plan floor is on the list twice**: where the streaming plan is drawn and executed beside

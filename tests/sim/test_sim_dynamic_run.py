@@ -138,6 +138,25 @@ def test_a_screen_plays_a_split_lever_only_when_named(data: Path):
     assert code == 0 and "daily_cap@" not in out, out
 
 
+def test_the_first_set_s_standing_names_plan_safe_and_line_alone(data: Path):
+    # The lead's decision of 2026-11-24: the first standing levers name `safe` and `line`, so
+    # `daily_cap@standing` is four rows of its six, and a seat's `behind` days play the base.
+    names = ("daily_cap@standing.safe", "daily_cap@standing.line")
+    flags = common("--levers", *names, "--name", "first", "--dry-run")
+    code, out = run(data, "screen", "--arm", str(data / "B.json"), *flags)
+    assert code == 0, out
+    planned = [
+        f"daily_cap in the {where}: 2 to {to}" for where in ("safe", "line") for to in (1, 3)
+    ]
+    assert all(words in out for words in planned), out
+    assert "4 pair(s) to play" in out and "in the behind" not in out, out
+    rows = sc.rows_of(BASE, list(names), [policy.Shape()], sc.Context())
+    assert [r.key for r in rows] == [
+        f"daily_cap@standing.{w}-{t}" for w in ("safe", "line") for t in ("minus", "plus")
+    ]
+    assert all(r.status == sc.PLAY for r in rows)
+
+
 def test_a_name_that_is_no_split_lever_is_refused_by_name(data: Path):
     for name, says in (
         ("system@phase", "is no split lever"),

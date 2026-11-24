@@ -496,6 +496,35 @@ def split_rows(spec, name, shape=None):
     return {r.key: r for r in sc.rows_of(spec, [name], [shape or policy.Shape()], sc.Context())}
 
 
+#: The first set (README, "The first set"; the lead's decision of 2026-11-24): standing names
+#: ``safe`` and ``line`` alone.
+FIRST_SET = (
+    "season_weight@phase",
+    "daily_cap@phase",
+    "daily_cap@standing.safe",
+    "daily_cap@standing.line",
+    "stash_threshold@phase",
+)
+
+
+def test_the_first_set_is_28_rows_with_no_behind_row():
+    rows = sc.rows_of(screen_base(), list(FIRST_SET), [policy.Shape()], sc.Context())
+    by = {}
+    for r in rows:
+        by.setdefault(r.lever, []).append(r)
+    assert len(rows) == 28 and {k: len(v) for k, v in by.items()} == {
+        "daily_cap@phase": 8,
+        "daily_cap@standing": 4,
+        "stash_threshold@phase": 8,
+        "season_weight@phase": 8,
+    }
+    assert not any(".behind" in r.key for r in rows)
+    # Every row but the season weight's is to play; those wait on the season scale.
+    assert {r.status for r in by["season_weight@phase"]} == {sc.NOT_PLAYED}
+    assert all(r.status == sc.PLAY for k, v in by.items() if k != "season_weight@phase" for r in v)
+    assert {r.values["b"] for r in by["stash_threshold@phase"]} == {0.0, 0.25}
+
+
 def test_a_split_lever_is_each_nudge_in_each_situation_alone():
     got = split_rows(screen_base(), "daily_cap@standing")
     keys = [
