@@ -15,6 +15,10 @@ process and asks nothing of anywhere. Routes:
   ``/api/trace/<name>``: one trace as the Season tab plays it (``trace_view.view``), kept until
   its file changes; a name that is not a file of ``data/sim/traces/`` is not found, and a file
   that is not a trace is refused by name (PR viewer);
+- ``/api/screen/<name>``: one screen as the Screen tab shows it (``screen_view.view``), at the
+  server's clock, from its record and its played pairs' landing times only (PR live screen); a
+  name that is not a folder of ``data/sim/screens/`` is not found, and a record that cannot be
+  read (or is not a screen) answers the last good read, said so, else is refused by name;
 - ``/explainer``: the explainer's built file wrapped in a plain document, or a short page saying
   none was given;
 - ``/healthz``: ``ok``.
@@ -34,6 +38,7 @@ from urllib.parse import unquote, urlsplit
 
 from . import model as md
 from . import records as rd
+from . import screen_view as scv
 
 STATIC = Path(__file__).resolve().parent / "static"
 #: The files the page is, by suffix, with their types.
@@ -105,6 +110,11 @@ class Lab:
         self._stamp: Any = None
         self._model: dict[str, Any] | None = None
         self._views: dict[str, tuple[Any, tuple[int, Any]]] = {}
+        # The Screen tab's reads (PR live screen): each screen's last good record and landings,
+        # and each pair file's times by path, under a lock of their own (a model's build is slow).
+        self._screen_lock = threading.Lock()
+        self._screens: dict[str, tuple[dict[str, Any], dict[str, dict[str, Any]]]] = {}
+        self._pairs: dict[str, tuple[int, int, dict[str, Any]]] = {}
 
     def build(self) -> dict[str, Any]:
         """The model from the records as they are now (a notes file that is refused is said in
@@ -165,6 +175,37 @@ class Lab:
             with self._lock:
                 self._views = {name: (key, out)}
         return out
+
+    def plan(self) -> str | None:
+        """The notes' line for the planned pieces (``state.pieces``); None with no notes, none
+        given, or notes that are refused (the model says that)."""
+        try:
+            notes = rd.read_notes(self.notes)
+        except md.NotesError:
+            return None
+        return ((notes or {}).get("state") or {}).get("pieces")
+
+    def screen(self, name: str) -> tuple[int, Any]:
+        """One screen's view at the server's clock (PR live screen): (200, the view); (404,
+        words) for a name that is not a screen's folder; (422, words) for a record that cannot
+        be read or is not a screen, unless an earlier read of it was good: then that read at
+        the clock now, its ``kept`` saying why and when."""
+        folder = rd.screen_folder(self.data, name)
+        if folder is None:
+            return 404, f"no screen named {name!r}"
+        rec, why = rd.read_screen_record(folder)
+        now, plan = self.now(), self.plan()
+        with self._screen_lock:
+            if rec is None:
+                kept = self._screens.get(name)
+                if kept is None:
+                    return 422, f"{name}: {why}"
+                out = scv.view(name, kept[0], kept[1], now, plan)
+                out["kept"] = {"why": why, "at": now.isoformat()}
+                return 200, out
+            landings = rd.screen_landings(folder, rec, self._pairs)
+            self._screens[name] = (rec, landings)
+        return 200, scv.view(name, rec, landings, now, plan)
 
     def explainer_page(self) -> str:
         if self.explainer is None:
@@ -258,6 +299,21 @@ def handler_for(lab: Lab) -> type[BaseHTTPRequestHandler]:
                         self._text(code, f"{got}\n")
                     else:
                         self._send(200, body, "application/json; charset=utf-8")
+            elif path.startswith("/api/screen/"):
+                try:
+                    code, got = lab.screen(unquote(path[len("/api/screen/") :]))
+                    body = (
+                        json.dumps(got, default=str, allow_nan=False).encode()
+                        if code == 200
+                        else None
+                    )
+                except Exception as e:  # noqa: BLE001
+                    self._text(500, f"the screen could not be read: {type(e).__name__}\n")
+                else:
+                    if body is None:
+                        self._text(code, f"{got}\n")
+                    else:
+                        self._send(200, body, "application/json; charset=utf-8")
             elif path == "/explainer":
                 self._send(200, lab.explainer_page().encode(), TYPES[".html"])
             elif path == "/healthz":
@@ -332,6 +388,22 @@ def check_lines(m: dict[str, Any]) -> list[str]:
         f"runs: {len(kinds)} ({kinds.count('screen')} screen, {kinds.count('tune')} tune, "
         f"{kinds.count('replay')} replay), {sum(len(run['pieces']) for run in m['runs'])} piece(s); "
         f"tunes in detail: {len(m['tunes'])}"
+    )
+    live = [
+        r
+        for r in m["runs"]
+        if r["kind"] == "screen" and (r.get("live") or {}).get("state") in (md.IN_PLAY, md.PAUSED)
+    ]
+    lines.append(
+        "live: "
+        + (
+            "; ".join(
+                f"{r['name']} {r['live']['state']} ({r['live']['played']} played, "
+                f"{r['live']['left']} left)"
+                for r in live
+            )
+            or "no screen in play or paused"
+        )
     )
     traces = m.get("traces") or []
     lines.append(

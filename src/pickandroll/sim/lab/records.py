@@ -5,7 +5,8 @@ each screen's folder (its record and its pairs), each tune's folder (its record,
 pairs and its confirmation's), the written runs of ``data/sim/runs/`` (a replay's; another
 kind is counted and not shown), the traces of ``data/sim/traces/`` (PR viewer: each one's line
 for the list, and one whole for the Season tab) and the confirmation ledger; and the lead's
-notes file. A file
+notes file. For the Screen tab (PR live screen), one screen's record and, of each played pair's
+record beside it, only when it started and landed (:func:`screen_landings`). A file
 that is not JSON, or not a record, is refused by name and the rest is read. Nothing is
 written, and nothing outside the data folder and the notes file is opened.
 """
@@ -20,11 +21,15 @@ from typing import Any
 
 from .. import readers as reader
 from . import model as md
+from . import screen_view as scv
 from . import trace_view as tv
 
 #: A trace's name as the ``trace`` command makes it safe (``readers.trace_path``): the only
 #: names ``/api/trace/<name>`` reads.
 TRACE_NAME = re.compile(r"[A-Za-z0-9_-]{1,80}")
+#: A screen's folder name as the screen command makes it safe (``readers.screen_dir``): the
+#: only names ``/api/screen/<name>`` reads (PR live screen).
+SCREEN_NAME = re.compile(r"[A-Za-z0-9_-]{1,60}")
 
 
 def _json(path: Path, refused: list[dict[str, str]]) -> dict[str, Any] | None:
@@ -167,6 +172,73 @@ def read_trace(data: Path, name: str) -> tuple[int, Any]:
     return 200, tv.view(name, rec)
 
 
+def screen_folder(data: Path, name: str) -> Path | None:
+    """The folder of the screen ``name`` under ``data/sim/screens/``: None when the name is not
+    a screen folder's shape, would lead outside that folder, or names no folder with a record."""
+    if not SCREEN_NAME.fullmatch(name):
+        return None
+    root = (data / reader.SCREENS_DIR).resolve()
+    folder = (root / name).resolve()
+    if folder.parent != root or not (folder / reader.SCREEN_FILE).is_file():
+        return None
+    return folder
+
+
+def read_screen_record(folder: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """A screen's record from its folder, read whole: ``(record, None)``, or ``(None, why)`` for
+    a file that cannot be read, is not JSON or is not a screen the Screen tab reads
+    (``screen_view.not_a_screen``), said by name."""
+    f = folder / reader.SCREEN_FILE
+    try:
+        rec = json.loads(f.read_text())
+    except OSError as e:
+        return None, f"its record could not be read ({e.strerror or e})"
+    except ValueError as e:
+        return None, f"its record is not JSON ({e})"
+    why = scv.not_a_screen(rec)
+    if why is not None:
+        return None, why
+    return rec, None
+
+
+def screen_landings(
+    folder: Path, record: dict[str, Any], kept: dict[str, tuple[int, int, dict[str, Any]]]
+) -> dict[str, dict[str, Any]]:
+    """When each played pair of ``record`` started and landed, by its key: its own record's
+    ``started_at`` and ``finished_at``, from the file the row names (``file``, else
+    ``readers.pair_file``) in the screen's folder. A pair's record is written once, so each file
+    is read once: ``kept`` holds what was read by its path, with its modification time and
+    size. A file that is missing, outside the folder or not JSON is left out (its landing is not
+    known)."""
+    out: dict[str, dict[str, Any]] = {}
+    root = folder.resolve()
+    for row in record.get("rows") or []:
+        if not isinstance(row, dict) or not row.get("result"):
+            continue
+        key = str(row.get("key"))
+        f = (root / str(row.get("file") or reader.pair_file(key))).resolve()
+        if f.parent != root:
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        got = kept.get(str(f))
+        if got is not None and got[:2] == (st.st_mtime_ns, st.st_size):
+            out[key] = got[2]
+            continue
+        try:
+            pair = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(pair, dict):
+            continue
+        times = {"started_at": pair.get("started_at"), "finished_at": pair.get("finished_at")}
+        kept[str(f)] = (st.st_mtime_ns, st.st_size, times)
+        out[key] = times
+    return out
+
+
 def read_notes(path: Path | None) -> dict[str, Any] | None:
     """The notes file, checked (``model.notes_of``); None when none is given. A file that cannot
     be read, is not JSON or is not the schema raises ``model.NotesError`` by name."""
@@ -237,11 +309,15 @@ def stamp(data: Path, *more: Path | None) -> tuple[tuple[str, int, int], ...]:
 
 
 __all__ = [
+    "SCREEN_NAME",
     "TRACE_NAME",
     "head_sha",
     "not_a_trace",
     "read_all",
     "read_notes",
+    "read_screen_record",
     "read_trace",
+    "screen_folder",
+    "screen_landings",
     "stamp",
 ]
