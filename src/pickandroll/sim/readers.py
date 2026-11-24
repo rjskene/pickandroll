@@ -443,12 +443,35 @@ def _folder(data_dir: Path, root: Path, name: str, unnamed: str) -> Path:
     return data_dir / root / safe
 
 
+def pair_file(key: str) -> str:
+    """The file a screen's or a tune's folder keeps the pair ``key``'s record in: the key with
+    every character but a letter, a digit and ``-_.`` made ``-``. A split lever's pair is keyed
+    ``knob@axis.situation-tag`` (PR dynamic knobs) and kept as ``knob-axis.situation-tag.json``,
+    so a record names a pair's file by this, never by its key."""
+    return "".join(c if c.isalnum() or c in "-_." else "-" for c in key) + ".json"
+
+
+def pair_files(keys: Sequence[str]) -> dict[str, str]:
+    """Each of ``keys``' file (:func:`pair_file`), the pairs of one folder; refused by name
+    (``ValueError``) when two of them would be kept in one file."""
+    out: dict[str, str] = {}
+    by_file: dict[str, str] = {}
+    for key in keys:
+        f = pair_file(key)
+        other = by_file.setdefault(f, key)
+        if other != key:
+            raise ValueError(f"the pairs {other!r} and {key!r} would be kept in one file, {f}")
+        out[key] = f
+    return out
+
+
 def _pair_path(folder: Path, key: str, record: str, whose: str) -> Path:
-    """Where a folder keeps the pair ``key``'s record; never the folder's own ``record``."""
-    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in key)
-    if safe + ".json" == record:
+    """Where a folder keeps the pair ``key``'s record (:func:`pair_file`); never the folder's own
+    ``record``."""
+    f = pair_file(key)
+    if f == record:
         raise ValueError(f"a pair named {key!r} would be the {whose}'s own record")
-    return folder / f"{safe}.json"
+    return folder / f
 
 
 def _named(payload: Mapping[str, Any], what: str) -> None:
@@ -624,6 +647,8 @@ __all__ = [
     "marcel_rates",
     "marcel_seasons",
     "newest_fit",
+    "pair_file",
+    "pair_files",
     "period_date",
     "prior_rates",
     "read_looks",

@@ -585,8 +585,8 @@ the best static one, on seasons it was not chosen on?
   A trace's day carries each overridden knob's value in force under its own name, which the
   viewer charts, and a `situation` block. A trace with no override is byte for byte as before
   (no trace version step).
-- **An arm that names none plays as before**, outcome for outcome: `test_sim_dynamic` holds it
-  on the made-up league, as `test_sim_takein_equality` does.
+- **An arm that names none plays as before**, outcome for outcome: `test_sim_dynamic_cross`
+  holds it on the made-up league, as `test_sim_takein_equality` does.
 - **Live has no reader for an override.** A schedule that wins is a finding for the user. Taking
   it to live needs their ruling and a change asked on #172.
 
@@ -2925,7 +2925,9 @@ are the lever's own nudges, each in one situation of the axis alone:
 
 The spread-off and all-off rows move several knobs at once and have no split lever. A split lever
 is played only when `--levers` names it, as `knob@axis` or one situation, `knob@axis.situation`. A
-screen that names none plays the list as before. A split row that an override's refusal meets (for
+screen that names none plays the list as before. The spec keeps the split names in one order
+whatever the order typed (`screen.split_order`: the split levers' order, a whole `knob@axis`
+before its situations), so the same names in another order take the same folder up. A split row that an override's refusal meets (for
 example `playoff_weight@phase.bracket`, or a nudge equal to the base) is listed as not played, with
 the refusal's words. It does not refuse the screen.
 
@@ -3062,8 +3064,14 @@ baseline. The SE is over the paths, not over the season's own chance.
 
 - Each pair is its own unit. When it ends its record is written to
   `data/sim/screens/<name>/<lever>-<nudge>.json`: the pair's record as `replay` writes it, with
-  one `screen` block (the screen's name and version, the row, and its result).
-- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 7 (6 before
+  one `screen` block (the screen's name and version, the row, and its result). A split row's
+  key holds an `@` its file does not: `daily_cap@standing.line-minus` is kept as
+  `daily_cap-standing.line-minus.json` (`readers.pair_file`, every character but a letter, a
+  digit and `-_.` made `-`). A played row names its file in the record, so a reader never
+  rebuilds it from the key. Two pairs of one screen that would be kept in one file are refused by
+  name before any path.
+- `screen.json` in the same folder is the screen's record: the spec, `screen_version` 8 (7 before
+  the split levers, PR dynamic knobs; 6 before
   the take-in's seven rows joined the list; 5 before
   the union pool's row joined the list and four of its counts joined the ones "did nothing"
   sets aside; 4 before
@@ -3245,7 +3253,11 @@ no second stage and plays what it played before.
 - the confirmation is on a season the search did not play;
 - the confirmation sets **the dynamic best against the static best** beside the final set against
   the baseline (`confirmation.against_static`, `confirm-static-*` pairs), each against the run's
-  rivals and against static ones, so the record and the lab hold both ends.
+  rivals and against static ones, so the record and the lab hold both ends. That pair plays on
+  the cheapest tier that reads every override taken (`tune.tier_of`, the confirmation's own rule
+  for the levers its two arms differ in). That tier can be below the final set's when the first
+  stage moved an exact-tier lever; the record keeps it (`against_static.tier`) and the run names
+  it.
 
 When the first stage moved nothing, the static best is the baseline, and the record says so
 instead (`tune.STATIC_IS_BASE`).
@@ -3350,9 +3362,13 @@ chosen to suit it. So every look is counted.
 **Pieces, the estimate and the guard** are a screen's.
 
 - Each pair is its own unit, written when it ends to `data/sim/tunes/<name>/`: a value's pair as
-  `p<pass>-<lever>-<nudge>.json`, the confirmation's as `confirm-run.json` and
-  `confirm-static.json`. Each is the pair's record as `replay` writes it with one `tune` block.
-- `tune.json` is the tune's record: the spec, `tune_version` 1, the order and where each place
+  `p<pass>-<lever>-<nudge>.json`, a second stage's as `d1-<knob>-<axis>.<situation>-<nudge>.json`
+  (its key's `@` made `-`, as a screen's split pair's), the confirmation's as `confirm-run.json`
+  and `confirm-static.json`. Each is the pair's record as `replay` writes it with one `tune`
+  block. A step names each played value's file, and two pairs that would be kept in one file are
+  refused by name.
+- `tune.json` is the tune's record: the spec, `tune_version` 2 (1 before the second stage), the
+  order and where each place
   comes from, what the screen named was played under that the tune is not, every step (each
   value's pair with its result, the choice and why), the final set, the confirmation (each
   cell's differences, finish, mechanism counts and `replay`'s mark when the rule does not read

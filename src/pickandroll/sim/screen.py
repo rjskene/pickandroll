@@ -695,6 +695,21 @@ def split_of(name: str) -> tuple[str, str, str | None] | None:
     return base, axis, where
 
 
+def split_order(names: Sequence[str]) -> list[str]:
+    """The split levers' names among ``names`` (PR dynamic knobs) in one order whatever the
+    order typed, each once: the split levers' (:data:`SPLIT_NAMES`), and within one the whole
+    ``knob@axis`` before its single situations, in the axis's order. A screen's spec keeps
+    them so, as it keeps the list's levers in the list's order. A name that is no split lever
+    is left out."""
+
+    def place(name: str) -> tuple[int, int]:
+        knob, axis, where = split_of(name) or ("", "", None)
+        at = -1 if where is None else policy.SITUATIONS[axis].index(where)
+        return SPLIT_NAMES.index(f"{knob}@{axis}"), at
+
+    return sorted({n for n in names if split_of(n) is not None}, key=place)
+
+
 def known(name: str) -> bool:
     """Whether ``name`` is one a screen's ``--levers`` takes: a lever of the list, a split lever
     (``knob@axis``) or one situation of it (``knob@axis.situation``)."""
@@ -1301,6 +1316,7 @@ __all__ = [
     "shown",
     "spec_differs",
     "split_of",
+    "split_order",
     "status_words",
     "table",
     "unlisted",

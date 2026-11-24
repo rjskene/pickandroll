@@ -3978,7 +3978,11 @@ def screen_record(
     for r in rows:
         d = r.payload()
         if r.key in results:
-            d |= {"status": sc.PLAYED, "result": dict(results[r.key]), "file": f"{r.key}.json"}
+            d |= {
+                "status": sc.PLAYED,
+                "result": dict(results[r.key]),
+                "file": reader.pair_file(r.key),
+            }
         elif r.status == sc.PLAY:
             d["status"] = sc.LEFT
         out.append(d)
@@ -4028,10 +4032,10 @@ def cmd_screen(args: argparse.Namespace) -> int:
         )
         return 2
     # The list's levers named (every one when none is), then the split levers named (PR dynamic
-    # knobs), played only when named.
-    names = [n for n in sc.NAMES if not args.levers or n in args.levers] + [
-        n for n in dict.fromkeys(args.levers or ()) if n not in sc.NAMES
-    ]
+    # knobs), played only when named; each in its own fixed order, whatever the order typed.
+    names = [n for n in sc.NAMES if not args.levers or n in args.levers] + sc.split_order(
+        args.levers or ()
+    )
     seasons_text = args.seasons
     if seasons_text is None:
         latest = gate_season(args.data)
@@ -4094,6 +4098,12 @@ def cmd_screen(args: argparse.Namespace) -> int:
     for r in refused:
         print(f"refused: {r.why}")
     if refused:
+        return 2
+    try:
+        # A split pair's key holds an ``@`` its file does not: no two pairs in one file.
+        reader.pair_files([r.key for r in rows if r.status == sc.PLAY])
+    except ValueError as e:
+        print(f"refused: {e}")
         return 2
     results: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -5042,6 +5052,9 @@ def cmd_tune(args: argparse.Namespace) -> int:
     # stage's end is the final arm, as before.
     static_best: dict[str, Any] | None = None
     dynamic_stop: str | None = None
+    # Each pair's file, by the key kept in it: a split pair's key holds an ``@`` its file does
+    # not, so no two keys may meet in one file (``readers.pair_files``).
+    files_of: dict[str, str] = {}
     stages = [(tn.STATIC_STAGE, names, args.passes), (tn.DYNAMIC_STAGE, names2, 1)]
     for stage, levers_, passes in stages:
         if stage == tn.DYNAMIC_STAGE:
@@ -5065,6 +5078,13 @@ def cmd_tune(args: argparse.Namespace) -> int:
                         values.append(d)
                         continue
                     key = tn.pair_key(turn, r.key, stage)
+                    kept = files_of.setdefault(reader.pair_file(key), key)
+                    if kept != key:
+                        print(
+                            f"refused: the pairs {kept!r} and {key!r} would be kept in one file, "
+                            f"{reader.pair_file(key)}"
+                        )
+                        return 2
                     a, b = r.a or {}, r.b or {}
                     pair = on_file(key, a, b)
                     if isinstance(pair, str):
@@ -5144,7 +5164,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
                         voided += int(result["voided"])
                         met[two] = (key, result)
                     values.append(
-                        d | {"status": sc.PLAYED, "result": result, "file": f"{file}.json"}
+                        d | {"status": sc.PLAYED, "result": result, "file": reader.pair_file(file)}
                     )
                 if stopped is not None:
                     break

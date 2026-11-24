@@ -33,6 +33,7 @@ from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim import tune as tn
+from pickandroll.sim.lab import server as sv
 from tests.sim.sim_league import KNOBS, make_data_dir
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
@@ -1985,8 +1986,19 @@ def test_the_second_stage_searches_overrides_from_the_static_best_and_stops_at_t
     assert first["lever"] == order[0] and first["change"] is not None
     played = [v for v in first["values"] if v.get("file")]
     assert played and all(v["file"].startswith("d1-") for v in played)
-    pair = pair_of(data, "dynamic", played[0]["file"].removesuffix(".json"))
+    # Each names the file its pair is kept in (the key's ``@`` made safe), and it is there.
+    folder = reader.tune_dir(data, "dynamic")
+    for step in rec["steps"]:
+        for v in step["values"]:
+            if v.get("file"):
+                assert "@" not in v["file"] and (folder / v["file"]).is_file(), v["file"]
+    pair = pair_of(data, "dynamic", f"d1-{played[0]['key']}")
     assert pair["tune"]["stage"] == tn.DYNAMIC_STAGE
+    assert reader.pair_file(f"d1-{played[0]['key']}") == played[0]["file"]
+    # The lab lists the tune and says nothing of it missing (the folder's made-up screens aside).
+    m = sv.Lab(data).model()
+    assert "dynamic" in {t.get("name") for t in m["tunes"]}
+    assert not [x for x in m["generated"]["lacks"] if "dynamic" in x]
     # The confirmation: the final set against the baseline, and the dynamic best against the
     # static best, each its own pair on the confirmation season.
     conf = rec["confirmation"]

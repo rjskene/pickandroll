@@ -507,6 +507,24 @@ FIRST_SET = (
 )
 
 
+def test_split_names_keep_one_order_whatever_the_order_typed():
+    typed = [
+        "daily_cap@standing.line",
+        "daily_cap@phase.middle",
+        "daily_cap@standing.safe",
+        "daily_cap@phase",
+        "daily_cap@standing.line",
+        "pool",
+    ]
+    want = [
+        "daily_cap@phase",
+        "daily_cap@phase.middle",
+        "daily_cap@standing.safe",
+        "daily_cap@standing.line",
+    ]
+    assert sc.split_order(typed) == sc.split_order(typed[::-1]) == want
+
+
 def test_the_first_set_is_28_rows_with_no_behind_row():
     rows = sc.rows_of(screen_base(), list(FIRST_SET), [policy.Shape()], sc.Context())
     by = {}

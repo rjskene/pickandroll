@@ -25,6 +25,7 @@ from pickandroll.sim import policy, shapes
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
+from pickandroll.sim.lab import server as sv
 from tests.sim.sim_league import KNOBS, make_data_dir
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
@@ -132,6 +133,18 @@ def test_a_screen_plays_a_split_lever_only_when_named(data: Path):
         pair = reader.read_screen_pair(data, "split", f"{lever}-{tag}")
         assert pair["specs"]["b"]["knobs"][lever] == value
         assert pair["resolved"]["b"]["knobs"][lever] == value
+        # The row names the file its pair is kept in: the key with its ``@`` made safe.
+        assert row["file"] == f"daily_cap-standing.line-{tag}.json" == reader.pair_file(row["key"])
+        assert (reader.screen_dir(data, "split") / row["file"]).is_file()
+    # The lab finds each played split row's pair: its cells, and nothing said missing.
+    m = sv.Lab(data).model()
+    assert not [x for x in m["generated"]["lacks"] if "not in the folder" in x]
+    split = [r for r in m["knobs"]["rows"] if r["run"] == "split"]
+    assert {r["key"] for r in split} == set(rows)
+    assert all(r["played"] and r["cell"] and r["a"] and r["b"] for r in split)
+    # A trace of a split row finds its pair by the row's key, and checks itself on it.
+    code, out = run(data, "trace", "--screen", "split", "--row", f"{lever}-minus", "--path", "0")
+    assert code == 0 and "the check: checked" in out, out
     # A screen of the list names no split lever.
     flags = common("--levers", "daily_cap", "--name", "plain", "--dry-run")
     code, out = run(data, "screen", "--arm", str(data / "B.json"), *flags)
@@ -155,6 +168,36 @@ def test_the_first_set_s_standing_names_plan_safe_and_line_alone(data: Path):
         f"daily_cap@standing.{w}-{t}" for w in ("safe", "line") for t in ("minus", "plus")
     ]
     assert all(r.status == sc.PLAY for r in rows)
+
+
+def test_split_names_typed_in_another_order_take_the_same_screen_up(data: Path):
+    names = ("daily_cap@standing.line", "daily_cap@standing.safe")
+
+    def screen(*levers: str) -> tuple[int, str]:
+        flags = common("--levers", *levers, "--name", "order")
+        return run(data, "screen", "--arm", str(data / "B.json"), *flags)
+
+    code, out = screen(*names)
+    assert code == 0, out
+    first = reader.read_screen(data, "order")
+    assert first["spec"]["levers"] == list(names[::-1])
+    # The same names the other way round: the same spec, the folder taken up, nothing replayed.
+    code, out = screen(*names[::-1])
+    assert code == 0 and "another spec" not in out, out
+    again = reader.read_screen(data, "order")
+    assert again["spec"] == first["spec"] and again["rows"] == first["rows"]
+    # Another set is another spec.
+    code, out = screen(names[1])
+    assert code == 2 and "started with another spec" in out, out
+
+
+def test_two_pairs_kept_in_one_file_are_refused_by_name():
+    assert reader.pair_files(["a@b.c-up", "a-b.c-down"]) == {
+        "a@b.c-up": "a-b.c-up.json",
+        "a-b.c-down": "a-b.c-down.json",
+    }
+    with pytest.raises(ValueError, match="'a@b.c-up' and 'a-b.c-up' would be kept in one file"):
+        reader.pair_files(["a@b.c-up", "a-b.c-up"])
 
 
 def test_a_name_that_is_no_split_lever_is_refused_by_name(data: Path):
