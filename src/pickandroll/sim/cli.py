@@ -3908,6 +3908,114 @@ def new_piece(workers: int) -> dict[str, Any]:
     }
 
 
+#: Whether a screen or a tune writes the pair in play's progress file (PR live screen); tests turn
+#: it off to hold that a pair's record is the same without it. A plain ``replay`` writes none.
+PROGRESS = True
+#: The progress file's shape, read only by the lab.
+PROGRESS_VERSION = 1
+
+
+class PairWatch:
+    """The progress file of the pair in play in a screen's or a tune's folder (PR live screen,
+    ``readers.PROGRESS_FILE``), rewritten whole each time one of the pair's tasks comes back: the
+    run, the pair's key and the run's measure, the tasks done of the total, when the pair started
+    and when the file was last written, and each path that has come back (its season, forecaster
+    and path, when it came back, its paired difference on the measure, B less A, that path alone,
+    and whether the audit will void it). The timed first task is done at the pair's start.
+
+    It changes nothing played or recorded: it reads each task's result after it came back, in
+    this process, and no worker waits on it. A failed write warns once and the run plays on. The
+    file is removed once the pair's record is written (:meth:`close`); a pair stopped inside its
+    tasks by an error or an interrupt leaves it saying so (:meth:`cut`); one killed outright
+    leaves it as last written, its ``updated_at`` saying when."""
+
+    def __init__(self, folder: Path, key: str, run: str, measure: str) -> None:
+        self.folder, self.key, self.run, self.measure = folder, key, run, measure
+        self.keys: Sequence[Mapping[str, Any]] = ()
+        self.total = 0
+        self.paths: list[dict[str, Any]] = []
+        self.started_at: str | None = None
+        self.warned = False
+
+    def start(self, made: ReplayTasks, first: Mapping[str, Any] | None) -> None:
+        self.keys, self.total = made.keys, len(made.tasks)
+        self.started_at = datetime.now(UTC).isoformat()
+        if first is not None:
+            self._add(made.slow, first)
+        self._write("playing")
+
+    def done(self, index: int, result: Mapping[str, Any]) -> None:
+        self._add(index, result)
+        self._write("playing")
+
+    def cut(self, e: BaseException) -> None:
+        self._write(
+            "cut",
+            f"the pair stopped inside its tasks ({type(e).__name__}) after {len(self.paths)} of "
+            f"{self.total} came back; nothing of it is recorded",
+        )
+
+    def close(self) -> None:
+        try:
+            reader.clear_progress(self.folder)
+        except Exception as e:  # noqa: BLE001 - a progress file never stops a run
+            self._warn(e)
+
+    def _add(self, index: int, result: Mapping[str, Any]) -> None:
+        try:
+            k = self.keys[index]
+            d = (result.get("delta") or {}).get(self.measure)
+            ok = isinstance(d, int | float) and not isinstance(d, bool) and math.isfinite(d)
+            self.paths.append(
+                {
+                    "task": index,
+                    "season": k["season"],
+                    "forecaster": k["forecaster"],
+                    "path": k["path"],
+                    "at": datetime.now(UTC).isoformat(),
+                    "difference": float(d) if ok else None,
+                    "voided": bool(result.get("breaches")),
+                }
+            )
+        except Exception as e:  # noqa: BLE001 - a progress file never stops a run
+            self._warn(e)
+
+    def _write(self, state: str, why: str | None = None) -> None:
+        try:
+            reader.write_progress(
+                self.folder,
+                {
+                    "kind": "pair progress",
+                    "progress_version": PROGRESS_VERSION,
+                    "run": self.run,
+                    "key": self.key,
+                    "measure": self.measure,
+                    "state": state,
+                    "why": why,
+                    "tasks": self.total,
+                    "done": len(self.paths),
+                    "started_at": self.started_at,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                    "paths": self.paths,
+                },
+            )
+        except Exception as e:  # noqa: BLE001 - a progress file never stops a run
+            self._warn(e)
+
+    def _warn(self, e: BaseException) -> None:
+        if not self.warned:
+            self.warned = True
+            print(
+                f"warning: the progress file in {self.folder} was not kept ({type(e).__name__}: "
+                f"{e}); the run plays on, and only the lab's view of the pair in play misses it"
+            )
+
+
+def pair_watch(folder: Path, key: str, run: str, measure: str) -> PairWatch | None:
+    """The progress file's watch of a pair played in ``folder``; None when :data:`PROGRESS` is off."""
+    return PairWatch(folder, key, run, measure) if PROGRESS else None
+
+
 def play_pair(
     plan: ReplayPlan,
     made: ReplayTasks,
@@ -3915,18 +4023,34 @@ def play_pair(
     workers: int,
     run_name: str,
     first: Mapping[str, Any] | None = None,
+    watch: PairWatch | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[Any]]:
     """One planned pair played to its record, as ``replay`` plays it: every task, then
     :func:`replay_payload`. ``first``: the result of the pair's timed task when this run timed
-    it, so it is not played twice. The record, its audit block and every task's result."""
+    it, so it is not played twice. ``watch``: the pair's progress file (PR live screen), told of
+    each task as it comes back; it moves nothing. The record, its audit block and every task's
+    result."""
     plan = replace(plan, started=datetime.now(UTC))
-    if first is not None:
-        rest = rn.run_tasks(
-            made.task, made.tasks[: made.slow] + made.tasks[made.slow + 1 :], workers
-        )
-        ran = [*rest[: made.slow], first, *rest[made.slow :]]
-    else:
-        ran = rn.run_tasks(made.task, made.tasks, workers)
+    if watch is not None:
+        watch.start(made, first)
+    try:
+        if first is not None:
+            rest_of = [i for i in range(len(made.tasks)) if i != made.slow]
+            rest = rn.run_tasks(
+                made.task,
+                made.tasks[: made.slow] + made.tasks[made.slow + 1 :],
+                workers,
+                None if watch is None else (lambda i, r: watch.done(rest_of[i], r)),
+            )
+            ran = [*rest[: made.slow], first, *rest[made.slow :]]
+        else:
+            ran = rn.run_tasks(
+                made.task, made.tasks, workers, None if watch is None else watch.done
+            )
+    except BaseException as e:
+        if watch is not None:
+            watch.cut(e)
+        raise
     payload, note = replay_payload(plan, args, made, ran, workers, run_name)
     return payload, note, ran
 
@@ -4240,8 +4364,9 @@ def cmd_screen(args: argparse.Namespace) -> int:
             break
         pair_plan, made = plans[r.key]
         t0 = clock.perf_counter()
+        watch = pair_watch(reader.screen_dir(args.data, name), r.key, name, measure)
         payload, note, ran = play_pair(
-            pair_plan, made, wa, workers, f"{name}-{r.key}", firsts.pop(r.key, None)
+            pair_plan, made, wa, workers, f"{name}-{r.key}", firsts.pop(r.key, None), watch
         )
         standing = [x for x in ran if not x.get("breaches")]
         result = sc.result_of(payload, standing, measure)
@@ -4254,6 +4379,8 @@ def cmd_screen(args: argparse.Namespace) -> int:
         }
         payload["finished_at"] = datetime.now(UTC).isoformat()
         path = reader.write_screen_pair(args.data, name, r.key, payload)
+        if watch is not None:
+            watch.close()
         results[r.key] = result
         piece["played"].append(r.key)
         save()
@@ -5138,8 +5265,15 @@ def cmd_tune(args: argparse.Namespace) -> int:
                             left = {"stopped": stopped, "next": key}
                             break
                         t0 = clock.perf_counter()
+                        watch = pair_watch(reader.tune_dir(args.data, name), key, name, measure)
                         payload, note, ran = play_pair(
-                            pair_plan, made, wa, workers, f"{name}-{key}", firsts.pop(two, None)
+                            pair_plan,
+                            made,
+                            wa,
+                            workers,
+                            f"{name}-{key}",
+                            firsts.pop(two, None),
+                            watch,
                         )
                         result = tn.value_result(payload, made.keys, ran, measure)
                         payload["tune"] = {
@@ -5153,6 +5287,8 @@ def cmd_tune(args: argparse.Namespace) -> int:
                         }
                         payload["finished_at"] = datetime.now(UTC).isoformat()
                         path = reader.write_tune_pair(args.data, name, key, payload)
+                        if watch is not None:
+                            watch.close()
                         piece["played"].append(key)
                         met_hours += pair_hours(lever)
                         print(
@@ -5371,7 +5507,10 @@ def cmd_tune(args: argparse.Namespace) -> int:
                     print(look_words(conf["look"]) + ": appended")
                     save()
                 t0 = clock.perf_counter()
-                payload, note, _ = play_pair(pair_plan, made, ca, workers, f"{name}-{key}")
+                watch = pair_watch(reader.tune_dir(args.data, name), key, name, measure)
+                payload, note, _ = play_pair(
+                    pair_plan, made, ca, workers, f"{name}-{key}", None, watch
+                )
                 if confirm == CONFIRMATION:
                     payload["confirmation"] = {
                         "season": CONFIRMATION,
@@ -5389,6 +5528,8 @@ def cmd_tune(args: argparse.Namespace) -> int:
                 }
                 payload["finished_at"] = datetime.now(UTC).isoformat()
                 path = reader.write_tune_pair(args.data, name, key, payload)
+                if watch is not None:
+                    watch.close()
                 piece["played"].append(key)
                 met_hours += confirm_hours()
                 payloads[key] = payload

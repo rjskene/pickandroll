@@ -27,8 +27,17 @@
     if (isNum(r.landed) && r.landed <= t) return "played";
     return spanAt(r.key, t) ? "in play" : "waiting";
   }
-  // How far the pair in play has come at t: the screen's own estimate, never over its whole.
+  // How far the pair in play has come at t: its paths so far when they are known (the run's
+  // progress file, or a landed pair's record drawn evenly over its time), else the screen's own
+  // estimate, never over its whole. The mean and its count are the view's, path by path.
+  const GLYPH = { ahead: "▲", behind: "▼", level: "·", voided: "×" };
   function progressAt(sp, t) {
+    if (sp.marks && isNum(sp.total) && sp.total > 0) {
+      const got = sp.marks.filter((m) => m.t <= t), last = got[got.length - 1];
+      const mean = last && isNum(last.mean) ? ` · mean ${signed(last.mean, 3)} over ${last.n}` : "";
+      const words = sp.timed ? `so far, ${got.length} of ${sp.total} paths${mean}` : `${got.length} of ${sp.total} paths${mean} (drawn evenly over its time)`;
+      return { share: Math.min(1, got.length / sp.total), over: false, real: true, marks: got, words };
+    }
     const elapsed = Math.max(0, t - sp.from), est = sp.estimate;
     if (!isNum(est) || est <= 0) return { share: null, over: false, words: "no estimate in the record for this pair" };
     const over = elapsed > est, share = Math.min(1, elapsed / est);
@@ -81,6 +90,9 @@
       <p class="sub">${esc(v.pieces_words)}</p>
       ${v.plan ? `<p class="sc-plan"><b>The plan:</b> ${esc(v.plan)}</p>` : `<p class="sub">No plan for the pieces in the notes.</p>`}
       <ul class="sc-pieces">${v.story.pieces.map((p, i) => `<li>${esc(v.piece_words[i])} <span class="sub">· from ${esc(when(p.started_at))}${p.finished_at ? ` to ${esc(when(p.finished_at))}` : ""} · ${esc(p.workers)} worker(s)</span></li>`).join("")}</ul>
+      ${v.cut ? `<p class="sv-err">${esc(v.cut)}</p>` : ""}
+      ${v.in_play && v.in_play.so_far ? `<p class="sub">${esc(v.in_play.so_far.note)}</p>` : ""}
+      ${v.spread_words ? `<p class="sub">${esc(v.spread_words)}</p>` : ""}
       <p class="sub">${esc(v.outside_words)}</p></section>`;
   }
   function cell(c, many) {
@@ -99,7 +111,8 @@
       body = `${res.cells.map((c) => cell(c, res.cells.length > 1)).join("")}<small class="sc-v">${esc(verdict)}${res.voided ? ` · ${esc(res.voided)} path(s) voided` : ""}</small>`;
     } else if (m === "in play") {
       const p = progressAt(spanAt(r.key, t), t);
-      body = `<span class="sc-prog${p.over ? " over" : ""}"><i style="width:${isNum(p.share) ? (100 * p.share).toFixed(1) : 0}%"></i></span><small>${esc(p.words)} (an estimate)</small>`;
+      const marks = p.real ? `<span class="sc-marks">${p.marks.map((m) => `<i class="${esc(m.side || "none")}">${GLYPH[m.side] || "?"}</i>`).join("")}</span>` : "";
+      body = `<span class="sc-prog${p.over ? " over" : ""}${p.real ? " real" : ""}"><i style="width:${isNum(p.share) ? (100 * p.share).toFixed(1) : 0}%"></i></span>${marks}<small>${esc(p.words)}${p.real ? "" : " (an estimate)"}</small>`;
     } else if (m === "waiting") {
       body = `<small>waiting</small>`;
     } else {
@@ -146,7 +159,7 @@
     S.key = key;
     $("sc-board").innerHTML = board(t);
     const nb = $("sc-now-box");
-    if (nb) nb.innerHTML = ip ? `<p class="sc-ip">In play: <b>${esc(v.rows.find((r) => r.key === ip).label)} · ${esc(rowName(v.rows.find((r) => r.key === ip)))}</b> since ${esc(at(sp.from))}, ${esc(pr.words)} <small>(an estimate)</small></p>` : `<p class="sc-ip">${esc(stateAt(t))}: no pair in play.</p>`;
+    if (nb) nb.innerHTML = ip ? `<p class="sc-ip">In play: <b>${esc(v.rows.find((r) => r.key === ip).label)} · ${esc(rowName(v.rows.find((r) => r.key === ip)))}</b> since ${esc(at(sp.from))}, ${esc(pr.words)} <small>${pr.real ? (sp.timed ? `(the run's progress file${v.in_play && v.in_play.so_far && v.in_play.so_far.updated_at ? ", last written " + esc(when(v.in_play.so_far.updated_at)) : ""}; never set against the rule, which reads a whole pair)` : "(its record's paths)") : "(an estimate)"}</small></p>` : `<p class="sc-ip">${esc(stateAt(t))}: no pair in play.</p>`;
     const pp = $("sc-pair");
     if (pp) pp.innerHTML = pairPanel(t);
   }

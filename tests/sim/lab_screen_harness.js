@@ -51,6 +51,11 @@ const count = () => {
   const b = get("sc-board").html, n = (k) => (b.match(new RegExp(`class="sc-row m-${k}[ "]`, "g")) || []).length;
   return { played: n("played"), in_play: n("in-play"), waiting: n("waiting"), not_played: n("not-played") };
 };
+const rowsOf = () => {
+  const o = {};
+  for (const m of get("sc-board").html.matchAll(/<button class="sc-row[^"]*" data-sc="row" data-v="([^"]*)">([\s\S]*?)<\/button>/g)) o[m[1]] = m[2];
+  return o;
+};
 const poll = () => intervals.filter((x) => x.f).map((x) => x.ms);
 (async () => {
   eval(fs.readFileSync(screenJs, "utf8"));
@@ -67,8 +72,7 @@ const poll = () => intervals.filter((x) => x.f).map((x) => x.ms);
   out.board = count();
   out.pair = get("sc-pair").html.includes("The pair");
   out.clock = get("sc-now-box").html;
-  out.rows = {};
-  for (const m of get("sc-board").html.matchAll(/<button class="sc-row[^"]*" data-sc="row" data-v="([^"]*)">([\s\S]*?)<\/button>/g)) out.rows[m[1]] = m[2];
+  out.rows = rowsOf();
   // The story from its start: the marks at the start and the end.
   SC.act("scrub", "0"); look("start"); out.at_start = count();
   SC.act("scrub", String(view.story.length)); look("end"); out.at_end = count();
@@ -85,7 +89,7 @@ const poll = () => intervals.filter((x) => x.f).map((x) => x.ms);
   SC.act("now");
   const live = intervals.filter((x) => x.f);
   if (live.length) { live[live.length - 1].f(); await tick(); await tick(); await tick(); }
-  out.poll = { asked, board: count(), t: SC.state().t, live: SC.state().live };
+  out.poll = { asked, board: count(), t: SC.state().t, live: SC.state().live, rows: rowsOf() };
   look("after a poll");
   // A failed poll keeps the last read and says so.
   const again = intervals.filter((x) => x.f);

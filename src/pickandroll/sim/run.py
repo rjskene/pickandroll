@@ -28,7 +28,7 @@ import os
 from bisect import bisect_left
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
@@ -1875,11 +1875,18 @@ def _lower_priority() -> None:
 
 
 def run_tasks(
-    fn: Callable[..., Any], tasks: Sequence[tuple[Any, ...]], workers: int | None = None
+    fn: Callable[..., Any],
+    tasks: Sequence[tuple[Any, ...]],
+    workers: int | None = None,
+    on_done: Callable[[int, Any], None] | None = None,
 ) -> list[Any]:
     """``fn`` over ``tasks`` in a process pool of the simulator's own (never the engine's), each
     worker at low priority, the results in the tasks' order; one worker runs them in this process
     (tests, smoke runs).
+
+    ``on_done`` (PR live screen) only watches: it is called in this process with each task's
+    index and result as the result comes back (in the order they come back), and nothing it does
+    reaches a task, its result or their order. Without it the pool is the one it was.
 
     The workers start by ``spawn`` on every machine. Python's default is ``fork`` on Linux, and a
     forked worker inherits the solver's state from a parent that has already solved (the
@@ -1888,11 +1895,31 @@ def run_tasks(
     alike."""
     n = workers or workers_default()
     if n <= 1 or len(tasks) <= 1:
-        return [fn(*t) for t in tasks]
+        out = []
+        for i, t in enumerate(tasks):
+            out.append(fn(*t))
+            if on_done is not None:
+                on_done(i, out[-1])
+        return out
     with ProcessPoolExecutor(
         max_workers=n, initializer=_lower_priority, mp_context=multiprocessing.get_context("spawn")
     ) as pool:
-        return list(pool.map(fn, *zip(*tasks, strict=True)))
+        if on_done is None:
+            return list(pool.map(fn, *zip(*tasks, strict=True)))
+        # The same tasks handed to the same pool in the same order, one at a time as ``map`` hands
+        # them; their results are taken as each comes back and kept in the tasks' order.
+        futures = {pool.submit(fn, *t): i for i, t in enumerate(tasks)}
+        got: list[Any] = [None] * len(tasks)
+        try:
+            for f in as_completed(futures):
+                i = futures[f]
+                got[i] = f.result()
+                on_done(i, got[i])
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
+        return got
 
 
 # --------------------------------------------------------------------------- a replay's league

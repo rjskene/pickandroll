@@ -422,6 +422,156 @@ def test_the_model_names_each_screen_s_folder_and_state():
     assert m["screen_view"]["title"] == "Screen"
 
 
+# --------------------------------------------------------------------------- the progress file
+def progress_file(
+    key: str,
+    came: list[tuple[float, float | None, bool]],
+    *,
+    tasks: int = 4,
+    at_: float = 0.0,
+    state: str = "playing",
+    why: str | None = None,
+) -> dict:
+    """A made-up progress file of the pair ``key``: each path that came back as (its time, its
+    difference, voided)."""
+    return {
+        "kind": "pair progress",
+        "progress_version": 1,
+        "run": "s-live",
+        "key": key,
+        "measure": "matchup_wins",
+        "state": state,
+        "why": why,
+        "tasks": tasks,
+        "done": len(came),
+        "started_at": at(came[0][0]) if came else None,
+        "updated_at": at(at_),
+        "paths": [
+            {
+                "task": i,
+                "season": 2023,
+                "forecaster": "prior",
+                "path": i,
+                "at": at(t),
+                "difference": d,
+                "voided": v,
+            }
+            for i, (t, d, v) in enumerate(came)
+        ],
+    }
+
+
+def test_the_pair_in_play_shows_its_paths_so_far_from_the_progress_file():
+    prog = progress_file(
+        "rate_cv-minus", [(800, 0.5, False), (900, -0.25, False), (950, 1.0, True)], at_=960
+    )
+    v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1000), progress=prog)
+    so = v["in_play"]["so_far"]
+    assert (so["done"], so["total"], so["share"]) == (3, 4, 0.75)
+    assert [m["side"] for m in so["marks"]] == ["ahead", "behind", "voided"]
+    assert [m["t"] for m in so["marks"]] == [800, 900, 950]
+    # The mean is of the paths that stand, so far; never set against the screen's rule.
+    assert (so["n"], so["mean"]) == (2, 0.125)
+    assert so["words"] == "so far, 3 of 4 paths" and so["note"] == scv.SO_FAR_WORDS
+    assert "rule reads a whole pair" in so["note"] and so["updated_at"] == at(960)
+    # The estimate is still in the view beside it, and the board's marks do not move.
+    assert v["in_play"]["words"] == "about 50% of its estimate"
+    assert marks(v)["rate_cv-minus"] == "in play" and v["cut"] is None
+    span = next(s for s in v["story"]["spans"] if s["key"] == "rate_cv-minus")
+    assert span["timed"] and span["total"] == 4 and span["marks"] == so["marks"]
+    # Without the file, or with one that is not a progress file: the estimate alone.
+    for other in (None, {"kind": "replay"}, {**prog, "tasks": "four"}):
+        v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1000), progress=other)
+        assert v["in_play"]["so_far"] is None and v["cut"] is None
+
+
+def test_a_progress_file_whose_pair_has_landed_is_the_record_s_to_say():
+    prog = progress_file("daily_cap-plus", [(500, 1.0, False)], at_=790)
+    v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1000), progress=prog)
+    assert v["in_play"]["so_far"] is None and v["cut"] is None
+
+
+def test_a_pair_stopped_inside_its_tasks_is_said_from_its_progress_file():
+    cut = progress_file(
+        "rate_cv-minus",
+        [(800, 0.5, False)],
+        at_=850,
+        state="cut",
+        why="the pair stopped inside its tasks (KeyboardInterrupt) after 1 of 4 came back",
+    )
+    v = scv.view("s-live", STOPPED, IN_PLAY_LANDED, clock(2000), progress=cut)
+    assert v["cut"] == f"rate_cv-minus: {cut['why']}"
+    # Killed outright: the file says playing, last written before its piece stopped.
+    stale = progress_file("rate_cv-minus", [(800, 0.5, False)], at_=805)
+    v = scv.view("s-live", STOPPED, IN_PLAY_LANDED, clock(2000), progress=stale)
+    assert v["cut"] == (
+        f"rate_cv-minus: its progress file was last written at {at(805)} with 1 of 4 paths back, "
+        "and no piece is playing it now: the piece stopped inside that pair, and nothing of it is "
+        "recorded"
+    )
+    assert v["in_play"] is None
+
+
+def test_a_landed_pair_s_paths_replay_evenly_over_its_time_from_its_record():
+    both = {
+        k: {**x, "paths": [1.0, -1.0, 0.0, None]} if k == "daily_cap-minus" else x
+        for k, x in IN_PLAY_LANDED.items()
+    }
+    v = scv.view("s-live", IN_PLAY, both, clock(1000))
+    first = next(s for s in v["story"]["spans"] if s["key"] == "daily_cap-minus")
+    assert not first["timed"] and first["total"] == 4
+    assert [m["t"] for m in first["marks"]] == [100, 200, 300, 400]
+    assert [m["side"] for m in first["marks"]] == ["ahead", "behind", "level", None]
+    assert [m["mean"] for m in first["marks"]] == [1.0, 0.0, 0.0, 0.0]
+    assert v["spread_words"] == scv.SPREAD_WORDS
+    second = next(s for s in v["story"]["spans"] if s["key"] == "daily_cap-plus")
+    assert second["marks"] is None  # its record keeps no by_path
+    assert scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1000))["spread_words"] is None
+
+
+def test_a_pair_s_paths_are_read_from_its_by_path_on_the_measure():
+    pair = {
+        "by_path": {
+            "note": "made-up",
+            "by_season": {
+                "2023": {
+                    "prior": [
+                        {"path": 0, "a": {"matchup_wins": 10}, "b": {"matchup_wins": 12}},
+                        {"path": 2, "a": {"matchup_wins": 11}, "b": {"matchup_wins": 9.5}},
+                        {"path": 3, "a": {"matchup_wins": None}, "b": {"matchup_wins": 9}},
+                    ]
+                }
+            },
+        }
+    }
+    assert scv.paths_of(pair, "matchup_wins") == [2.0, -1.5, None]
+    assert scv.paths_of({"by_path": None}, "matchup_wins") is None
+    assert scv.paths_of({}, "matchup_wins") is None
+
+
+def test_the_progress_file_is_read_from_the_folder_or_not_at_all(tmp_path):
+    folder = write_screen(tmp_path, "s-live", IN_PLAY, IN_PLAY_LANDED)
+    f = folder / reader.PROGRESS_FILE
+    assert rd.read_progress(folder) is None
+    prog = progress_file("rate_cv-minus", [(800, 0.5, False)], at_=805)
+    f.write_text(json.dumps(prog))
+    assert rd.read_progress(folder) == prog
+    for bad in ('{"kind": "pair pro', json.dumps({"kind": "replay"})):
+        f.write_text(bad)
+        assert rd.read_progress(folder) is None
+    f.unlink()
+    elsewhere = tmp_path / "elsewhere.progress"
+    elsewhere.write_text(json.dumps(prog))
+    f.symlink_to(elsewhere)
+    assert rd.read_progress(folder) is None
+    # Not a record's name: the lab's model and a tune's resume never take it for one.
+    assert not reader.PROGRESS_FILE.endswith(".json")
+    f.unlink()
+    f.write_text(json.dumps(prog))
+    code, v = sv.Lab(tmp_path, now=lambda: clock(1000)).screen("s-live")
+    assert code == 200 and v["in_play"]["so_far"]["done"] == 1
+
+
 # --------------------------------------------------------------------------- the notes' plan line
 def test_the_notes_may_name_the_planned_pieces_and_nothing_else_new():
     got = md.notes_of({"state": {"running": None, "text": "t", "pieces": "two pieces tonight"}})
@@ -448,7 +598,8 @@ def test_the_landings_are_read_from_the_pairs_own_records_once_each(tmp_path):
     folder = write_screen(tmp_path, "s-live", IN_PLAY, IN_PLAY_LANDED)
     kept: dict = {}
     got = rd.screen_landings(folder, IN_PLAY, kept)
-    assert got == IN_PLAY_LANDED and len(kept) == 2
+    # A pair record with no by_path (one written before PR trace) has no paths to replay.
+    assert got == {k: {**v, "paths": None} for k, v in IN_PLAY_LANDED.items()} and len(kept) == 2
     # Read once a file: a kept read is used while the file is unchanged.
     f = folder / reader.pair_file("daily_cap-minus")
     path = str(f.resolve())
@@ -580,7 +731,7 @@ def test_screen_js_holds_no_figure_and_asks_only_for_a_screen():
 
 MARK = "<x-mark>"
 #: The view's keys whose values the script reads as names, states or times, never shows as text.
-UNMARKED = {"key", "keys", "shown", "name", "folder", "mark", "state", "start", "end", "started_at", "finished_at",
+UNMARKED = {"key", "keys", "shown", "side", "updated_at", "name", "folder", "mark", "state", "start", "end", "started_at", "finished_at",
             "at", "now", "unbroken_end", "lever", "kind"}  # fmt: skip
 
 
@@ -609,7 +760,10 @@ def test_the_screen_tab_draws_the_board_plays_the_story_and_polls(tmp_path):
             piece(3000, None, ["rate_cv-minus"]),
         ],
     )
-    nxt = marked(json.loads(json.dumps(scv.view("s-live", nxt_rec, landed, clock(3400)))))
+    # The next read has the run's progress file: two of the pair in play's four paths back.
+    prog = progress_file("rate_cv-plus", [(3350, 1.0, False), (3380, -1.0, False)], at_=3390)
+    nxt = scv.view("s-live", nxt_rec, landed, clock(3400), progress=prog)
+    nxt = marked(json.loads(json.dumps(nxt)))
 
     def model(screens):
         m = md.build(
@@ -666,6 +820,10 @@ def test_the_screen_tab_draws_the_board_plays_the_story_and_polls(tmp_path):
     # A poll at now takes the next read: a pair landed, the reader stays at now.
     assert out["poll"]["asked"] == 2 and out["poll"]["live"] is True
     assert out["poll"]["board"] == {"played": 3, "in_play": 1, "waiting": 0, "not_played": 1}
+    # The pair in play read from the progress file: its paths so far, one mark each, no estimate.
+    row = out["poll"]["rows"]["rate_cv-plus"]
+    assert "so far, 2 of 4 paths · mean 0.000 over 2" in row and row.count("<i class=") == 2
+    assert 'class="ahead">▲' in row and 'class="behind">▼' in row and "an estimate" not in row
     # A failed poll keeps the last read and says so.
     assert out["failed"]["asked"] == 3 and "the view shows the last read" in out["failed"]["said"]
     assert out["failed"]["board"] == out["poll"]["board"]

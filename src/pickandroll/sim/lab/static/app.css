@@ -335,6 +335,9 @@ details.same { margin-top: 8px; color: var(--muted); } details.same summary { cu
 .sc-prog { display: block; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 3px 0; }
 .sc-prog i { display: block; height: 100%; background: var(--good); }
 .sc-prog.over i { background: var(--accent); }
+.sc-marks { display: flex; flex-wrap: wrap; gap: 1px; margin: 2px 0; font-size: 11.5px; line-height: 1; }
+.sc-marks i { font-style: normal; color: var(--muted); }
+.sc-marks i.ahead { color: var(--good); } .sc-marks i.behind { color: var(--bad); } .sc-marks i.voided { color: var(--dim); }
 .sc-ip { margin: 8px 0; font-size: 14px; }
 .sc-ip small, .sc-left small { color: var(--muted); }
 .sc-left { margin: 6px 0; }

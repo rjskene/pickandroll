@@ -194,18 +194,18 @@ class Lab:
         if folder is None:
             return 404, f"no screen named {name!r}"
         rec, why = rd.read_screen_record(folder)
-        now, plan = self.now(), self.plan()
+        now, plan, progress = self.now(), self.plan(), rd.read_progress(folder)
         with self._screen_lock:
             if rec is None:
                 kept = self._screens.get(name)
                 if kept is None:
                     return 422, f"{name}: {why}"
-                out = scv.view(name, kept[0], kept[1], now, plan)
+                out = scv.view(name, kept[0], kept[1], now, plan, progress)
                 out["kept"] = {"why": why, "at": now.isoformat()}
                 return 200, out
             landings = rd.screen_landings(folder, rec, self._pairs)
             self._screens[name] = (rec, landings)
-        return 200, scv.view(name, rec, landings, now, plan)
+        return 200, scv.view(name, rec, landings, now, plan, progress)
 
     def explainer_page(self) -> str:
         if self.explainer is None:

@@ -1,20 +1,23 @@
 """SEASON SIM (#172, PR live screen): a screen as it is played, for the lab's Screen tab.
 
 Pure: a screen's record (``screen.json``, as the screen command writes it), the times its played
-pairs landed (each pair's own record's ``started_at`` and ``finished_at``, read by
-``records.screen_landings``), the notes' line for the planned pieces and a clock handed in; one
-dict out (:func:`view`). Nothing here reads a file or the wall's clock.
+pairs landed and their paths (each pair's own record's ``started_at``, ``finished_at`` and
+``by_path``, read by ``records.screen_landings``), the run's progress file when its folder holds
+one, the notes' line for the planned pieces and a clock handed in; one dict out (:func:`view`).
+Nothing here reads a file or the wall's clock.
 
 What a screen in play leaves on disk: its record is written whole when a piece starts, each time
-a pair ends and once more when the piece ends, each played pair's own record whole just before;
-nothing is written inside a pair. So the view knows which pairs are played and what each said,
-which pair is in play (the first of ``left`` while a piece is open), when each pair landed, and
-an **estimate** of how far the pair in play has come: the time since the piece started or the
-last pair landed, against that pair's estimate (``seconds_one`` x ``tasks`` / the piece's
-``workers``, taken before the first pair). That is the screen's own timing, never a count of
-paths. The record cannot tell a piece still playing from one stopped from outside before it
-wrote its end: past its estimate the pair in play reads "longer than estimated", and a piece
-that is not the last and wrote no end is said to have stopped without writing it.
+a pair ends and once more when the piece ends, each played pair's own record whole just before.
+Since PR live screen the run also keeps a progress file for the pair in play
+(``readers.PROGRESS_FILE``), rewritten whole each time one of its tasks comes back: with it the
+pair in play shows its tasks done of the total and one mark a finished path, so far. Without it
+(a screen played on code before it) the view has an **estimate** of how far the pair in play has
+come: the time since the piece started or the last pair landed, against that pair's estimate
+(``seconds_one`` x ``tasks`` / the piece's ``workers``, taken before the first pair), never a
+count of paths. The record cannot tell a piece still playing from one stopped from outside before
+it wrote its end: past its estimate the pair in play reads "longer than estimated", a piece that
+is not the last and wrote no end is said to have stopped without writing it, and a progress file
+says when it was last written.
 
 The board, the clock and the pair in play are the record's at the clock handed in; the story
 (:func:`story_of`) is the screen's history from its first piece to now (to its last piece's end
@@ -39,9 +42,10 @@ PLAYED, IN_PLAY, WAITING, NOT_PLAYED = "played", "in play", "waiting", "not play
 TO_PLAY = (sc.PLAYED, sc.LEFT)
 #: The line beside the progress of the pair in play.
 ESTIMATE_WORDS = (
-    "How far the pair in play has come is an estimate from the screen's own timing (each pair's "
-    "estimate, taken before the first pair, against the time since the piece started or the last "
-    "pair landed), not a count of paths: the screen writes nothing inside a pair."
+    "Without the run's progress file (a screen played on code before it), how far the pair in "
+    "play has come is an estimate from the screen's own timing (each pair's estimate, taken before "
+    "the first pair, against the time since the piece started or the last pair landed), not a "
+    "count of paths."
 )
 #: The line beside the work left.
 PIECES_WORDS = (
@@ -58,6 +62,19 @@ PACE_WORDS = (
     "At the pace so far: the pairs landed in this screen took this share of their own estimates, "
     "and the pairs left are taken at the same share. An estimate too."
 )
+#: The line beside a pair's paths so far, from the run's progress file (PR live screen).
+SO_FAR_WORDS = (
+    "So far: each path is one mark as it came back (B ahead, behind or level on the measure), "
+    "and the mean is of those paths alone. The screen's rule reads a whole pair, so a pair in "
+    "play is never set against it."
+)
+#: The line beside a landed pair's paths in the story: its record keeps no times for them.
+SPREAD_WORDS = (
+    "A landed pair's paths are drawn evenly over its time: its record keeps each path's outcome "
+    "(by_path), not when it came back."
+)
+#: A path's side by the sign of its difference, B less A.
+SIDES = {1: "ahead", -1: "behind", 0: "level"}
 OUTSIDE_WORDS = (
     "The record cannot tell a piece still playing from one stopped from outside before it wrote "
     "its end."
@@ -115,6 +132,64 @@ def not_a_screen(record: Any) -> str | None:
     return None
 
 
+def _num(x: Any) -> bool:
+    return isinstance(x, int | float) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def paths_of(pair: Any, measure: str) -> list[float | None] | None:
+    """A landed pair's paths' differences on ``measure``, B less A, from its record's
+    ``by_path`` (PR trace; the paths that stand, a voided one left out), by season and
+    forecaster in the record's order, then by path; None when the record keeps no ``by_path``
+    (one written before it)."""
+    block = pair.get("by_path") if isinstance(pair, Mapping) else None
+    by = block.get("by_season") if isinstance(block, Mapping) else None
+    if not isinstance(by, Mapping):
+        return None
+    out: list[float | None] = []
+    for cells in by.values():
+        for rows in (cells or {}).values() if isinstance(cells, Mapping) else ():
+            for r in rows or []:
+                a = ((r or {}).get("a") or {}).get(measure)
+                b = ((r or {}).get("b") or {}).get(measure)
+                out.append(float(b) - float(a) if _num(a) and _num(b) else None)
+    return out
+
+
+def progress_ok(x: Any) -> str | None:
+    """Why a progress file is not one the view reads; None when it is."""
+    if not isinstance(x, Mapping) or x.get("kind") != "pair progress":
+        return "not a pair's progress file"
+    if not isinstance(x.get("key"), str) or not isinstance(x.get("paths"), list):
+        return "a progress file with no key or no paths"
+    if isinstance(x.get("tasks"), bool) or not isinstance(x.get("tasks"), int):
+        return "a progress file with no count of tasks"
+    return None
+
+
+def marks_of(diffs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each path as one mark, in the order given (each ``{"t", "difference", "voided"}``): its
+    side (B ahead, behind or level; None with no difference) and, over the paths so far that
+    stand with a difference, their count and mean."""
+    out, total, n = [], 0.0, 0
+    for x in diffs:
+        d = x.get("difference")
+        voided = bool(x.get("voided"))
+        side = None if voided or not _num(d) else SIDES[(d > 0) - (d < 0)]
+        if side is not None:
+            n += 1
+            total += float(d)
+        out.append(
+            {
+                "t": x["t"],
+                "difference": float(d) if _num(d) else None,
+                "side": "voided" if voided else side,
+                "n": n,
+                "mean": total / n if n else None,
+            }
+        )
+    return out
+
+
 def estimate_seconds(record: Mapping[str, Any], key: str, workers: int) -> float | None:
     """The screen's own estimate of pair ``key`` on ``workers`` workers, in seconds
     (``seconds_one`` x ``tasks`` / workers, as the screen sized its pieces); None when the record
@@ -159,13 +234,21 @@ def _order(record: Mapping[str, Any]) -> list[str]:
 
 
 def story_of(
-    record: Mapping[str, Any], landed: Mapping[str, Mapping[str, Any]], now: datetime
+    record: Mapping[str, Any],
+    landed: Mapping[str, Mapping[str, Any]],
+    now: datetime,
+    progress: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The screen's history as offsets in seconds from its first piece's start: each piece (open
     to now while it is open), the pauses between pieces (and the pause now, when the screen is
     paused), each pair's landing, and the spans in which each pair was in play (from the piece's
     start or the last landing to its own, the last of an open piece to now), each with its
-    estimate. ``length`` runs to now unless the screen is finished, then to its last end."""
+    estimate. ``length`` runs to now unless the screen is finished, then to its last end.
+
+    Each span carries its paths as marks when they are known (PR live screen): a landed pair's
+    from its record's ``by_path``, drawn evenly over its span (``timed`` false: the record keeps
+    no times), and the pair in play's from ``progress``, the run's progress file, each at the
+    time it came back (``timed`` true), with ``total`` the pair's tasks."""
     pieces = pieces_of(record)
     state = md.live_state(record)["state"]
     if not pieces or pieces[0]["started"] is None:
@@ -197,16 +280,28 @@ def story_of(
         cursor = s
         landed_here = {k for _, k in mine}
         for t, k in mine:
-            spans.append(
-                {
-                    "key": k,
-                    "from": off(cursor),
-                    "to": off(t),
-                    "landed": True,
-                    "piece": p["index"],
-                    "estimate": estimate_seconds(record, k, p["workers"]),
-                }
-            )
+            span = {
+                "key": k,
+                "from": off(cursor),
+                "to": off(t),
+                "landed": True,
+                "piece": p["index"],
+                "estimate": estimate_seconds(record, k, p["workers"]),
+                "marks": None,
+                "total": None,
+                "timed": False,
+            }
+            diffs = (landed.get(k) or {}).get("paths")
+            if isinstance(diffs, list) and diffs:
+                width = (span["to"] - span["from"]) / len(diffs)
+                span["marks"] = marks_of(
+                    [
+                        {"t": span["from"] + (i + 1) * width, "difference": d}
+                        for i, d in enumerate(diffs)
+                    ]
+                )
+                span["total"] = len(diffs)
+            spans.append(span)
             cursor = t
         if p["open"]:
             end = max(now, cursor)
@@ -220,16 +315,38 @@ def story_of(
             k for k in order if k not in landed_here and (land.get(k) is None or land[k] > cursor)
         ]
         if after and (p["open"] or (end > cursor and not p["stopped"])):
-            spans.append(
-                {
-                    "key": after[0],
-                    "from": off(cursor),
-                    "to": None if p["open"] else off(end),
-                    "landed": False,
-                    "piece": p["index"],
-                    "estimate": estimate_seconds(record, after[0], p["workers"]),
-                }
-            )
+            span = {
+                "key": after[0],
+                "from": off(cursor),
+                "to": None if p["open"] else off(end),
+                "landed": False,
+                "piece": p["index"],
+                "estimate": estimate_seconds(record, after[0], p["workers"]),
+                "marks": None,
+                "total": None,
+                "timed": True,
+            }
+            if p["open"] and progress is not None and progress.get("key") == after[0]:
+                came = sorted(
+                    (
+                        (when(x.get("at")) or s, x)
+                        for x in progress.get("paths") or []
+                        if isinstance(x, Mapping)
+                    ),
+                    key=lambda tx: tx[0],
+                )
+                span["marks"] = marks_of(
+                    [
+                        {
+                            "t": max(span["from"], off(t)),
+                            "difference": x.get("difference"),
+                            "voided": x.get("voided"),
+                        }
+                        for t, x in came
+                    ]
+                )
+                span["total"] = progress.get("tasks")
+            spans.append(span)
         out_pieces.append(
             {
                 "index": p["index"],
@@ -336,7 +453,50 @@ def _mark(row: Mapping[str, Any], in_play: str | None) -> str:
     return NOT_PLAYED
 
 
-def progress(span: Mapping[str, Any] | None, story: Mapping[str, Any]) -> dict[str, Any] | None:
+def so_far_of(
+    span: Mapping[str, Any] | None, progress: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """The pair in play's paths so far, from the run's progress file: tasks done of the total
+    (the bar), each path's mark, and the count and mean of those that stand, worded "so far, n
+    of N paths"; None without a progress file for it (the view falls back to the estimate)."""
+    if span is None or progress is None or progress.get("key") != span.get("key"):
+        return None
+    marks = span.get("marks") or []
+    total = int(progress.get("tasks") or 0)
+    done = len(marks)
+    last = marks[-1] if marks else {"n": 0, "mean": None}
+    return {
+        "done": done,
+        "total": total,
+        "share": min(1.0, done / total) if total else None,
+        "n": last["n"],
+        "mean": last["mean"],
+        "marks": marks,
+        "updated_at": progress.get("updated_at"),
+        "words": f"so far, {done} of {total} paths",
+        "note": SO_FAR_WORDS,
+    }
+
+
+def cut_words(progress: Mapping[str, Any] | None, in_play: str | None, state: str) -> str | None:
+    """What a progress file says of a pair stopped inside its tasks: its own words when the run
+    said so, or, when the file's pair is not the one in play now and not landed (its piece is no
+    longer open), that it was stopped inside that pair; nothing of it is recorded."""
+    if progress is None:
+        return None
+    done, total = len(progress.get("paths") or []), progress.get("tasks")
+    if progress.get("state") == "cut":
+        return f"{progress.get('key')}: {progress.get('why')}"
+    if state != md.IN_PLAY or progress.get("key") != in_play:
+        return (
+            f"{progress.get('key')}: its progress file was last written at "
+            f"{progress.get('updated_at')} with {done} of {total} paths back, and no piece is "
+            "playing it now: the piece stopped inside that pair, and nothing of it is recorded"
+        )
+    return None
+
+
+def progress_of(span: Mapping[str, Any] | None, story: Mapping[str, Any]) -> dict[str, Any] | None:
     """How far the pair in play has come at the story's now, by its open span: the seconds since
     the span began against its estimate, the share never above 1; past the estimate "longer than
     estimated". None when no pair is in play."""
@@ -371,20 +531,31 @@ def view(
     landed: Mapping[str, Mapping[str, Any]],
     now: datetime,
     plan: str | None = None,
+    progress: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The Screen tab's view of the screen ``name`` at ``now``: its state and clock, the board
     (every row in play order, grouped by lever, each marked played, in play, waiting or not
     played), the pair in play as two arms (else the next to play, or the last played), the
     story, the work left by the screen's own estimates, the notes' ``plan`` for the pieces, and
     the cautions. ``landed``: each played pair's ``started_at`` and ``finished_at`` by key, as
-    ``records.screen_landings`` reads them."""
+    ``records.screen_landings`` reads them; ``progress``: the run's progress file, when its folder
+    holds one (``records.read_progress``)."""
     spec = record.get("spec") or {}
     world = spec.get("world") or {}
     measure = str(record.get("measure") or "matchup_wins")
     live = md.live_state(record)
-    story = story_of(record, landed, now)
-    pieces = pieces_of(record)
     in_play = live["in_play"]
+    played_keys = {
+        str(r.get("key"))
+        for r in record.get("rows") or []
+        if isinstance(r, Mapping) and r.get("result")
+    }
+    if progress is not None and (progress_ok(progress) or str(progress.get("key")) in played_keys):
+        # Not a progress file, or one whose pair has landed (its record is written and the file
+        # not yet removed): the record is the pair's word.
+        progress = None
+    story = story_of(record, landed, now, progress if live["state"] == md.IN_PLAY else None)
+    pieces = pieces_of(record)
     open_span = next(
         (s for s in story["spans"] if s["to"] is None and not s["landed"]),
         None,
@@ -434,7 +605,9 @@ def view(
     left = [str(k) for k in record.get("left") or []]
     shown = in_play or (left[0] if left else (order[-1] if order else None))
     workers = pieces[-1]["workers"] if pieces else 1
-    prog = progress(open_span, story)
+    prog = progress_of(open_span, story)
+    so_far = so_far_of(open_span, progress)
+    cut = cut_words(progress, in_play, live["state"])
     work = [estimate_seconds(record, k, workers) for k in left]
     known = [w for w in work if w is not None]
     work_left = None
@@ -523,7 +696,12 @@ def view(
         "in_play": None
         if in_play is None
         else {"key": in_play, "since": None if open_span is None else open_span["from"]}
-        | ({} if prog is None else prog),
+        | ({} if prog is None else prog)
+        | {"so_far": so_far},
+        "cut": cut,
+        "spread_words": SPREAD_WORDS
+        if any(s["marks"] and not s["timed"] for s in story["spans"])
+        else None,
         "shown": shown,
         "work_left": work_left,
         "unbroken_end": unbroken,
@@ -615,12 +793,17 @@ __all__ = [
     "SIZES_WORDS",
     "WAITING",
     "board_at",
+    "cut_words",
     "estimate_seconds",
     "label_of",
+    "marks_of",
     "not_a_screen",
     "pace_of",
+    "paths_of",
     "pieces_of",
-    "progress",
+    "progress_of",
+    "progress_ok",
+    "so_far_of",
     "story_of",
     "view",
     "when",

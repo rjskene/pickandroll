@@ -30,7 +30,7 @@ is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandrol
 same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
 `checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`,
 `shapes`, `bids`, `screen`, `stake`, `bid_policy`, `tune`, `trace`, `capabilities`, and the lab's
-`lab/model` and `lab/trace_view`) for any way to a file, a process or the
+`lab/model`, `lab/trace_view` and `lab/screen_view`) for any way to a file, a process or the
 network: none of them imports `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`,
 `http`, `requests`, `httpx`, `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only
 `run.py` uses `os`, for the worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -3098,6 +3098,27 @@ baseline. The SE is over the paths, not over the season's own chance.
   it writes the record again from the pairs' files and prints the table.
 - `--max-minutes N` starts no pair whose estimate would pass N minutes from the start; the screen
   stops cleanly and says what is left.
+- **The progress file** (PR live screen). While a pair is played, its folder keeps
+  `in-play.progress` (`readers.PROGRESS_FILE`, `cli.PairWatch`). It is rewritten whole (written
+  beside, then renamed) each time one of the pair's tasks comes back, never appended, and holds:
+  the run, the pair's key and the measure; the tasks done of the total; when the pair started and
+  when the file was last written; and each path that has come back, with its season, forecaster
+  and path, when it came back, its paired difference on the measure (B less A, that path alone)
+  and whether the audit will void it. The timed task is done at the pair's start. The file is
+  removed once the pair's record is written. A pair stopped inside its tasks by an error or an
+  interrupt leaves it saying so (`state` `cut`, with why); one killed outright leaves it as last
+  written, its time saying when. It changes nothing played or recorded:
+  - `run.run_tasks` takes a watch that only reads each result as it comes back, in the parent,
+    and returns the results in the tasks' order as before;
+  - no worker waits on the file, and a failed write warns once while the run plays on;
+  - no `replay_version`, `screen_version` or `tune_version` moved;
+  - a test holds a pair's record byte for byte the same with the file written and with the
+    writing off (`cli.PROGRESS`), on the surrogate tier and the exact.
+
+  Its name is not a `.json` name, so nothing that reads a folder's records takes it for one (a
+  tune's resume, the lab's model). Only the lab's Screen tab reads it. A tune's folder keeps one
+  the same way, its search's pairs and its confirmation's alike. A plain `replay` writes none: it
+  has no folder, and its record is written once at its end.
 - **The estimate.** Before any pair is played, one task of each pair still to play is timed, on
   the run's workers (a pair timed by an earlier piece is not timed again; the task timed is the
   pair's first, so it is not played twice). `--dry-run` prints the list as it would be played,
@@ -3661,8 +3682,9 @@ shown: the page is the lead's, on the box, and a trace lives under `data/` only.
 one paused between pieces, else the latest, and any other from a picker. It reads only what a
 screen already writes: its record (`screen.json`, written whole when a piece starts, after each
 pair and when the piece ends) and, of each played pair's record, only when it started and
-landed (each file read once while it is unchanged); the notes' `state.pieces` gives the plan.
-It changes nothing a replay, a screen or a tune plays or writes. From the top:
+landed and its `by_path` (each file read once while it is unchanged); the run's progress file
+while a pair is played; and the notes' `state.pieces` for the plan.
+It plays nothing and writes nothing. From the top:
 
 - **the bar**: play and pause over the screen's history, the clock, a scrubber, three speeds,
   and a strip of the pieces (an open one marked), the pauses between them and each landing; a
@@ -3678,8 +3700,8 @@ It changes nothing a replay, a screen or a tune plays or writes. From the top:
   league's measure, its SE, whether it cleared one SE and which way, and the record's own
   "survives"; a pair that did nothing says that alone), in play, waiting, or not played (with
   the record's words for why);
-- **the clock**: the pair in play since when, and how far it has come; the counts played and
-  left; the work left by the screen's own estimates, and once a pair has landed, the work left
+- **the clock**: the pair in play since when, and how far it has come (its paths so far from the
+  run's progress file, below, else an estimate); the counts played and left; the work left by the screen's own estimates, and once a pair has landed, the work left
   at the pace so far (the landed pairs' time over their own estimates, the pairs left taken at
   that share), each with when it would end if played on without a pause; each piece, its
   start and end and why it stopped;
@@ -3690,8 +3712,20 @@ It changes nothing a replay, a screen or a tune plays or writes. From the top:
   simulator has moved since, that it is not set beside a screen of the current engine without
   saying so; and what is an estimate.
 
-What is an **estimate**: how far the pair in play has come is the time since its piece started
-or the last pair landed, against that pair's estimate in the record (`seconds_one` times
+**Real progress.** When the screen's folder holds the run's progress file (the screen command's
+**progress file** above), the pair in play shows its tasks done of the total as its bar, one mark
+a finished path (B ahead, behind or level on the measure; a path the audit will void is marked as
+such), and the mean of the paths that stand so far with their count, worded "so far, n of N
+paths". The screen's rule reads a whole pair, so a pair in play is never set against it. A file
+whose pair has landed is the record's to say, and one that says its pair was stopped inside its
+tasks, or that no open piece is playing, is said as such: nothing of that pair is recorded. The
+story replays a landed pair's paths from its record's `by_path`, a mark a path drawn evenly over
+the pair's time (the record keeps no time for a path, and the page says so). A pair record
+written since PR trace keeps `by_path`; one written before does not, and its pair replays as a bar
+alone. Without the file (a screen played on code before it) the view falls back to the estimate.
+
+What is an **estimate**: without the progress file, how far the pair in play has come is the time
+since its piece started or the last pair landed, against that pair's estimate in the record (`seconds_one` times
 `tasks` over the piece's workers, taken before the first pair), never above the whole: past
 it the pair reads "longer than estimated". The work left is the same estimates (and the pace so
 far), in pieces: the screen plays between the box's quiet hours, which its record does not

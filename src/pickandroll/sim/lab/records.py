@@ -205,13 +205,16 @@ def screen_landings(
     folder: Path, record: dict[str, Any], kept: dict[str, tuple[int, int, dict[str, Any]]]
 ) -> dict[str, dict[str, Any]]:
     """When each played pair of ``record`` started and landed, by its key: its own record's
-    ``started_at`` and ``finished_at``, from the file the row names (``file``, else
+    ``started_at`` and ``finished_at``, and its paths' differences on the screen's measure
+    (``screen_view.paths_of``, None when the record keeps no ``by_path``), from the file the row
+    names (``file``, else
     ``readers.pair_file``) in the screen's folder. A pair's record is written once, so each file
     is read once: ``kept`` holds what was read by its path, with its modification time and
     size. A file that is missing, outside the folder or not JSON is left out (its landing is not
     known)."""
     out: dict[str, dict[str, Any]] = {}
     root = folder.resolve()
+    measure = str(record.get("measure") or "matchup_wins")
     for row in record.get("rows") or []:
         if not isinstance(row, dict) or not row.get("result"):
             continue
@@ -233,10 +236,28 @@ def screen_landings(
             continue
         if not isinstance(pair, dict):
             continue
-        times = {"started_at": pair.get("started_at"), "finished_at": pair.get("finished_at")}
+        times = {
+            "started_at": pair.get("started_at"),
+            "finished_at": pair.get("finished_at"),
+            "paths": scv.paths_of(pair, measure),
+        }
         kept[str(f)] = (st.st_mtime_ns, st.st_size, times)
         out[key] = times
     return out
+
+
+def read_progress(folder: Path) -> dict[str, Any] | None:
+    """The run's progress file in a screen's folder (``readers.PROGRESS_FILE``, PR live screen):
+    the pair in play's paths so far. None when there is none, it is a link, or it cannot be read
+    or is not one (``screen_view.progress_ok``): the view then falls back to the estimate."""
+    f = folder / reader.PROGRESS_FILE
+    try:
+        if f.is_symlink() or not f.is_file():
+            return None
+        got = json.loads(f.read_text())
+    except (OSError, ValueError):
+        return None
+    return got if scv.progress_ok(got) is None else None
 
 
 def read_notes(path: Path | None) -> dict[str, Any] | None:
@@ -315,6 +336,7 @@ __all__ = [
     "not_a_trace",
     "read_all",
     "read_notes",
+    "read_progress",
     "read_screen_record",
     "read_trace",
     "screen_folder",

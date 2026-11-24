@@ -247,7 +247,8 @@ VIEWER_NOTE = (
 SCREEN_VIEW = (
     "A screen as it is played: every pair of its list on one board, the pair in play as its two "
     "arms, the clock of its pieces, and its story from the first piece to now. Read from what the "
-    "screen writes when each pair ends; the lab plays nothing."
+    "screen writes when each pair ends, and while a pair is played from its progress file when "
+    "the run keeps one; the lab plays nothing."
 )
 
 
