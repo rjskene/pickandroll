@@ -1691,10 +1691,10 @@ def test_the_season_tab_plays_a_trace_escapes_it_and_says_when_there_is_none(tmp
 
 # --------------------------------------------------------------------------- capabilities (PR capabilities)
 ENGINE = [
-    {"date": "2026-01-01", "issue": "#485", "title": "made-up live change", "words": "w"},
+    {"date": "2026-01-01", "issue": "#9485", "title": "made-up live change", "words": "w"},
     {"date": "2026-01-01", "issue": "#424", "title": "the union pool", "words": "w"},
-    {"date": "2026-01-01", "issue": "#486", "title": "another", "words": "w", "taken_in": 1},
-    {"date": "2026-01-02", "issue": "#487", "title": "dated the run's day", "words": "w"},
+    {"date": "2026-01-01", "issue": "#9486", "title": "another", "words": "w", "taken_in": 1},
+    {"date": "2026-01-02", "issue": "#9487", "title": "dated the run's day", "words": "w"},
 ]
 
 
@@ -1705,7 +1705,7 @@ def on_version(s: dict, version: int | None) -> dict:
 
 def test_the_notes_engine_section():
     n = md.notes_of({"engine": ENGINE})
-    assert [e["issue"] for e in n["engine"]] == ["#485", "#424", "#486", "#487"]
+    assert [e["issue"] for e in n["engine"]] == ["#9485", "#424", "#9486", "#9487"]
     assert n["engine"][2]["taken_in"] == 1 and "taken_in" not in n["engine"][0]
     assert (
         md.notes_of({"engine": [ENGINE[0] | {"taken_in": None}]})["engine"][0]["taken_in"] is None
@@ -1735,9 +1735,13 @@ def test_a_malformed_engine_item_is_refused_by_name(change, words):
 def test_a_live_change_is_closed_by_the_log_or_the_notes():
     got = {e["issue"]: e for e in md.engine_changes(md.notes_of({"engine": ENGINE}))}
     assert (got["#424"]["taken_in"], got["#424"]["closed_by"]) == (20, "replay-20")  # the log
-    assert (got["#486"]["taken_in"], got["#486"]["closed_by"]) == (1, "notes")
-    assert (got["#485"]["taken_in"], got["#485"]["closed_by"]) == (None, None)
+    assert (got["#9486"]["taken_in"], got["#9486"]["closed_by"]) == (1, "notes")
+    assert (got["#9485"]["taken_in"], got["#9485"]["closed_by"]) == (None, None)
     assert md.engine_changes(None) == []
+    # Live's odds calibration, taken in by the replay's version 22 (PR take-in): the log closes it.
+    took = {"date": "2026-11-23", "issue": "#485", "title": "legal later weeks", "words": "w"}
+    (real,) = md.engine_changes(md.notes_of({"engine": [took]}))
+    assert (real["taken_in"], real["closed_by"]) == (22, "replay-22")
 
 
 def test_a_run_s_capability_and_what_it_was_behind_live_in():
@@ -1748,27 +1752,27 @@ def test_a_run_s_capability_and_what_it_was_behind_live_in():
         "id": "replay-1", "replay_version": 1, "title": "The replay", "date": "2026-10-24",
         "kind": "world",
     }  # fmt: skip
-    # dated before the run's day and not taken in by its version: #424 came in at 20, #485 not
-    # yet; #486 came in at 1; #487 is dated the run's own day, so live changed since
-    assert [e["issue"] for e in run["behind_live"]] == ["#424", "#485"]
-    assert [e["issue"] for e in run["live_since"]] == ["#487"]
+    # dated before the run's day and not taken in by its version: #424 came in at 20, #9485 not
+    # yet; #9486 came in at 1; #9487 is dated the run's own day, so live changed since
+    assert [e["issue"] for e in run["behind_live"]] == ["#424", "#9485"]
+    assert [e["issue"] for e in run["live_since"]] == ["#9487"]
     f = flag(m["rulesets"][0], "Behind live")
     assert f["level"] == "watch"
     assert f["text"] == (
         "Its latest screen, s-one (version 1 (The replay)), was played before the simulator "
-        "took in: #424 the union pool (2026-01-01); #485 made-up live change (2026-01-01). "
-        "Live has changed since it was played: #487 dated the run's day (2026-01-02); its "
+        "took in: #424 the union pool (2026-01-01); #9485 made-up live change (2026-01-01). "
+        "Live has changed since it was played: #9487 dated the run's day (2026-01-02); its "
         "figures are of the earlier engine."
     )
     # today's case: nothing was outstanding when it started, live changed after
     m = built([on_version(two_screens()[0], 21)], notes=md.notes_of({"engine": ENGINE[3:]}))
     run = m["runs"][0]
-    assert run["behind_live"] == [] and [e["issue"] for e in run["live_since"]] == ["#487"]
+    assert run["behind_live"] == [] and [e["issue"] for e in run["live_since"]] == ["#9487"]
     assert flag(m["rulesets"][0], "Behind live") == {
         "level": "watch",
         "title": "Behind live",
         "text": f"Its latest screen, s-one (version 21 ({md.cap.at(21).title})): live has "
-        "changed since it was played: #487 dated the run's day (2026-01-02); its figures are "
+        "changed since it was played: #9487 dated the run's day (2026-01-02); its figures are "
         "of the earlier engine.",
     }
     assert m["capabilities"]["earlier"] == ["s-one"] and m["capabilities"]["of"] == 1
@@ -1776,7 +1780,7 @@ def test_a_run_s_capability_and_what_it_was_behind_live_in():
     late = on_version(two_screens()[0], 21)
     late["record"]["timing"]["pieces"][0]["started_at"] = "2026-01-03T03:00:00+00:00"
     run = built([late], notes=md.notes_of({"engine": ENGINE[3:]}))["runs"][0]
-    assert run["behind_live"] == [] and [e["issue"] for e in run["live_since"]] == ["#487"]
+    assert run["behind_live"] == [] and [e["issue"] for e in run["live_since"]] == ["#9487"]
     # no version: unknown, never "behind nothing"
     m = built([on_version(two_screens()[0], None)], notes=md.notes_of({"engine": ENGINE}))
     assert m["runs"][0]["capability"] is None and m["runs"][0]["behind_live"] is None
@@ -1893,12 +1897,12 @@ def test_the_simulator_s_capabilities_now_and_on_the_time_line():
         strict=True,
     ):  # fmt: skip
         s["record"]["timing"]["pieces"][0] |= {"started_at": a, "finished_at": b}
-    engine = [{"date": "2026-11-20", "issue": "#485", "title": "made up", "words": "w"}]
+    engine = [{"date": "2026-11-20", "issue": "#9485", "title": "made up", "words": "w"}]
     m = built([old, new], notes=md.notes_of({"engine": engine}))
     c = m["capabilities"]
     assert c["current"]["id"] == f"replay-{cli.REPLAY_VERSION}"
     assert c["latest"]["id"] == md.cap.LOG[-1].id
-    assert [e["issue"] for e in c["behind"]] == ["#485"] and c["noted"]
+    assert [e["issue"] for e in c["behind"]] == ["#9485"] and c["noted"]
     at = {x["id"]: x["at"] for x in c["log"]}
     assert at["replay-1"] is None  # before the line
     # the start of 2026-11-20 Central (06:00 UTC) on a line of fifty hours from 10:00 UTC the day
@@ -1907,7 +1911,7 @@ def test_the_simulator_s_capabilities_now_and_on_the_time_line():
     assert c["engine"][0]["at"] == pytest.approx(20 / 50)
     # the runs: the first played before live changed, the second behind it; both of an engine
     # live has left
-    made = [{"issue": "#485", "title": "made up", "date": "2026-11-20"}]
+    made = [{"issue": "#9485", "title": "made up", "date": "2026-11-20"}]
     assert [r["behind_live"] for r in m["runs"]] == [[], made]
     assert [r["live_since"] for r in m["runs"]] == [made, []]
     assert c["earlier"] == ["s-old", "s-new"] and c["of"] == 2
@@ -1915,7 +1919,7 @@ def test_the_simulator_s_capabilities_now_and_on_the_time_line():
     line = next(x for x in lines if x.startswith("capabilities:"))
     assert line.startswith(f"capabilities: now version {cli.REPLAY_VERSION} (")
     assert line.endswith(
-        "runs played on version(s) 20, 21; behind live in #485; 2 of 2 run(s) with a version "
+        "runs played on version(s) 20, 21; behind live in #9485; 2 of 2 run(s) with a version "
         "are of an engine live has left: s-old, s-new"
     )
 
@@ -1924,12 +1928,12 @@ def test_a_tune_that_started_behind_live_is_a_problem():
     old, new = two_capabilities()
     t = tune("t-1", ONE_WIN)  # started 2026-01-03
     t["record"]["spec"] |= {"replay_version": 21, "screen": {"name": "s-new", "spec_sha": "x"}}
-    engine = [{"date": "2026-01-02", "issue": "#485", "title": "made up", "words": "w"}]
+    engine = [{"date": "2026-01-02", "issue": "#9485", "title": "made up", "words": "w"}]
     f = flag(built([old, new], [t], notes=md.notes_of({"engine": engine}))["rulesets"][0],
              "Behind live")  # fmt: skip
     assert f["level"] == "problem"
     assert f["text"].startswith(
-        f"t-1 (version 21 ({md.cap.at(21).title})) tuned an engine live had left: #485 made up "
+        f"t-1 (version 21 ({md.cap.at(21).title})) tuned an engine live had left: #9485 made up "
         "(2026-01-02). Its latest screen, s-new"
     )
     # dated the tune's own day: live changed under it, not before it; the screen's watch only
@@ -1974,8 +1978,8 @@ def test_the_page_draws_the_capabilities_and_their_marks(tmp_path):
         "finished_at": "2026-11-21T14:00:00+00:00",
     }
     engine = [
-        {"date": "2026-11-20", "issue": "#485", "title": "made up", "words": "w"},
-        {"date": "2026-11-21", "issue": "#486", "title": "made up too", "words": "w"},
+        {"date": "2026-11-20", "issue": "#9485", "title": "made up", "words": "w"},
+        {"date": "2026-11-21", "issue": "#9486", "title": "made up too", "words": "w"},
     ]
     notes = md.notes_of(GOOD | {"rulesets": {}, "engine": engine})
     m = marked(json.loads(json.dumps(built([old, new], [t], notes=notes), default=str)))
@@ -1990,7 +1994,7 @@ def test_the_page_draws_the_capabilities_and_their_marks(tmp_path):
     assert out["problems"] == [] and out["marks"] == []
     over, runs = out["pages"]["overview"], out["pages"]["runs"]
     assert "The simulator&#x27;s capabilities" in over or "The simulator's capabilities" in over
-    assert "Behind live in" in over and "#485" in over
+    assert "Behind live in" in over and "#9485" in over
     assert 'class="crosses"' in over and 'class="shift"' in over and "Across a capability." in over
     assert 'class="capt"' in over
     # the time line: one line a day on each of the three runs' tracks, the day's count above,

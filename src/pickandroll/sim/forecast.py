@@ -71,12 +71,6 @@ LIVE_DIFFERENCES = (
         "next seven days, so it moves with the week's news and schedule"
     ),
     (
-        "live values each source on its own table (the second's holds only the available "
-        "players, so its values are scaled within the available pool) and a blended player at "
-        "the mix of the two; the simulator values the seat's one mixed table, under yahoo as "
-        "under blend"
-    ),
-    (
         "both stand-ins learn from the same played games (each at its own weights), so their "
         "beliefs close on each other as the season goes, where the two live sources stay apart "
         "all year: a system difference measured here is weighted to the early weeks"

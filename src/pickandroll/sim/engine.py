@@ -35,6 +35,12 @@ pool): ``pool_for``, a horizon's best adds by single move and then the adds whos
 move the season guard admits; ``admitted_swaps``, that guard's list alone; and ``joined``, a head
 and a list made one pool. The rule is the engine's own: the simulator hands it the day's single
 swaps, the guard and the arm's sizes, and writes no line of it again.
+
+From the odds calibration (#489) the simulator takes the two modules whose knobs it mirrors (#172,
+PR take-in): ``season.recent`` (``rc``), the per-game line blended toward recent form (#486), and
+``season.spread`` (``spr``), the week's spread widened for the line's error and missed games
+(#487). Their knobs, defaults, bounds and refusals are read from them, and the blend and the
+noise are theirs: the simulator hands them the day's lines and takes the answer.
 """
 
 from __future__ import annotations
@@ -43,6 +49,8 @@ from pickandroll.season import decisions as dl
 from pickandroll.season import moves as mv
 from pickandroll.season import plans as pl
 from pickandroll.season import pool as sp
+from pickandroll.season import recent as rc
+from pickandroll.season import spread as spr
 from pickandroll.season import strategy as sg
 from pickandroll.season import stream as st
 from pickandroll.season import weekly as wk
@@ -82,9 +90,11 @@ __all__ = [
     "monday_of",
     "mv",
     "pl",
+    "rc",
     "refused",
     "sg",
     "sp",
+    "spr",
     "st",
     "starting_slots",
     "total",

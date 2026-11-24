@@ -21,16 +21,36 @@ from pickandroll.sim.engine import EACH_CATEGORY
 from pickandroll.sim.state import Member, initial
 from tests.sim.sim_league import KNOBS, arm, every_category, make_setup, rates, replay_of
 
+# --------------------------------------------------------------------------- the knobs
+TAKEIN = ("later_weeks", "rate_shrink", "rate_shrink_games", "rate_cv", "miss_rate")
 
-# --------------------------------------------------------------------------- the twelve knobs
-def test_the_twelve_knobs_are_the_live_ten_and_the_simulators_two():
-    assert policy.KNOBS == (*engine.LIVE_KNOBS, "season_weight", "playoff_weight")
-    assert len(policy.KNOBS) == 12 and set(KNOBS) == set(policy.KNOBS)
+
+def test_the_knobs_are_the_live_ten_the_simulators_two_and_the_take_ins_five():
+    assert policy.KNOBS == (*engine.LIVE_KNOBS, "season_weight", "playoff_weight", *TAKEIN)
+    assert policy.TAKEIN_KNOBS == TAKEIN and len(policy.KNOBS) == 17
+    assert set(KNOBS) == set(policy.KNOBS)
     assert set(policy.KNOB_DEFAULTS) == set(policy.KNOBS)
     assert (
         policy.KNOB_DEFAULTS["season_weight"] == 0 and policy.KNOB_DEFAULTS["playoff_weight"] == 1
     )
     assert {k: policy.KNOB_DEFAULTS[k] for k in engine.LIVE_KNOBS} == dict(engine.DEFAULTS)
+    # The take-in's five (PR take-in): live's legal later weeks, and the calibration's four at
+    # the engine's own defaults, read from its tables.
+    assert policy.CALIBRATION_KNOBS == (*engine.rc.KNOBS, *engine.spr.KNOBS)
+    assert {k: policy.KNOB_DEFAULTS[k] for k in policy.CALIBRATION_KNOBS} == {
+        **engine.rc.DEFAULTS,
+        **engine.spr.DEFAULTS,
+    }
+    assert policy.KNOB_DEFAULTS["later_weeks"] == policy.LEGAL
+    assert policy.TAKEIN_OFF == {
+        "later_weeks": policy.UNCAPPED,
+        "rate_shrink": 0.0,
+        "rate_shrink_games": engine.rc.DEFAULTS["rate_shrink_games"],
+        "rate_cv": 0.0,
+        "miss_rate": 0.0,
+    }
+    # The tests' arms play the rule before the take-in.
+    assert {k: KNOBS[k] for k in TAKEIN} == dict(policy.TAKEIN_OFF)
     assert policy.check_knobs(policy.KNOB_DEFAULTS) == dict(policy.KNOB_DEFAULTS)
     assert list(policy.check_knobs(KNOBS)) == list(policy.KNOBS)
 
@@ -55,6 +75,21 @@ def test_the_twelve_knobs_are_the_live_ten_and_the_simulators_two():
         ({"stash_threshold": float("nan")}, ValueError, "stash_threshold nan is not a finite"),
         ({"stash_threshold": float("inf")}, ValueError, "stash_threshold inf is not a finite"),
         ({"rival_claim_rate": 0.3}, ValueError, "knob 'rival_claim_rate' is not a knob"),
+        # The take-in's (PR take-in): a rule of two, and the calibration's four in the engine's
+        # own bounds (``recent.refused``, ``spread.refused``), never None and never a NaN.
+        ({"later_weeks": "all"}, ValueError, "later_weeks 'all': one of legal, uncapped"),
+        ({"later_weeks": None}, ValueError, "later_weeks None: one of legal, uncapped"),
+        ({"rate_shrink": -0.1}, ValueError, "rate_shrink -0.1 is below its minimum 0"),
+        ({"rate_shrink": 1.5}, ValueError, "rate_shrink 1.5 is above its maximum 1"),
+        ({"rate_shrink_games": 0.5}, ValueError, "rate_shrink_games 0.5 is below its minimum 1"),
+        ({"rate_shrink_games": 31}, ValueError, "rate_shrink_games 31 is above its maximum 30"),
+        ({"rate_cv": 1.2}, ValueError, "rate_cv 1.2 is above its maximum 1"),
+        ({"rate_cv": -0.01}, ValueError, "rate_cv -0.01 is below its minimum 0"),
+        ({"miss_rate": 0.4}, ValueError, "miss_rate 0.4 is above its maximum 0.3"),
+        ({"miss_rate": None}, ValueError, "miss_rate None is not a number"),
+        ({"rate_cv": True}, ValueError, "rate_cv True is not a number"),
+        ({"rate_shrink": float("nan")}, ValueError, "rate_shrink nan is not a finite"),
+        ({"miss_rate": "low"}, ValueError, "miss_rate 'low' is not a number"),
     ],
 )
 def test_a_knob_out_of_bounds_or_unknown_is_refused_by_name(change, error, words):
@@ -65,9 +100,22 @@ def test_a_knob_out_of_bounds_or_unknown_is_refused_by_name(change, error, words
 
 def test_a_missing_knob_is_refused_by_name_and_none_stays_where_the_engine_takes_it():
     for name in policy.KNOBS:
+        if name in policy.TAKEIN_KNOBS:
+            continue
         with pytest.raises(KeyError) as e:
             policy.check_knobs({k: v for k, v in KNOBS.items() if k != name})
         assert repr(name) in str(e.value) and "names every knob" in str(e.value)
+    # The take-in's five are live's when not named (PR take-in): an arm file written before it
+    # plays live's engine of now, and names them to play another.
+    twelve = {k: v for k, v in KNOBS.items() if k not in policy.TAKEIN_KNOBS}
+    got = policy.check_knobs(twelve)
+    assert list(got) == list(policy.KNOBS)
+    assert {k: got[k] for k in policy.TAKEIN_KNOBS} == {
+        k: policy.KNOB_DEFAULTS[k] for k in policy.TAKEIN_KNOBS
+    }
+    assert policy.knob(twelve, "rate_cv") == engine.spr.DEFAULTS["rate_cv"]
+    arm = rn.arm_of({"name": "A", "tier": "exact", "knobs": twelve})
+    assert arm.knobs == got
     # The engine's own defaults of None: the blend weight, the stash threshold, the FAAB sizing.
     assert policy.TAKES_NONE == {"blend", "stash_threshold", "faab_sizing"}
     assert policy.check_knobs({**KNOBS, "blend": None, "faab_sizing": None})["blend"] is None
@@ -465,12 +513,16 @@ def test_the_reads_table_as_built():
     # plan_floor_cats (the format PR); where every category counts, the exact tier executing the
     # plan reads it.
     for shape, floor in ((cats, set()), (policy.Shape(h2h=EACH_CATEGORY), {"plan_floor_cats"})):
+        # The take-in's (PR take-in): the field's later weeks and the spread where the odds
+        # are; the blend on every tier, and its half-weight point only with a blend.
+        odds = {"later_weeks", "rate_shrink", "rate_cv", "miss_rate"}
         read = {k for k, v in policy.reads(exact, shape).items() if v == policy.READ}
         assert read == {
             "protection_floor",
             "daily_cap",
             "season_weight",
             "stash_threshold",
+            *odds,
             *floor,
         }
         read = {k for k, v in policy.reads(heavy, shape).items() if v == policy.READ}
@@ -481,8 +533,12 @@ def test_the_reads_table_as_built():
             "season_weight",
             "playoff_weight",
             "stash_threshold",
+            *odds,
             *floor,
         }
+        blending = replace(exact, knobs={**KNOBS, "rate_shrink": 0.5})
+        assert policy.reads(blending, shape)["rate_shrink_games"] == policy.READ
+    assert policy.reads(exact, cats)["rate_shrink_games"] == policy.NO_BLEND
     assert policy.reads(exact, cats)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
     no_bracket = policy.reads(heavy, policy.Shape(bracket=False))
     assert no_bracket["playoff_weight"] == "the league has no bracket read"
@@ -491,7 +547,12 @@ def test_the_reads_table_as_built():
         "a points league"
     )
     ranking = policy.reads(rn.Arm("R", "ranking", KNOBS, {}), cats)
-    assert {k for k, v in ranking.items() if v == policy.READ} == {"protection_floor"}
+    assert {k for k, v in ranking.items() if v == policy.READ} == {
+        "protection_floor",
+        "rate_shrink",
+    }
+    for name in ("later_weeks", "rate_cv", "miss_rate"):
+        assert ranking[name] == policy.RANKING_ODDS
     assert ranking["daily_cap"].startswith("the ranking tier queues one move a day")
     # The stash threshold (PR G): the arm's own seat's searches read it, with or without a held
     # slot; the ranking tier's one swap is not held to it; a mirror rival keeps None.
@@ -503,14 +564,20 @@ def test_the_reads_table_as_built():
     assert set(static.values()) - {policy.STATIC} == {
         static[k]
         for k in ("horizon_weight", "plan_floor_cats", "plan_floor_points", "three_weight")
-    } | {static[k] for k in ("system", "blend", "faab_sizing")}
+    } | {static[k] for k in ("system", "blend", "faab_sizing", "rate_shrink_games")} | {policy.READ}
     assert static["stash_threshold"] == policy.STATIC
+    # A static seat sets its lineup on the blended value (PR take-in): rate_shrink is read.
+    assert {k for k, v in static.items() if v == policy.READ} == {"rate_shrink"}
     # Rivals that mirror a static seat read what the surrogate reads.
     mirrored = policy.reads(rn.Arm("S", "static", KNOBS, {}), cats, mirrored=True)
     assert {k for k, v in mirrored.items() if v == policy.READ} == {
         "protection_floor",
         "daily_cap",
         "season_weight",
+        "later_weeks",
+        "rate_shrink",
+        "rate_cv",
+        "miss_rate",
     }
     assert mirrored["stash_threshold"] == policy.STATIC
     for never in ("system", "blend", "faab_sizing"):
@@ -544,6 +611,10 @@ def test_the_reads_table_of_an_arm_that_executes_queue():
             "three_weight",
             "season_weight",
             "stash_threshold",
+            "later_weeks",
+            "rate_shrink",
+            "rate_cv",
+            "miss_rate",
         }
         assert policy.reads(q, cats)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
         assert policy.reads(q, cats)["three_weight"] == policy.READ

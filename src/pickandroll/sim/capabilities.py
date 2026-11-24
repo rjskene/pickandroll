@@ -80,6 +80,8 @@ class Mark:
         }
 
 
+#: The take-in's pull request (#172, PR take-in), set when it is opened.
+TAKEIN_PR = 502
 #: The log, oldest first (by the day it landed, then by pull request).
 LOG: tuple[Mark, ...] = (
     Mark(
@@ -254,6 +256,15 @@ LOG: tuple[Mark, ...] = (
         "pr-490", "2026-11-23", 490, "measure", "The trace",
         "One path of one pair played again with a recorder, day by day; a pair's record keeps "
         "each path's outcomes.",
+    ),
+    Mark(
+        "replay-22", "2026-11-23", TAKEIN_PR, "engine", "Live's odds calibration",
+        "Later weeks on a legal roster with return dates, the line blended toward recent form "
+        "and the week's spread widened, as live does; each a knob, all off the version before. "
+        "Live came to the simulator's split-seat table.",
+        replay_version=22,
+        screen_version=7,
+        takes_in=("#485", "#486", "#487"),
     ),
 )  # fmt: skip
 

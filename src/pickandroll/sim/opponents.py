@@ -49,7 +49,12 @@ class Strategy(Protocol):
     decision reads the value of this week says so (``reads_week``, PR F2: a :class:`Seat`
     that ``policy.reads_week``, and a :class:`Mirror` whose ``bid`` weighs the week); the runner
     then keys its decisions on the team's week view too. One that does not say is keyed on the
-    state alone, as every other rival here is."""
+    state alone, as every other rival here is.
+
+    A :class:`Seat` and a :class:`Mirror` take one more input (#172, PR take-in): ``blended``,
+    their beliefs blended toward recent form under their knobs (``run.World.blended_on``), which
+    the runner hands them when their ``rate_shrink`` is above 0 (``policy.blend_of``). No other
+    strategy is handed it: a market or a static rival holds no knob."""
 
     kind: str
 
@@ -231,9 +236,18 @@ class Mirror:
         status: Mapping[int, str | None],
         returns: Mapping[int, date],
         g: np.random.Generator,
+        blended: Mapping[int, Mapping[str, float]] | None = None,
     ) -> policy.Decision:
         built = policy.problem_of(
-            setup, state, team, self.knobs, beliefs, status, returns, self.fields.weeks_ahead
+            setup,
+            state,
+            team,
+            self.knobs,
+            beliefs,
+            status,
+            returns,
+            self.fields.weeks_ahead,
+            blended,
         )
         if built is None:
             return policy.NONE
@@ -283,11 +297,20 @@ class Seat:
         status: Mapping[int, str | None],
         returns: Mapping[int, date],
         g: np.random.Generator,
+        blended: Mapping[int, Mapping[str, float]] | None = None,
     ) -> policy.Decision:
         if self.tier == "static":
             return policy.NONE
         built = policy.problem_of(
-            setup, state, team, self.knobs, beliefs, status, returns, self.fields.weeks_ahead
+            setup,
+            state,
+            team,
+            self.knobs,
+            beliefs,
+            status,
+            returns,
+            self.fields.weeks_ahead,
+            blended,
         )
         if built is None:
             return policy.NONE

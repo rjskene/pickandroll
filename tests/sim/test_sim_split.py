@@ -76,6 +76,7 @@ def world_of(setup, lines, first, second, arms, label=RUN, run_lines=None):
         label=label,
         forecasts=forecasts,
         split=ss.splits_of(SOURCES, arms),
+        seconds=ss.seconds_of(SOURCES, arms),
     )
 
 
@@ -322,9 +323,14 @@ def test_the_first_is_held_with_no_bbm_arm_and_off_the_runs_forecaster(season):
     setup, lines, first, second = season
     arms = armed(("Y", "yahoo", None))
     forecasts = ss.forecasts_of(SOURCES, fixed_of(first, second), lines, SEED, 0, "stat", arms)
-    assert set(forecasts) == {arms["Y"].forecaster, FIRST} and forecasts[FIRST] is first
+    assert set(forecasts) == {arms["Y"].forecaster, FIRST, SECOND}
+    assert forecasts[FIRST] is first
+    # The second is held too (PR take-in): the blend toward recent form leaves the available
+    # players it projects as read, so the world asks it whom it projects.
+    assert forecasts[SECOND] is fixed_of(first, second).rates[SECOND]
     w = world_of(setup, lines, first, second, arms)
     assert FIRST in w.others and w.split == {arms["Y"].forecaster: FIRST}
+    assert SECOND in w.others and w.seconds == {arms["Y"].forecaster: (SECOND, None)}
     # Without a split label the first is not held for its own sake.
     plain = ss.believing({"P": arm("P", "surrogate", "market")}, SOURCES)
     assert set(

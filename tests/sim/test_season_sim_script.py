@@ -171,6 +171,12 @@ KNOBS = {
     "three_weight": 0.33,
     "season_weight": 0.0,
     "playoff_weight": 1.0,
+    # The take-in's five at the rule before it (``policy.TAKEIN_OFF``), as the tests' own arms.
+    "later_weeks": "uncapped",
+    "rate_shrink": 0.0,
+    "rate_shrink_games": 4.0,
+    "rate_cv": 0.0,
+    "miss_rate": 0.0,
 }
 
 
@@ -278,7 +284,7 @@ def test_a_replay_records_its_run(run_data: Path):
     # The seats believe only the games played: the payload names the belief, its weights and
     # where they came from (no season before 2024 has its prior season on file: the default),
     # the newcomer's rule, the pool and the news spread.
-    assert payload["replay_version"] == 21 and payload["belief"]["kind"] == "causal"
+    assert payload["replay_version"] == 22 and payload["belief"]["kind"] == "causal"
     weights = payload["belief"]["weights"]["2024"]["prior"]
     assert weights["source"] == "the default" and weights["left_out"] == {
         "2023": "prior: season 2022 is not on file"
@@ -386,7 +392,7 @@ def test_a_replay_keys_its_figures_by_forecaster(blocks_data: Path, capsys):
     out = capsys.readouterr().out
     assert "2 tasks (2 cells x 1 paths)" in out
     payload = json.loads(_written(out).read_text())
-    assert payload["replay_version"] == 21 and payload["oracle_shape"] == "stat"
+    assert payload["replay_version"] == 22 and payload["oracle_shape"] == "stat"
     assert list(payload["forecasters"]["2024"]) == ["espn", "oracle:0.2"]
     assert set(payload["results"]["2024"]) == {"espn", "oracle:0.2"}
     assert set(payload["counts"]["by_season"]["2024"]) == {"espn", "oracle:0.2"}
@@ -724,13 +730,22 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
     assert counts["S"]["landed"]["mean"] == 0
 
 
-#: What ``checks.surrogate_matches`` returned on main before PR D4a2 on gate 5's replay of the
-#: made-up season with a wire (seed 1, lag 1, path 0), by seat: one day differs for two seats. The
-#: seats then weighed expected categories, as they do in a league that counts every category, so
-#: the tests below name that format (the format PR); under the default, one win per matchup, the
-#: two tiers agree on 14 of the 15 league-days, seat 6 differing on its fifth
-#: (``test_sim_format.ONE_WIN_MATCHES``).
+#: What ``checks.surrogate_matches`` returns on gate 5's replay of the made-up season with a
+#: wire (seed 1, lag 1, path 0), by seat, under every category (the format PR: the tests below
+#: name that format) and the default knobs, which since PR take-in hold live's odds calibration
+#: (``policy.TAKEIN_KNOBS``): seat 1's sets differ on its third and fifth days, the other two
+#: seats' agree on all five. Under one win per matchup they are ``test_sim_format``'s
+#: ``ONE_WIN_MATCHES``. With every change of the take-in off the answers are those of the version
+#: before (:data:`WIRE_MATCHES_BEFORE`).
 WIRE_MATCHES = {
+    1: [True, True, False, True, False],
+    6: [True, True, True, True, True],
+    12: [True, True, True, True, True],
+}
+
+#: The answers on main before PR D4a2 and through PR take-in, which every change of the take-in
+#: off still gives: one day, the fourth, differs for two seats.
+WIRE_MATCHES_BEFORE = {
     1: [True, True, True, False, True],
     6: [True, True, True, True, True],
     12: [True, True, True, False, True],
@@ -785,12 +800,17 @@ def test_gate_five_records_what_it_compared(wire_data: Path, wire_validate):
     w = rn.replay_world(
         setup, r.lines, 1, 1, 0, r.weights["prior"], label="prior", weights_of=r.weights
     )
-    # Each day is solved from day one's rosters, so the differing day alone answers as it did in
-    # the five: both its answers, for the two seats that differ and one that does not.
-    day = date.fromisoformat(block["days"][3])
+    # Each day is solved from day one's rosters, so a differing day alone answers as it did in
+    # the five: its answers for the seat that differs and two that do not.
+    day = date.fromisoformat(block["days"][2])
     knobs = policy.check_knobs(dict(policy.KNOB_DEFAULTS))
     for seat, matches in WIRE_MATCHES.items():
-        assert checks.surrogate_matches(setup, w, seat, [day], knobs) == [matches[3]]
+        assert checks.surrogate_matches(setup, w, seat, [day], knobs) == [matches[2]]
+    # Every change of the take-in off: the version before's answers on its differing day.
+    day = date.fromisoformat(block["days"][3])
+    off = policy.check_knobs({**policy.KNOB_DEFAULTS, **policy.TAKEIN_OFF})
+    for seat, matches in WIRE_MATCHES_BEFORE.items():
+        assert checks.surrogate_matches(setup, w, seat, [day], off) == [matches[3]]
 
 
 def test_gate_five_passes_a_seat_on_the_gain_its_surrogate_keeps(wire_validate):
@@ -818,7 +838,7 @@ def test_gate_five_passes_a_seat_on_the_gain_its_surrogate_keeps(wire_validate):
         own = vg.surrogate_gate(d["records"], season=g["season"])
         assert own.passed is g["passed"] and own.detail == {k: d[k] for k in own.detail}
         differing += d["matched"] < d["of"]
-    assert differing == 2  # not vacuous: two seats' sets differ on a day
+    assert differing == 1  # not vacuous: a seat's sets differ on a day
     assert payload["passed"] is all(g["passed"] for g in rows)
 
 

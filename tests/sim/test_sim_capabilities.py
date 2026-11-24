@@ -57,7 +57,9 @@ def test_a_stepped_version_without_its_mark_fails():
     ],
 )
 def test_a_badly_made_mark_is_said_by_name(change, words):
-    log = (*cap.LOG, replace(cap.LOG[-1], **({"id": "new"} | change)))
+    # A copy of the last mark that steps no version, so it holds none twice.
+    unstepped = {"id": "new", "replay_version": None, "screen_version": None, "tune_version": None}
+    log = (*cap.LOG, replace(cap.LOG[-1], **(unstepped | change)))
     got = cap.problems(log)
     if words:
         assert any(words in g for g in got), got
@@ -75,10 +77,15 @@ def test_the_capability_a_run_was_played_on():
     for nothing in (None, 0, True, "21", 2.5):
         assert cap.at(nothing) is None
     assert cap.current().replay_version == cli.REPLAY_VERSION
-    assert cap.latest() is cap.LOG[-1] and cap.latest().pr == 490
-    # a mark that took a live change in closes it
+    assert cap.latest() is cap.LOG[-1] and cap.latest().id == "replay-22"
+    # a mark that took a live change in closes it: the take-in closes the odds calibration's
+    # three (#485, #486, #487); #488 was display and the scorecard, nothing to take in
     assert cap.taken_in("#424").id == "replay-20"
-    assert cap.taken_in("#485") is None
+    for issue in ("#485", "#486", "#487"):
+        assert cap.taken_in(issue).id == "replay-22"
+    assert cap.taken_in("#488") is None
+    took = cap.at(22).payload()
+    assert took["kind"] == "engine" and took["screen_version"] == 7
     p = cap.at(20).payload()
     assert p["takes_in"] == ["#424"] and p["screen_version"] == 6 and p["kind"] == "engine"
 

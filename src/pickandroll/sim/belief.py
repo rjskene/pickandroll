@@ -103,6 +103,11 @@ class CausalBelief:
         self._day: date | None = None
         self._cached: dict[int, dict[str, float]] = {}
 
+    @property
+    def projected(self) -> frozenset[int]:
+        """The players the projection starts from (the league's players it projects)."""
+        return frozenset(self._prior)
+
     def games_before(self, player: int, day: date) -> int:
         return bisect_left(self._dates.get(player, []), day)
 

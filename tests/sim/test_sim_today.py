@@ -1009,8 +1009,8 @@ def test_the_version_says_the_rule():
     """``replay_version`` 21 says the rule; no screen version moves: a screen that names no
     lineup rule records the world it did before."""
     why = ss.REPLAY_VERSION_WHY
-    assert ss.REPLAY_VERSION == 21
-    assert why.startswith("21: a league whose free-agent adds play the same day: ")
-    mine = why.split("20: the union pool")[0]
+    assert ss.REPLAY_VERSION >= 21
+    assert "21: a league whose free-agent adds play the same day: " in why
+    mine = why.split("21: a league whose free-agent adds")[1].split("20: the union pool")[0]
     for said in ("lineup_from", "lands_same_day", "free_agents_same_day", "version 20's"):
         assert said in mine, said

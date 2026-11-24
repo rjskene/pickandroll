@@ -26,9 +26,12 @@ from tests.sim.test_gamelogs import entry
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "season"
 NINE = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
-#: The twelve knobs the tests' arms start from. The plan floors sit at 0, where a plan whose gap
-#: over its set is a float's noise is taken or not with the process's hash seed: the usual leagues
-#: here draw no plan, so it never shows, but a test that reads a plan floor sets it away from 0.
+#: The knobs the tests' arms start from. The plan floors sit at 0, where a plan whose gap over its
+#: set is a float's noise is taken or not with the process's hash seed: the usual leagues here
+#: draw no plan, so it never shows, but a test that reads a plan floor sets it away from 0. The
+#: take-in's five (#172, PR take-in) sit at the rule before it (``policy.TAKEIN_OFF``): the
+#: field's later weeks uncapped, no blend and no spread, so every test written before it plays
+#: as it did; a test of the take-in names what it turns on.
 KNOBS: dict[str, Any] = {
     "system": "bbm",
     "blend": None,
@@ -42,6 +45,11 @@ KNOBS: dict[str, Any] = {
     "three_weight": 0.33,
     "season_weight": 0.0,
     "playoff_weight": 1.0,
+    "later_weeks": "uncapped",
+    "rate_shrink": 0.0,
+    "rate_shrink_games": 4.0,
+    "rate_cv": 0.0,
+    "miss_rate": 0.0,
 }
 NBA = ("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")
 POSITIONS = (("PG",), ("SG",), ("SF",), ("PF",), ("C",), ("PG", "SG"), ("SF", "PF"), ("PF", "C"))

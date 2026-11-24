@@ -13,7 +13,7 @@ from typing import Any
 
 from . import policy
 from .engine import mv
-from .run import World
+from .run import World, rostered_of
 from .state import Setup, SimState, initial
 
 #: Why a sampled day is left out of gate 5's input.
@@ -54,8 +54,11 @@ def surrogate_records(
         beliefs = w.beliefs_on(day)
         status, returns = w.status_on(day)
         state = SimState(day, base.rosters, base.pool, {})
+        # The day's belief blended toward recent form when the knobs blend (PR take-in).
+        blend = policy.blend_of(knobs)
+        blended = None if blend is None else w.blended_on(day, None, rostered_of(base), *blend)
         built = policy.problem_of(
-            setup, state, team, knobs, beliefs, status, returns, fields.weeks_ahead
+            setup, state, team, knobs, beliefs, status, returns, fields.weeks_ahead, blended
         )
         if built is None:
             out.append({**record, "left_out": NO_PROBLEM})

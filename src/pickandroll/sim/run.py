@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import multiprocessing
 import os
+from bisect import bisect_left
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
@@ -41,7 +42,7 @@ from . import league as lg
 from . import opponents as op
 from . import stake as stk
 from .belief import CausalBelief, newcomer_prior
-from .engine import EACH_CATEGORY, FPTS, ONE_WIN, Week, mv, wk
+from .engine import EACH_CATEGORY, FPTS, ONE_WIN, Week, mv, rc, wk
 from .fit import W_DEFAULT
 from .forecast import MIN_GAMES, realized_rates
 from .state import (
@@ -342,7 +343,11 @@ class World:
     that is; a world may hold a belief for other forecasters too (``others``, by label),
     which a seat names (``opponents.Seat.forecaster``; #172, PR D1). ``split`` maps a split
     label (a ``yahoo`` or ``blend`` seat's) to its rostered side's label: such a seat reads that
-    label's belief for every rostered player and its own for the rest (:meth:`seat_beliefs`)."""
+    label's belief for every rostered player and its own for the rest (:meth:`seat_beliefs`).
+    ``seconds`` maps a split label to its second stand-in's label and, under ``blend``, its share
+    (None under ``yahoo``): the blend toward recent form reads which available players the second
+    projects, and a ``blend`` seat's the second's own belief (:meth:`blended_on`, #172, PR
+    take-in)."""
 
     def __init__(
         self,
@@ -358,6 +363,7 @@ class World:
         label: str | None = None,
         others: Mapping[str, CausalBelief] | None = None,
         split: Mapping[str, str] | None = None,
+        seconds: Mapping[str, tuple[str, float | None]] | None = None,
     ) -> None:
         self.setup = setup
         self.seed, self.path = seed, path
@@ -374,11 +380,21 @@ class World:
             for held in (name, rostered):
                 if held != label and held not in self.others:
                     raise ValueError(f"forecaster {held!r}: the world holds no belief for it")
+        self.seconds = dict(seconds or {})
+        for name, (second, _) in self.seconds.items():
+            if name not in self.split:
+                raise ValueError(f"forecaster {name!r}: a second stand-in for a label not split")
+            if second != label and second not in self.others:
+                raise ValueError(f"forecaster {second!r}: the world holds no belief for it")
         self.news_sd = float(news_sd)
         self._avail: dict[int, np.ndarray] = {}
         self._absences: dict[int, list[world.Absence]] = {}
         self._lines: dict[tuple[int, date], Mapping[str, float] | None] = {}
         self._status: dict[date, tuple[dict[int, str | None], dict[int, date]]] = {}
+        # The recent lines and the blended tables of the last day read (PR take-in).
+        self._recent: tuple[date, dict[int, dict[int, rc.Recent]]] | None = None
+        self._blend_day: date | None = None
+        self._blends: dict[tuple[Any, ...], Mapping[int, Rates]] = {}
 
     def available(self, player: int) -> np.ndarray:
         if player not in self._avail:
@@ -437,6 +453,108 @@ class World:
     def own(self, label: str | None) -> str | None:
         """``label`` as a seat holds it: None when it is the run's forecaster's."""
         return None if label is None or label == self.label else label
+
+    def recent_on(self, day: date) -> dict[int, dict[int, rc.Recent]]:
+        """The recent lines the blend toward recent form reads on ``day`` (#172, PR take-in), as
+        live reads its 7- and 14-day exports (``recent.WINDOWS``): for each window, each player
+        who played in its days before ``day`` (``day`` less the window's days, up to the day
+        before), with his games there and his per-game line over them, every stat of
+        ``weekly.STATS`` alike. Only lines the seats have seen are read: the games played before
+        the day, and no other. A window is always fresh: live's export may be up to three days
+        old. The last day read is kept."""
+        if self._recent is not None and self._recent[0] == day:
+            return self._recent[1]
+        widest = max(rc.WINDOWS)
+        out: dict[int, dict[int, rc.Recent]] = {n: {} for n in rc.WINDOWS}
+        for k, days in self.game_days.items():
+            lo, hi = bisect_left(days, day - timedelta(widest)), bisect_left(days, day)
+            if lo >= hi:
+                continue
+            played = [(d, ln) for d in days[lo:hi] if (ln := self.line(k, d)) is not None]
+            for n in rc.WINDOWS:
+                start = day - timedelta(n)
+                games = [ln for d, ln in played if d >= start]
+                if games:
+                    g = len(games)
+                    out[n][k] = (
+                        float(g),
+                        {st: sum(float(x.get(st, 0.0)) for x in games) / g for st in wk.STATS},
+                    )
+        self._recent = (day, out)
+        return out
+
+    def blended_on(
+        self,
+        day: date,
+        label: str | None,
+        rostered: frozenset[int],
+        shrink: float,
+        half: float,
+    ) -> Mapping[int, Rates]:
+        """What a seat holding ``label`` believes on ``day`` blended toward recent form at
+        ``shrink`` and ``half`` (#172, PR take-in; ``policy.blended`` on :meth:`recent_on`), as
+        live blends Basketball Monster's line and never Yahoo's (#486): a plain label's every
+        player. A split label's (:attr:`split`) every rostered player on its rostered side's
+        blended belief, and each available player on its own belief blended, but for those its
+        second stand-in projects (:attr:`seconds`): under ``yahoo`` such a player keeps the
+        second's line as the seat reads it, and under ``blend`` one both stand-ins project reads
+        ``(1 - share) x`` the first's blended line ``+ share x`` the second's own belief, stat by
+        stat, one only the second projects the seat's line as read. :meth:`seat_beliefs` itself
+        at ``shrink`` 0. The last day's tables are kept."""
+        if shrink <= 0:
+            return self.seat_beliefs(day, label, rostered)
+        if label == self.label:
+            label = None
+        if self._blend_day != day:
+            self._blend_day, self._blends = day, {}
+        windows = self.recent_on(day)
+
+        def one(lb: str | None) -> Mapping[int, Rates]:
+            key = ("plain", lb, shrink, half)
+            if key not in self._blends:
+                self._blends[key] = policy.blended(self.beliefs_on(day, lb), windows, shrink, half)
+            return self._blends[key]
+
+        if label is None or label not in self.split:
+            return one(label)
+        key = ("split", label, rostered, shrink, half)
+        if key in self._blends:
+            return self._blends[key]
+        if label not in self.seconds:
+            raise ValueError(
+                f"forecaster {label!r}: a split label's blend needs its second stand-in "
+                "(World.seconds)"
+            )
+        second, share = self.seconds[label]
+        first = self.split[label]
+        first_blended = one(first)
+        system, system_blended = self.beliefs_on(day, label), one(label)
+        theirs = self.beliefs_on(day, second) if share is not None else {}
+        projected = self._projected(second)
+        both = projected & self._projected(first)
+        # Every player of the seat's own table, in its order: a rostered one is replaced by his
+        # rostered side's blended belief below (:func:`split_beliefs`), as the table it blends is.
+        available: dict[int, Rates] = {}
+        for k, v in system.items():
+            if k in rostered:
+                available[k] = v
+            elif k not in projected:
+                available[k] = system_blended[k]
+            elif share is None or k not in both or k not in first_blended or k not in theirs:
+                available[k] = v
+            else:
+                b, y = first_blended[k], theirs[k]
+                available[k] = {
+                    st: (1 - share) * float(b.get(st, 0.0)) + share * float(y.get(st, 0.0))
+                    for st in dict.fromkeys([*b, *y])
+                }
+        self._blends[key] = split_beliefs(available, first_blended, rostered)
+        return self._blends[key]
+
+    def _projected(self, label: str | None) -> frozenset[int]:
+        """The players forecaster ``label`` projects (its causal belief's priors)."""
+        belief = self.causal if label is None or label == self.label else self.others[label]
+        return belief.projected
 
     def status_on(self, day: date) -> tuple[dict[int, str | None], dict[int, date]]:
         """What the policy has heard by ``day``: ``O`` with the return date it was told for an
@@ -504,6 +622,7 @@ def replay_world(
     forecasts: Mapping[str, Mapping[int, Rates]] | None = None,
     split: Mapping[str, str] | None = None,
     weights_of: Mapping[str, Mapping[str, float]] | None = None,
+    seconds: Mapping[str, tuple[str, float | None]] | None = None,
 ) -> World:
     """A replay's world: the recorded lines are the truth of every game, a game day without a
     line an absence. The seats' belief is causal: the setup's projection updated with the games
@@ -513,8 +632,8 @@ def replay_world(
     projections by label, each believed the same way with its own newcomer's prior (the mean of
     its own projected players left undrafted), for the seats that name them (#172, PR D1), at
     its own weights in ``weights_of`` (by label; ``weights`` for a label it does not name; PR
-    D2). ``split`` maps each split label among them to its rostered side's label
-    (:class:`World`)."""
+    D2). ``split`` maps each split label among them to its rostered side's label, and
+    ``seconds`` to its second stand-in's label and share (:class:`World`; PR take-in)."""
     game_days = game_days_of(setup)
     w = {s: float((weights or {}).get(s, W_DEFAULT)) for s in wk.STATS}
 
@@ -551,6 +670,7 @@ def replay_world(
         label=label,
         others=others,
         split=split,
+        seconds=seconds,
     )
 
 
@@ -789,6 +909,21 @@ class _Tables:
             if label not in w.split
         }
         self._mixed: dict[tuple[str, frozenset[int]], tuple[dict[int, Rates], Any]] = {}
+        self._blended: dict[tuple[Any, ...], tuple[Mapping[int, Rates], Mapping[int, float]]] = {}
+
+    def blended(
+        self, label: str | None, state: SimState, blend: tuple[float, float]
+    ) -> tuple[Mapping[int, Rates], Mapping[int, float]]:
+        """The beliefs and values a seat holding ``label`` (None: the run's forecaster's) reads
+        on ``state``'s rosters blended toward recent form at ``blend`` (``policy.blend_of``;
+        ``World.blended_on``; #172, PR take-in): once for the day, a split label's once for each
+        set of rostered players."""
+        rostered = rostered_of(state)
+        key = (label, rostered if label in self.w.split else None, blend)
+        if key not in self._blended:
+            table = self.w.blended_on(self.day, label, rostered, *blend)
+            self._blended[key] = (table, wk.per_game_values(table, self.cats, self.points))
+        return self._blended[key]
 
     def of(self, label: str, state: SimState) -> tuple[Mapping[int, Rates], Mapping[int, float]]:
         """The beliefs and values a seat holding ``label`` reads on ``state``'s rosters."""
@@ -800,6 +935,32 @@ class _Tables:
             table = split_beliefs(self.held[label], first, key[1])
             self._mixed[key] = (table, wk.per_game_values(table, self.cats, self.points))
         return self._mixed[key]
+
+
+def blend_of(strat: Any) -> tuple[float, float] | None:
+    """The recent-form blend a team's strategy reads (#172, PR take-in): an arm's seat's or its
+    mirror rival's, on its knobs (``policy.blend_of``); None for a market or a static rival,
+    which holds no knob and believes the run's forecaster as read, and for a seat at
+    ``rate_shrink`` 0."""
+    if not isinstance(strat, op.Seat | op.Mirror):
+        return None
+    return policy.blend_of(strat.knobs)
+
+
+def _blends(
+    tables: _Tables,
+    variant: Mapping[int, op.Strategy],
+    holds: Mapping[int, str],
+    state: SimState,
+) -> dict[int, tuple[Mapping[int, Rates], Mapping[int, float]]]:
+    """Each team of ``variant`` whose strategy blends (:func:`blend_of`), with its blended
+    beliefs and values on ``state``'s rosters."""
+    out = {}
+    for t, strat in variant.items():
+        blend = blend_of(strat)
+        if blend is not None:
+            out[t] = tables.blended(holds.get(t), state, blend)
+    return out
 
 
 def queue_named(variants: Sequence[Mapping[int, op.Strategy]]) -> bool:
@@ -995,6 +1156,9 @@ def simulate(
             for h, s in zip(holds, states, strict=True)
         ]
         values = [{t: tv[1] for t, tv in seat.items()} for seat in seats]
+        # The blend toward recent form (PR take-in): each seat and mirror rival whose knobs blend
+        # decides, and sets its lineup, on its table blended; every other on its table as read.
+        blends = [_blends(tables, variants[vi], holds[vi], s) for vi, s in enumerate(states)]
         cache: dict[tuple[Any, ...], policy.Decision] = {}
         lineups: list[dict[int, dict[int, str]]] = []
         for vi, state in enumerate(states):
@@ -1012,7 +1176,8 @@ def simulate(
                 else:
                     g = w.market_rng(team, di)
                     mine = seats[vi][team][0] if team in seats[vi] else beliefs
-                    decision = strat.decide(setup, state, team, mine, status, returns, g)
+                    more = {"blended": blends[vi][team][0]} if team in blends[vi] else {}
+                    decision = strat.decide(setup, state, team, mine, status, returns, g, **more)
                     cache[key] = decision
                     solves[vi] += decision.solves
                 decided[team] = decision
@@ -1067,9 +1232,17 @@ def simulate(
                 if stash:
                     tallies[vi].left(decided_state, state)
                 values[vi] = {t: tables.of(label, state)[1] for t, label in holds[vi].items()}
+                blends[vi] = _blends(tables, variants[vi], holds[vi], state)
             states[vi] = state
             lineup = {
-                t: policy.starters_of(setup, state, t, day, status, values[vi].get(t, value))
+                t: policy.starters_of(
+                    setup,
+                    state,
+                    t,
+                    day,
+                    status,
+                    blends[vi][t][1] if t in blends[vi] else values[vi].get(t, value),
+                )
                 for t in setup.teams
             }
             lineups.append(lineup)
@@ -1218,6 +1391,7 @@ def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | No
     )
     if w.own(arm.forecaster) in w.split:
         beliefs = w.seat_beliefs(day, w.own(arm.forecaster), rostered_of(state))
+    blend = policy.blend_of(arm.knobs)
     built = policy.problem_of(
         setup,
         replace(state, day=day),
@@ -1227,6 +1401,9 @@ def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | No
         status,
         returns,
         arm.fields.weeks_ahead,
+        None
+        if blend is None
+        else w.blended_on(day, w.own(arm.forecaster), rostered_of(state), *blend),
     )
     if built is None:
         return None

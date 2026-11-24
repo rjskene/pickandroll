@@ -13,14 +13,15 @@ import hashlib
 import io
 import json
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import pytest
 
+from pickandroll.sim import checks, policy, shapes
 from pickandroll.sim import cli as ss
 from pickandroll.sim import forecast as fc
 from pickandroll.sim import league as lg
-from pickandroll.sim import policy, shapes
 from pickandroll.sim import run as rn
 from pickandroll.sim import validate as vg
 from pickandroll.sim.engine import EACH_CATEGORY, ONE_WIN, mv, st, wk
@@ -486,10 +487,19 @@ def test_rule_2_a_run_under_every_category_plays_as_the_commit_before(formats):
 
 # --------------------------------------------------------------------------- validate
 #: Gate 5's answers under the default on this folder (seed 1, lag 1, path 0), by seat: the two
-#: tiers, both weighing the matchup's odds, differ on one day for one seat (14 of 15; each set
-#: holds four moves). Under every category they are ``WIRE_MATCHES``, gate 5's answers before the
-#: format PR (13 of 15; ``test_season_sim_script``'s gate 5 tests name that format).
+#: tiers, both weighing the matchup's odds with live's odds calibration on (the default knobs
+#: since PR take-in), differ on two days for seat 1 (the exact tier's set holds three moves, the
+#: surrogate's four) and on its fifth for seat 6 (four moves each). Under every category they are
+#: ``WIRE_MATCHES`` (``test_season_sim_script``'s gate 5 tests name that format). With every
+#: change of the take-in off they are :data:`ONE_WIN_BEFORE`.
 ONE_WIN_MATCHES = {
+    1: [True, False, False, True, True],
+    6: [True, True, True, True, False],
+    12: [True, True, True, True, True],
+}
+#: The answers before PR take-in, which every change of it off still gives: one day differs, seat
+#: 6's fifth.
+ONE_WIN_BEFORE = {
     1: [True, True, True, True, True],
     6: [True, True, True, True, False],
     12: [True, True, True, True, True],
@@ -530,6 +540,17 @@ def test_validate_plays_gate_five_in_the_format_named(wire: Path):  # noqa: F811
     assert moved > 0  # days where the two tiers agree on a set that holds a move
     assert p["surrogate_gate"]["rule"] == ss.GATE_RULE
     assert "under the nine categories, no held slot, one win per matchup" in out
+    # Every change of the take-in off: the version before's answers on the day that moved.
+    r = ss.read_season(wire, 2024, [fc.parse_one("prior")], None, {}, 1, ss.GATE_SHAPE)
+    projection = ss.projection_of(fc.parse_one("prior"), r.fixed, r.lines, 1, 0, "stat")
+    setup = ss.replay_setup_of(2024, r.lines, r.members, r.scheduled, projection)
+    w = rn.replay_world(
+        setup, r.lines, 1, 1, 0, r.weights["prior"], label="prior", weights_of=r.weights
+    )
+    day = date.fromisoformat(p["surrogate_gate"]["days"][1])
+    off = policy.check_knobs({**policy.KNOB_DEFAULTS, **policy.TAKEIN_OFF})
+    for seat, matches in ONE_WIN_BEFORE.items():
+        assert checks.surrogate_matches(setup, w, seat, [day], off) == [matches[1]]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         assert ss.main([*base, "--h2h", "roto", "--dry-run"]) == 2
