@@ -40,7 +40,10 @@ from . import policy
 from . import run as rn
 from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 
-#: The screen's version in its record: 7 since PR take-in (the rows of the live engine's odds
+#: The screen's version in its record: 8 since PR dynamic knobs (the split levers, played only
+#: when named: every lever of a knob that takes an override, on each axis, each of its nudges in
+#: each situation alone, :data:`SPLITS`; a row may carry its ``override``, and the record the
+#: baseline's knobs as played), 7 since PR take-in (the rows of the live engine's odds
 #: calibration, each on the surrogate tier: ``later_weeks`` to its other rule; ``rate_shrink``,
 #: ``rate_cv`` and ``miss_rate`` each to 0 and to half and one and a half times the baseline's;
 #: ``rate_shrink_games`` to half and one and a half times; the spread off, ``rate_cv`` and
@@ -59,7 +62,7 @@ from .engine import BLEND, EACH_CATEGORY, FLOOR_STEP, PLAN_CAP, PLAN_DEFAULT, sg
 #: construction between two arms, ``counts.APART_BY_CONSTRUCTION``), 2 since the stash
 #: threshold's lever (PR G: two rows more), 1 the list of PR H1. A change to the list, to a
 #: nudge or to a rule below is a new version, and a folder started under another is refused.
-SCREEN_VERSION = 7
+SCREEN_VERSION = 8
 #: What the Monday step multiplies a plan floor by (``season.hillclimb``'s plan rule, where the
 #: figure is written in the rule itself): the step up of the knob's own grid; the step down
 #: divides by it.
@@ -204,6 +207,9 @@ class Lever:
     make: Make
     both: str = ""
     key: str = ""
+    #: Whether the lever has split levers (PR dynamic knobs, :data:`SPLITS`): False for a row
+    #: whose nudge moves several knobs at once, which no one override can hold.
+    split: bool = True
 
 
 def _figure(x: float) -> float:
@@ -635,6 +641,7 @@ LEVERS: tuple[Lever, ...] = (
         "the spread off: rate_cv and miss_rate both to 0",
         _plain(_off(NOISE_OFF, "the spread off: rate_cv and miss_rate both to 0")),
         key="noise",
+        split=False,
     ),
     Lever(
         "later_weeks",
@@ -642,15 +649,77 @@ LEVERS: tuple[Lever, ...] = (
         "all off: uncapped, and rate_shrink, rate_cv and miss_rate to 0",
         _plain(_off(ALL_OFF, "all off: uncapped, and rate_shrink, rate_cv and miss_rate to 0")),
         key="all",
+        split=False,
     ),
 )
 #: The levers' names, in the list's order (a lever on the list twice named once).
 NAMES: tuple[str, ...] = tuple(dict.fromkeys(lever.name for lever in LEVERS))
 
+#: The split levers (#172, PR dynamic knobs), by one rule written before any result: every lever
+#: of the list whose name is a knob that takes an override (``policy.OVERRIDABLE``: every knob
+#: but ``system`` and ``blend``) and whose nudge moves that knob alone has a split lever on each
+#: axis (``policy.AXES``), named ``knob@axis``. Its rows are each of the lever's own nudges in
+#: each situation of the axis alone: arm A is the lever's own arm A, and arm B is A with the
+#: knob's override in that situation (``knob@axis.situation``) at the nudge's value, the nudge
+#: taken from the knob's value in force in A there. Its pairs are keyed
+#: ``knob@axis.situation-tag``. A split lever is played only when ``--levers`` names it, so a
+#: screen that names none plays the list as before; a split row that an override's refusal
+#: meets (``policy.check_overrides``, ``policy.season_of``) is listed as not played, with the
+#: refusal's words.
+SPLITS: tuple[tuple[Lever, str], ...] = tuple(
+    (lever, axis)
+    for lever in LEVERS
+    if lever.split and lever.name in policy.OVERRIDABLE
+    for axis in policy.AXES
+)
+#: The split levers' names, in their order.
+SPLIT_NAMES: tuple[str, ...] = tuple(dict.fromkeys(f"{lv.name}@{axis}" for lv, axis in SPLITS))
+#: What a split row's words say before its values.
+SPLIT_WORDS = "{words}, in the {where} alone"
+
+
+def split_of(name: str) -> tuple[str, str, str | None] | None:
+    """A split lever's name read: ``knob@axis`` (every situation) or an override's name
+    ``knob@axis.situation`` (one), as the knob, the axis and the situation or None; None when
+    ``name`` is neither (:data:`SPLIT_NAMES`)."""
+    if not policy.is_override(name):
+        return None
+    base, _, rest = name.partition("@")
+    axis, _, where = rest.partition(".")
+    if f"{base}@{axis}" not in SPLIT_NAMES:
+        return None
+    if not where:
+        return base, axis, None
+    if where not in policy.SITUATIONS[axis]:
+        return None
+    return base, axis, where
+
+
+def split_order(names: Sequence[str]) -> list[str]:
+    """The split levers' names among ``names`` (PR dynamic knobs) in one order whatever the
+    order typed, each once: the split levers' (:data:`SPLIT_NAMES`), and within one the whole
+    ``knob@axis`` before its single situations, in the axis's order. A screen's spec keeps
+    them so, as it keeps the list's levers in the list's order. A name that is no split lever
+    is left out."""
+
+    def place(name: str) -> tuple[int, int]:
+        knob, axis, where = split_of(name) or ("", "", None)
+        at = -1 if where is None else policy.SITUATIONS[axis].index(where)
+        return SPLIT_NAMES.index(f"{knob}@{axis}"), at
+
+    return sorted({n for n in names if split_of(n) is not None}, key=place)
+
+
+def known(name: str) -> bool:
+    """Whether ``name`` is one a screen's ``--levers`` takes: a lever of the list, a split lever
+    (``knob@axis``) or one situation of it (``knob@axis.situation``)."""
+    return name in NAMES or split_of(name) is not None
+
 
 # --------------------------------------------------------------------------- a lever's pair
 def applied(spec: Mapping[str, Any], change: Mapping[str, Any]) -> dict[str, Any]:
-    """``spec`` with ``change``: a knob's value under ``knobs``, a key of the ``bid`` block by
+    """``spec`` with ``change``: a knob's value under ``knobs`` (an override's by its name too,
+    PR dynamic knobs), a key of the ``bid`` block by
     its dotted name (``bid.week``, ``bid.pace.k``, PR F2) inside that block, any other name a
     spec key's. The result is a spec the arm parser takes where ``spec`` was one (PR E): one
     that executes ``queue`` leaves the two plan switches out (the queue's rule draws and
@@ -659,7 +728,7 @@ def applied(spec: Mapping[str, Any], change: Mapping[str, Any]) -> dict[str, Any
     out = dict(spec)
     knobs = dict(spec.get("knobs") or {})
     for name, value in change.items():
-        if name in policy.KNOBS:
+        if name in policy.KNOBS or policy.is_override(name):
             knobs[name] = value
         elif name.startswith(BID):
             *path, last = name[len(BID) :].split(".")
@@ -681,9 +750,10 @@ def applied(spec: Mapping[str, Any], change: Mapping[str, Any]) -> dict[str, Any
 
 
 def value_of(arm: rn.Arm, name: str) -> Any:
-    """What ``arm`` holds under ``name``: a knob's value, a field's, a key of its bid policy in
-    force by its dotted name (the default member's where the arm names no ``bid``; None for a
-    figure of a pace it does not name), or a spec key's."""
+    """What ``arm`` holds under ``name``: a knob's value, a knob's value in force in a situation
+    by an override's name (its override there, else its base; PR dynamic knobs), a field's, a
+    key of its bid policy in force by its dotted name (the default member's where the arm names
+    no ``bid``; None for a figure of a pace it does not name), or a spec key's."""
     if name.startswith(BID):
         at: Any = (arm.bid or bp.DEFAULT).payload()
         for key in name[len(BID) :].split("."):
@@ -691,6 +761,10 @@ def value_of(arm: rn.Arm, name: str) -> Any:
         return at
     if name in policy.KNOBS:
         return policy.knob(arm.knobs, name)
+    if policy.is_override(name):
+        # An override's name (PR dynamic knobs): the knob's value in force in that situation.
+        base, axis, where = policy.parse_override(name)
+        return policy.in_force(arm.knobs, policy.Situation(**{axis: where}))[base]
     if name in policy.FIELDS:
         value = getattr(arm.fields, name)
         return list(value) if isinstance(value, tuple) else value
@@ -725,6 +799,8 @@ def read_why(name: str, arm: rn.Arm, shapes: Sequence[policy.Shape]) -> str | No
         whys = [policy.bid_reads(arm, shape, mirror) for shape in shapes]
     elif name in policy.KNOBS:
         whys = [policy.reads(arm, shape, mirror)[name] for shape in shapes]
+    elif policy.is_override(name):
+        whys = [policy.reads(arm, shape, mirror, (name,))[name] for shape in shapes]
     elif name in policy.FIELDS:
         whys = [policy.field_reads(arm, mirror)[name]]
     elif name in policy.SEASON_FIELDS:
@@ -763,6 +839,9 @@ class Row:
     b: Mapping[str, Any] | None = None
     values: Mapping[str, Any] | None = None
     scale: bool = False
+    #: A split row's override (PR dynamic knobs): ``knob@axis.situation``; None on the list's
+    #: own rows, whose record is as before.
+    override: str | None = None
 
     def payload(self) -> dict[str, Any]:
         """The row as the record keeps it (the arms' specs are in the pair's own record)."""
@@ -776,6 +855,7 @@ class Row:
             "status": self.status,
             "why": self.why,
             "note": self.note,
+            **({} if self.override is None else {"override": self.override}),
         }
 
 
@@ -849,10 +929,103 @@ def _lever_rows(
 
 def unlisted(name: str) -> str:
     """Why ``name`` is not a lever to screen: a spec key that is no lever of a season with its
-    reason (:data:`NOT_LEVERS`), else a name the list does not hold."""
+    reason (:data:`NOT_LEVERS`), a split lever's name that holds no split lever (PR dynamic
+    knobs), else a name the list does not hold."""
     if name in NOT_LEVERS:
         return f"lever {name!r} is not a lever of a season: {NOT_LEVERS[name]}"
+    if policy.is_override(name):
+        return (
+            f"lever {name!r} is no split lever: knob@axis or knob@axis.situation, the knob a "
+            f"lever of the list that takes an override; the split levers are {SPLIT_NAMES}"
+        )
     return f"lever {name!r} is not in the screen's list: one of {NAMES}"
+
+
+def _based(spec: Mapping[str, Any], name: str, value: Any) -> dict[str, Any]:
+    """``spec`` with knob ``name``'s base at ``value`` and none of its overrides: the arm a
+    lever's nudges are taken from where the knob's value in force in a situation is an
+    override's (PR dynamic knobs)."""
+    knobs = {
+        k: v
+        for k, v in (spec.get("knobs") or {}).items()
+        if not (policy.is_override(k) and k.partition("@")[0] == name)
+    }
+    return {**spec, "knobs": {**knobs, name: value}}
+
+
+def _split_rows(
+    lever: Lever,
+    axis: str,
+    wheres: Sequence[str],
+    spec: Mapping[str, Any],
+    shapes: Sequence[policy.Shape],
+    ctx: Context,
+) -> list[Row]:
+    """A split lever's rows (:data:`SPLITS`, PR dynamic knobs): ``lever``'s own nudges in each of
+    ``wheres``, situations of ``axis``, alone."""
+    plain = rn.arm_of(spec)
+    tiered = applied(spec, {"tier": lever.tier})
+    sets, _ = lever.make(rn.arm_of(tiered), ctx)
+    a_spec = applied(tiered, sets)
+    a = rn.arm_of(a_spec)
+    both = {k: value_of(a, k) for k in ("tier", *sets) if value_of(a, k) != value_of(plain, k)}
+    name = f"{lever.name}@{axis}"
+    stem = f"{lever.key or lever.name}@{axis}"
+
+    def row(key: str, nudge: str, status: str, **more: Any) -> Row:
+        return Row(name, key, nudge, lever.tier, status, **{"both": both, **more})
+
+    why = read_why(lever.name, a, shapes)
+    if why is not None:
+        return [row(stem, f"{lever.nudge}, in each situation of {axis} alone", NOT_READ, why=why)]
+    out = []
+    for where in wheres:
+        over = policy.override_name(lever.name, axis, where)
+        at = value_of(a, over)
+        # The nudges from the knob's value in force in A there: A's own steps where A holds its
+        # base, else those of an arm whose base is the value in force.
+        here = a_spec if at == value_of(a, lever.name) else _based(a_spec, lever.name, at)
+        try:
+            _, steps = lever.make(rn.arm_of(here), ctx)
+        except ValueError as e:
+            steps = (Step("", lever.nudge, unmade=f"refused: {e}"),)
+        unread = read_why(over, a, shapes)
+        for step in steps:
+            key = f"{stem}.{where}-{step.tag}"
+            words = SPLIT_WORDS.format(words=step.words, where=where)
+            kept = {"override": over}
+            if unread is not None:
+                out.append(row(key, words, NOT_READ, why=unread, **kept))
+                continue
+            if step.unmade is not None:
+                tier_only = {k: v for k, v in both.items() if k == "tier"}
+                out.append(
+                    row(
+                        key,
+                        words,
+                        NOT_PLAYED,
+                        why=step.unmade,
+                        scale=step.scale,
+                        **({"both": tier_only} if step.scale else {}),
+                        **kept,
+                    )
+                )
+                continue
+            if set(step.change) != {lever.name}:
+                why = f"its nudge moves {', '.join(sorted(step.change))}: one override holds one"
+                out.append(row(key, words, NOT_PLAYED, why=why, **kept))
+                continue
+            value = step.change[lever.name]
+            b_spec = applied(a_spec, {over: value, "name": f"{a.name}:{key}"})
+            values = {"a": at, "b": value}
+            nudge = f"{lever.name} in the {where}: {shown(at)} to {shown(value)}"
+            try:
+                rn.arm_of(b_spec)
+            except ValueError as e:
+                out.append(row(key, nudge, NOT_PLAYED, why=f"refused: {e}", values=values, **kept))
+                continue
+            out.append(row(key, nudge, PLAY, a=a_spec, b=b_spec, values=values, **kept))
+    return out
 
 
 def rows_of(
@@ -862,15 +1035,26 @@ def rows_of(
     ctx: Context,
 ) -> list[Row]:
     """The screen's rows for the baseline arm ``spec`` and the levers ``names``, in the list's
-    order (whatever order they are named in), on a run whose league shapes are ``shapes``. The
-    baseline is parsed as every arm is (``run.arm_of``: ValueError, KeyError by name); a name
-    not in the list is a KeyError (:func:`unlisted`)."""
-    unknown = [n for n in names if n not in NAMES]
+    order (whatever order they are named in), on a run whose league shapes are ``shapes``; then
+    the split levers' rows (PR dynamic knobs, :data:`SPLITS`) for each split lever named
+    (``knob@axis``, every situation) or each situation of one named (``knob@axis.situation``),
+    in their order. The baseline is parsed as every arm is (``run.arm_of``: ValueError,
+    KeyError by name); a name that is none of these is a KeyError (:func:`unlisted`)."""
+    unknown = [n for n in names if not known(n)]
     if unknown:
         raise KeyError(unlisted(unknown[0]))
-    return [
+    out = [
         r for lever in LEVERS if lever.name in names for r in _lever_rows(lever, spec, shapes, ctx)
     ]
+    split = [x for x in (split_of(n) for n in names) if x is not None]
+    for lever, axis in SPLITS:
+        wanted = {w for k, ax, w in split if k == lever.name and ax == axis}
+        if not wanted:
+            continue
+        every = None in wanted
+        wheres = [w for w in policy.SITUATIONS[axis] if every or w in wanted]
+        out += _split_rows(lever, axis, wheres, spec, shapes, ctx)
+    return out
 
 
 # --------------------------------------------------------------------------- a pair's result
@@ -1114,12 +1298,15 @@ __all__ = [
     "RULE",
     "SCALE_NOTE",
     "SCREEN_VERSION",
+    "SPLITS",
+    "SPLIT_NAMES",
     "Context",
     "Lever",
     "Row",
     "Step",
     "applied",
     "clears",
+    "known",
     "listing",
     "measure_of",
     "read_why",
@@ -1128,6 +1315,8 @@ __all__ = [
     "rows_of",
     "shown",
     "spec_differs",
+    "split_of",
+    "split_order",
     "status_words",
     "table",
     "unlisted",

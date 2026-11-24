@@ -169,6 +169,7 @@ from typing import Any, NamedTuple, Protocol
 
 from . import bid_policy as bp
 from . import bids
+from . import stake as stk
 from .engine import (
     DEFAULTS,
     LIVE_KNOBS,
@@ -189,7 +190,7 @@ from .engine import (
     typical_gain,
     wk,
 )
-from .league import fpts, round_pairs, round_weeks
+from .league import LeagueSpec, fpts, round_pairs, round_weeks
 from .shapes import BOOK, CONTINUOUS, DROPPED
 from .stake import level as week_stake
 from .state import (
@@ -397,6 +398,287 @@ def check_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
         if why is not None:
             raise ValueError(f"knob {name!r} refused: {why}")
     return out
+
+
+# --------------------------------------------------------------------------- dynamic knobs
+#: The axes a knob's value may follow through a season (#172, PR dynamic knobs), each with its
+#: situations in order. ``phase`` reads the league's calendar alone, known before the draft:
+#: the first third of the regular weeks (``opening``), the last third (``run_in``), the weeks
+#: between (``middle``) and the bracket's weeks (``bracket``). ``standing`` reads the seat's
+#: place against the cut line as the stake reads it, from the regular weeks finished before
+#: the running one: ``safe``, ``line`` or ``behind``. A third axis, the budget against the bid
+#: pace, waits (the README says why).
+PHASE, STANDING = "phase", "standing"
+AXES = (PHASE, STANDING)
+OPENING, MIDDLE, RUN_IN, BRACKET = "opening", "middle", "run_in", "bracket"
+SAFE, LINE, BEHIND = "safe", "line", "behind"
+SITUATIONS: Mapping[str, tuple[str, ...]] = {
+    PHASE: (OPENING, MIDDLE, RUN_IN, BRACKET),
+    STANDING: (SAFE, LINE, BEHIND),
+}
+#: The parts ``phase`` cuts the regular weeks into: thirds, ``T = round(R / 3)`` of ``R``
+#: regular weeks each for the opening and the run-in and the rest between, so each situation
+#: governs about as many days and split rows can be set side by side. Fixed before any run.
+PHASE_PARTS = 3
+#: ``standing``'s cut, in swings: with ``z`` the lead over the cut line in units of one week's
+#: spread over the swing the regular weeks after this one can make (``stake.swing``'s scale),
+#: a seat is ``safe`` at ``z`` of this or more, ``behind`` at minus this or less, else on the
+#: ``line``. One whole swing either side: symmetric, and fixed before any run.
+STANDING_CUT = 1.0
+#: The most overrides an arm may name. A cap on a schedule's freedom, set before any run: each
+#: override is one more value to choose, and a search that may set many could fit the seasons
+#: it is judged on.
+MAX_OVERRIDES = 3
+#: The knobs no override names: the seat's forecaster, fixed at setup (the world's tables and a
+#: split seat's mixed table are built once for the run), so switching it mid-season would move
+#: the seat's beliefs, not a choice it makes.
+FIXED_AT_SETUP = ("system", "blend")
+#: The knobs an override may name, in :data:`KNOBS` order.
+OVERRIDABLE = tuple(k for k in KNOBS if k not in FIXED_AT_SETUP)
+#: The overrides refused by name, with why.
+REFUSED_OVERRIDES: Mapping[str, str] = {
+    "playoff_weight@phase.bracket": (
+        "every game left in a bracket week is a bracket game, so the season term there is "
+        "season_weight x playoff_weight, one product: name season_weight@phase.bracket"
+    ),
+}
+
+
+class Situation(NamedTuple):
+    """A seat's situation on a morning, one value an axis (:data:`SITUATIONS`), None where the
+    axis names none: ``phase`` with no bracket read, ``standing`` in a bracket week, with no
+    cut line or with no bracket read."""
+
+    phase: str | None = None
+    standing: str | None = None
+
+
+#: The situation that names nothing: every knob at its base.
+NOWHERE = Situation()
+
+
+def override_name(name: str, axis: str, where: str) -> str:
+    """The name of knob ``name``'s override in situation ``where`` of ``axis``:
+    ``knob@axis.situation``, as an arm's ``knobs`` and a record name it."""
+    return f"{name}@{axis}.{where}"
+
+
+def is_override(name: str) -> bool:
+    """Whether ``name``, a key of an arm's ``knobs``, names an override rather than a knob."""
+    return "@" in name
+
+
+def parse_override(name: str) -> tuple[str, str, str]:
+    """The knob, the axis and the situation an override's name holds; ValueError, by name, when
+    it is no knob's override on an axis's situation (:data:`OVERRIDABLE`, :data:`SITUATIONS`)."""
+    base, _, rest = name.partition("@")
+    axis, _, where = rest.partition(".")
+    if base not in KNOBS:
+        raise ValueError(
+            f"override {name!r}: {base!r} is not a knob; an override is knob@axis.situation"
+        )
+    if base in FIXED_AT_SETUP:
+        raise ValueError(
+            f"override {name!r} refused: {base} is fixed at setup (the seat's forecaster's "
+            "tables are built once for the run), so it takes no override"
+        )
+    if axis not in SITUATIONS:
+        raise ValueError(f"override {name!r}: axis {axis!r} is not one of {', '.join(AXES)}")
+    if where not in SITUATIONS[axis]:
+        raise ValueError(
+            f"override {name!r}: {where!r} is not a situation of {axis}: one of "
+            f"{', '.join(SITUATIONS[axis])}"
+        )
+    return base, axis, where
+
+
+def overrides_of(knobs: Mapping[str, Any]) -> dict[str, Any]:
+    """The overrides ``knobs`` name, by name, in the order given."""
+    return {k: v for k, v in knobs.items() if is_override(k)}
+
+
+def base_of(knobs: Mapping[str, Any]) -> dict[str, Any]:
+    """``knobs`` without their overrides."""
+    return {k: v for k, v in knobs.items() if not is_override(k)}
+
+
+def axes_of(knobs: Mapping[str, Any]) -> frozenset[str]:
+    """The axes the overrides of ``knobs`` follow."""
+    return frozenset(parse_override(k)[1] for k in knobs if is_override(k))
+
+
+def _order(name: str) -> tuple[int, int, int]:
+    base, axis, where = parse_override(name)
+    return KNOBS.index(base), AXES.index(axis), SITUATIONS[axis].index(where)
+
+
+def check_overrides(knobs: Mapping[str, Any], base: Mapping[str, Any]) -> dict[str, Any]:
+    """The overrides ``knobs`` name, checked against the arm's ``base`` knobs (every knob, as
+    :func:`check_knobs` returns them) and in :data:`KNOBS`, axis and situation order. Refused by
+    name (ValueError): a name that is no knob's override on an axis's situation
+    (:func:`parse_override`, ``system`` and ``blend`` among them); one of
+    :data:`REFUSED_OVERRIDES`; more than :data:`MAX_OVERRIDES`; one knob on two axes; every
+    situation of an axis overridden on one knob (its base would never be read); a value the knob
+    itself refuses (:func:`knob_refused`); a value equal to the knob's base, which says
+    nothing."""
+    named = overrides_of(knobs)
+    for name in named:
+        parse_override(name)
+        if name in REFUSED_OVERRIDES:
+            raise ValueError(f"override {name!r} refused: {REFUSED_OVERRIDES[name]}")
+    if len(named) > MAX_OVERRIDES:
+        raise ValueError(
+            f"{len(named)} overrides named: an arm names at most {MAX_OVERRIDES} "
+            "(policy.MAX_OVERRIDES, a cap on a schedule's freedom set before any run)"
+        )
+    by_knob: dict[str, list[tuple[str, str]]] = {}
+    for name in named:
+        k, axis, where = parse_override(name)
+        by_knob.setdefault(k, []).append((axis, where))
+    for k, rows in by_knob.items():
+        axes = sorted({axis for axis, _ in rows}, key=AXES.index)
+        if len(axes) > 1:
+            raise ValueError(
+                f"knob {k!r} is overridden on two axes ({', '.join(axes)}): one axis a knob"
+            )
+        if len(rows) >= len(SITUATIONS[axes[0]]):
+            raise ValueError(
+                f"knob {k!r} is overridden in every situation of {axes[0]}: its base would "
+                "never be read; set the base instead"
+            )
+    for name in sorted(named, key=_order):
+        k = parse_override(name)[0]
+        value = named[name]
+        why = knob_refused(k, value)
+        if why is not None:
+            raise ValueError(f"override {name!r} refused: {why}")
+        if value == base[k]:
+            raise ValueError(
+                f"override {name!r} refused: {value!r} is the base value of {k}, so it says nothing"
+            )
+    return {name: named[name] for name in sorted(named, key=_order)}
+
+
+def check_arm_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
+    """An arm's knobs as given (#172, PR dynamic knobs): every knob as :func:`check_knobs` takes
+    it (the take-in's five at live's default when not named), then its overrides as
+    :func:`check_overrides` takes them. An arm that names no override gets :func:`check_knobs`'s
+    dict itself."""
+    base = check_knobs(base_of(knobs))
+    named = check_overrides(knobs, base)
+    return base | named if named else base
+
+
+def in_force(knobs: Mapping[str, Any], situation: Situation) -> Mapping[str, Any]:
+    """The knobs in force in ``situation``: each knob's override for it where ``knobs`` name one,
+    else its base; no override's name. ``knobs`` themselves when they name no override, so an
+    arm with none reads exactly what it read before overrides were."""
+    named = overrides_of(knobs)
+    if not named:
+        return knobs
+    out = base_of(knobs)
+    for name, value in named.items():
+        k, axis, where = parse_override(name)
+        if getattr(situation, axis) == where:
+            out[k] = value
+    return out
+
+
+def forced(knobs: Mapping[str, Any], situation: Situation) -> tuple[str, ...]:
+    """The names of the overrides of ``knobs`` in force in ``situation``, in the order given."""
+    out = []
+    for name in knobs:
+        if is_override(name):
+            _, axis, where = parse_override(name)
+            if getattr(situation, axis) == where:
+                out.append(name)
+    return tuple(out)
+
+
+def phase_of(spec: LeagueSpec | None, week: int | None) -> str | None:
+    """Week ``week``'s ``phase`` (:data:`SITUATIONS`): ``bracket`` in one of the bracket's weeks;
+    in a regular week, with ``R`` regular weeks and ``T = round(R / 3)``
+    (:data:`PHASE_PARTS`), ``opening`` in the first ``T``, ``run_in`` in the last ``T`` and
+    ``middle`` between. The calendar and the league's spec alone, both known before the draft.
+    None with no spec (the bracket not read) and in a week that is neither."""
+    if spec is None or week is None:
+        return None
+    if week in spec.playoff_weeks:
+        return BRACKET
+    regular = sorted(spec.regular_weeks)
+    if week not in regular:
+        return None
+    i, part = regular.index(week), round(len(regular) / PHASE_PARTS)
+    if i < part:
+        return OPENING
+    if i >= len(regular) - part:
+        return RUN_IN
+    return MIDDLE
+
+
+def standing_of(
+    spec: LeagueSpec | None,
+    totals: Mapping[int, Mapping[int, Mapping[str, float]]],
+    team: int,
+    week: int | None,
+) -> str | None:
+    """``team``'s ``standing`` in regular week ``week`` (:data:`SITUATIONS`), from what the stake
+    reads (``sim/stake.py``): the standings over the regular weeks finished before it
+    (``stake.table_before``: the running week is not read), the team's lead over the cut line
+    (``stake.lead``) in units of one week's spread (over the root of ``stake.variance``), and
+    the swing the regular weeks after this one can make, the root of ``2n + 1`` for ``n`` of
+    them. With ``z`` the one over the other, ``safe`` at ``z >= 1``, ``behind`` at ``z <= -1``
+    (:data:`STANDING_CUT`), else ``line``: with no week finished every lead is 0 and every team
+    on the line. None in a bracket week (the field is set and ``phase`` names it), in a league
+    with no cut line or no spec, and in a week that is no regular week."""
+    if spec is None or week is None or week not in spec.regular_weeks:
+        return None
+    gap = stk.lead(stk.table_before(spec, totals, week), spec, team)
+    if gap is None:
+        return None
+    after = sum(1 for w in spec.regular_weeks if w > week)
+    z = gap / math.sqrt(stk.variance(spec)) / math.sqrt(2 * after + 1)
+    if z >= STANDING_CUT:
+        return SAFE
+    if z <= -STANDING_CUT:
+        return BEHIND
+    return LINE
+
+
+def situation_of(setup: Setup, state: SimState, team: int, week: int | None) -> Situation:
+    """``team``'s situation in week ``week`` (:class:`Situation`): the week's phase, and the
+    team's standing as the runner set it on the week's first morning (``SimState.standing``),
+    else the same function of the state's finished weeks."""
+    spec = setup.spec
+    if spec is None or week is None:
+        return NOWHERE
+    if team in state.standing:
+        standing = state.standing[team]
+    else:
+        standing = standing_of(spec, state.totals, team, week)
+    return Situation(phase_of(spec, week), standing)
+
+
+def knobs_on(
+    knobs: Mapping[str, Any], setup: Setup, state: SimState, team: int, week: int | None
+) -> Mapping[str, Any]:
+    """The knobs ``team``'s strategy holds in force in week ``week`` on ``state``
+    (:func:`in_force` of :func:`situation_of`); ``knobs`` themselves when they name no
+    override, with no situation read."""
+    if not any(is_override(k) for k in knobs):
+        return knobs
+    return in_force(knobs, situation_of(setup, state, team, week))
+
+
+def forced_on(
+    knobs: Mapping[str, Any] | None, setup: Setup, state: SimState, team: int, week: int | None
+) -> tuple[str, ...]:
+    """The names of the overrides in force for ``team`` in week ``week`` on ``state``
+    (:func:`forced`); empty for knobs that name none, or for no knobs (a market or a static
+    rival)."""
+    if not knobs or not any(is_override(k) for k in knobs):
+        return ()
+    return forced(knobs, situation_of(setup, state, team, week))
 
 
 # --------------------------------------------------------------------------- the arm's fields
@@ -1040,13 +1322,27 @@ def stash_of(knobs: Mapping[str, Any]) -> float | None:
     return None if value is None else float(value)
 
 
+def _stash_key(name: str) -> bool:
+    return name == "stash_threshold" or name.startswith("stash_threshold@")
+
+
+def stash_named(knobs: Mapping[str, Any]) -> bool:
+    """Whether ``knobs`` hold a number for the stash threshold: its base, or an override
+    (#172, PR dynamic knobs) in some situation."""
+    return any(v is not None for k, v in knobs.items() if _stash_key(k))
+
+
 def rival_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
     """An arm's knobs as its mirror rivals hold them (PR G): the arm's whole, but for the stash
-    threshold, which is the arm's own seat's and stays None for every rival. A knob the arm does
-    not name stays missing, and is refused where the knobs are checked."""
-    if knobs.get("stash_threshold") is None:
+    threshold, which is the arm's own seat's and stays None for every rival, its overrides
+    dropped with it (PR dynamic knobs). A knob the arm does not name stays missing, and is
+    refused where the knobs are checked."""
+    if not stash_named(knobs):
         return dict(knobs)
-    return {**knobs, "stash_threshold": None}
+    # The base keeps its place in the dict (a rival's repr is its decisions' key).
+    out = {k: v for k, v in knobs.items() if not (is_override(k) and _stash_key(k))}
+    out["stash_threshold"] = None
+    return out
 
 
 def bracket_days(setup: Setup) -> frozenset[date]:
@@ -1402,6 +1698,15 @@ def stake_unread(setup: Setup) -> str:
     return (
         "a stake reads the cut line and the bracket's weeks, and this league's bracket is not "
         f"read ({setup.bracket_unread or 'no spec'}): the bracket is not trusted"
+    )
+
+
+def overrides_unread(setup: Setup) -> str:
+    """Why no seat follows a situation in ``setup``, a league whose bracket is not read (PR
+    dynamic knobs)."""
+    return (
+        "a situation reads the bracket's weeks and the cut line, and this league's bracket is "
+        f"not read ({setup.bracket_unread or 'no spec'}): the bracket is not trusted"
     )
 
 
@@ -2129,6 +2434,11 @@ class Shape:
     standins: bool = False
     waivers: str = "none"
     h2h: str = ONE_WIN
+    #: Whether a league whose bracket is read has a cut line (PR dynamic knobs): a field of at
+    #: least one team and fewer than all of them, so ``standing`` names a situation. True where
+    #: the bracket is not read, which ``bracket`` says (so such a league's shape is as before).
+    #: The label leaves it out.
+    line: bool = True
 
     @property
     def one_win(self) -> bool:
@@ -2150,12 +2460,14 @@ class Shape:
 
 def shape_of(setup: Setup) -> Shape:
     points = setup.scoring == "points" and bool(setup.points)
+    spec = setup.spec
     return Shape(
         "points" if points else "categories",
         any(s in mv.HELD for s in setup.roster_slots),
-        setup.spec is not None,
+        spec is not None,
         waivers=setup.waivers,
         h2h=setup.h2h,
+        line=spec is None or 1 <= spec.playoff_teams < len(setup.teams),
     )
 
 
@@ -2355,12 +2667,25 @@ def _odds(arm: Configured, mirrored: bool) -> bool:
     return arm.tier in ("exact", "surrogate") or mirrored
 
 
-def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, str]:
+def anywhere(knobs: Mapping[str, Any], name: str) -> bool:
+    """Whether knob ``name`` (a number) is above 0 in some situation of ``knobs``: its base or
+    one of its overrides (#172, PR dynamic knobs)."""
+    values = [knob(knobs, name)]
+    values += [v for k, v in overrides_of(knobs).items() if parse_override(k)[0] == name]
+    return any(v is not None and float(v) > 0 for v in values)
+
+
+def reads(
+    arm: Configured, shape: Shape, mirrored: bool = False, names: Iterable[str] = ()
+) -> dict[str, str]:
     """For each knob, :data:`READ` when a different value can change what ``arm``'s seat queues or
     starts in a league of ``shape``, else the reason it cannot. A value that only changes
     what is recorded (a plan drawn and not executed) is not read. ``mirrored``: the arm's rivals
     are its mirror (``opponents.Mirror``), the surrogate on its knobs, so what the surrogate reads
-    is read too."""
+    is read too. Then a row for each override the arm names and each of ``names`` (#172, PR
+    dynamic knobs; :func:`override_reads`): an arm that names none has the knobs' rows alone, as
+    before. A knob that is above 0 only in some situations (``season_weight``,
+    ``rate_shrink``) counts as above 0 for what it opens."""
     odds = _odds(arm, mirrored)
     moves = odds or arm.tier in TIERS
     out: dict[str, str] = {}
@@ -2454,10 +2779,10 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     for name in ("later_weeks", *spr.KNOBS):
         out[name] = out["season_weight"]
     out["rate_shrink"] = READ
-    out["rate_shrink_games"] = READ if float(knob(arm.knobs, "rate_shrink")) > 0 else NO_BLEND
+    out["rate_shrink_games"] = READ if anywhere(arm.knobs, "rate_shrink") else NO_BLEND
     if out["season_weight"] != READ:
         out["playoff_weight"] = out["season_weight"]
-    elif not float(arm.knobs["season_weight"]) > 0:
+    elif not anywhere(arm.knobs, "season_weight"):
         out["playoff_weight"] = "season_weight is 0: there is no season term"
     elif not shape.bracket:
         out["playoff_weight"] = "the league has no bracket read"
@@ -2467,7 +2792,41 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     # game ``playoff_weight`` times, whatever the arm's ``season_weight``.
     if bids and rule is not None and rule.season > 0 and shape.bracket:
         out["playoff_weight"] = READ
-    return {k: out[k] for k in KNOBS}
+    table = {k: out[k] for k in KNOBS}
+    for name in sorted({*overrides_of(arm.knobs), *names}, key=_order):
+        table[name] = override_reads(name, table, shape)
+    return table
+
+
+#: Why an override on ``phase`` is not read in a league whose bracket is not read (PR dynamic
+#: knobs): the regular weeks are not known, so there is nothing to cut.
+NO_PHASE = "the league's bracket is not read, so phase is not cut"
+#: Why an override on ``standing`` is not read in a league with no cut line.
+NO_LINE = "the league has no cut line, so standing names no situation"
+#: Why ``three_weight@phase.bracket`` is never read: the queue's weight of the three weeks is 0
+#: in a bracket week (:func:`queue_weight`).
+BRACKET_THREE = (
+    "a bracket week's queue weighs the week alone (live's rule), so three_weight@phase.bracket "
+    "is never read"
+)
+
+
+def override_reads(name: str, table: Mapping[str, str], shape: Shape) -> str:
+    """An override's row of the reads table (#172, PR dynamic knobs): its knob's own reason
+    where the knob is not read (``table``, the knobs' rows); else :data:`NO_PHASE` or
+    :data:`NO_LINE` where the league cuts no situation on its axis, :data:`BRACKET_THREE` for
+    the one override no week reads, and :data:`READ` otherwise. An override that is not read is
+    allowed, as a knob that is not read is: the table says why."""
+    base, axis, _ = parse_override(name)
+    if table[base] != READ:
+        return table[base]
+    if axis == PHASE and not shape.bracket:
+        return NO_PHASE
+    if axis == STANDING and not (shape.bracket and shape.line):
+        return NO_LINE
+    if name == override_name("three_weight", PHASE, BRACKET):
+        return BRACKET_THREE
+    return READ
 
 
 def bid_reads(arm: Configured, shape: Shape, mirrored: bool = False) -> str:
@@ -2503,7 +2862,9 @@ def season_of(
     names none (None is not a name), and which of the two it names. Refused by name
     (ValueError): a guard out of :data:`GUARDS`; a guard named on the ranking tier or a static
     seat, which have none; a stake that is not a number from 0 to 1; a stake above 0 with
-    ``season_weight`` 0, which scales nothing."""
+    ``season_weight`` 0 in every situation (:func:`anywhere`), which scales nothing; and a stake
+    above 0 beside an override of ``season_weight`` on ``standing`` (PR dynamic knobs), which
+    says the stake's own thing again."""
     guard, stake = spec.get("guard"), spec.get("stake")
     named = tuple(k for k, v in zip(SEASON_FIELDS, (guard, stake), strict=True) if v is not None)
     if guard is None:
@@ -2525,11 +2886,21 @@ def season_of(
         or not 0 <= stake <= 1
     ):
         raise ValueError(f"stake {stake!r}: a number from 0 to 1")
-    if stake > 0 and not float(knob(knobs, "season_weight")) > 0:
+    if stake > 0 and not anywhere(knobs, "season_weight"):
         raise ValueError(
             f"stake {stake:g} with season_weight 0: the stake scales the season term, and "
             "there is none to scale"
         )
+    if stake > 0:
+        twice = [
+            k for k in overrides_of(knobs) if parse_override(k)[:2] == ("season_weight", STANDING)
+        ]
+        if twice:
+            raise ValueError(
+                f"override {twice[0]!r} refused beside stake {stake:g}: the stake already scales "
+                "the season term by the standing, so the two would say it twice and their "
+                "product would read as neither"
+            )
     return str(guard), float(stake), named
 
 
@@ -2541,7 +2912,7 @@ def season_reads(arm: Configured, shape: Shape) -> dict[str, str]:
     out: dict[str, str] = {}
     if arm.tier in GUARDED_TIERS:
         out["guard"] = READ
-        if not float(arm.knobs["season_weight"]) > 0:
+        if not anywhere(arm.knobs, "season_weight"):
             out["stake"] = NO_TERM
         elif not shape.bracket:
             out["stake"] = "the league has no bracket read"

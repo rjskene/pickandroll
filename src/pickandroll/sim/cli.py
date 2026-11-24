@@ -605,6 +605,21 @@ SEASON_NOTE = {
         "least one add of the head (a move that gains more than min_gain): how often the cut "
         "before the guard costs the search an add",
     },
+    # PR dynamic knobs: every arm's seat, in a run where an arm names an override.
+    ct.SITUATIONS_COUNTED: {
+        "days_opening": "simulated days in the first third of the regular weeks (phase "
+        "opening), whether or not the arm names an override there",
+        "days_middle": "simulated days in the regular weeks between the opening and the run-in "
+        "(phase middle)",
+        "days_run_in": "simulated days in the last third of the regular weeks (phase run_in)",
+        "days_bracket": "simulated days in the bracket's weeks (phase bracket)",
+        "days_safe": "simulated regular days the seat led the cut line by one swing or more, "
+        "from the weeks finished before the day's (standing safe)",
+        "days_line": "simulated regular days the seat was within one swing of the cut line "
+        "(standing line), every day before a week is finished among them",
+        "days_behind": "simulated regular days the seat trailed the cut line by one swing or "
+        "more (standing behind)",
+    },
 }
 
 
@@ -838,6 +853,14 @@ def reads_of(
             for shape in sorted(set(shapes), key=lambda s: s.label())
         }
     return out
+
+
+def resolved_block(arms: Mapping[str, rn.Arm]) -> dict[str, dict[str, Any]]:
+    """Each arm's knobs as it played them (#172, PR dynamic knobs; the take-in's note 9), by its
+    key in the payload: every knob's base value, the take-in's five at the default in force
+    when the spec leaves them out, then every override by name. Beside the specs as given, so a
+    reader of the record needs no version's defaults to know what an arm played."""
+    return {key: {"knobs": dict(arm.knobs)} for key, arm in arms.items()}
 
 
 def same_seats(
@@ -1571,7 +1594,11 @@ def task_scale(
     return rn.scale_on(sa, worlds[id(sa)], arms[pair[0]], me)
 
 
-#: The replay's version in its payload: 22 since the live engine's odds calibration (#172, PR
+#: The replay's version in its payload: 23 since dynamic knobs (#172, PR dynamic knobs: an arm
+#: may name overrides, a knob's value in a situation of the season's phase or the seat's
+#: standing; the record keeps each arm's knobs as played, ``resolved``, and counts each arm's
+#: seat's days in each situation; an arm with no override plays version 22's season, outcome for
+#: outcome), 22 since the live engine's odds calibration (#172, PR
 #: take-in: the field's later weeks on a legal roster with return dates, the line blended toward
 #: recent form, the week's spread widened, each a knob, all off the version before, outcome for
 #: outcome), 21 since same-day adds (PR today), 20 since the union pool as an arm's choice
@@ -1595,8 +1622,19 @@ def task_scale(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 22
+REPLAY_VERSION = 23
 REPLAY_VERSION_WHY = (
+    "23: dynamic knobs: an arm may name up to three overrides in its knobs, each a knob's value "
+    "in one situation, knob@axis.situation; the axes are phase (opening, middle and run_in, the "
+    "thirds of the regular weeks, and bracket) and standing (safe, line and behind: the seat's "
+    "lead over the cut line in weeks' spreads over the swing the regular weeks after this one "
+    "can make, at or past one either way; the finished weeks only, set once a week, none in a "
+    "bracket week); each morning a seat and a mirror rival decide, cap their queue, blend and "
+    "set their lineup on their knobs in force in their own situation, and the season scale on "
+    "day one's; system and blend take none; the record keeps each arm's knobs as played "
+    "(resolved), counts each arm's seat's days in each situation in a run that names one, and "
+    "its reads table has a row for each override; an arm that names none plays version 22's "
+    "season, outcome for outcome. "
     "22: the live engine's odds calibration of 2026-11-23 taken in (#485, #486, #487), each "
     "change a knob of the arm with live's value by default, an arm that names none playing "
     "live's engine: later_weeks (legal, live's: every team's later weeks on its whole roster, "
@@ -2568,7 +2606,7 @@ def replay_plan(
     # A stake reads the cut line and the bracket's weeks: no path of a league whose bracket is
     # not read is played with one (the guard PR), said before any path.
     for arm in arms.values():
-        why = rn.stake_refused(arm, shapes_read)
+        why = rn.stake_refused(arm, shapes_read) or rn.override_refused(arm, shapes_read)
         if why:
             print(f"refused: {why}")
             return 2
@@ -2787,6 +2825,7 @@ def replay_payload(
         },
         "design": "paired" if paired else "room",
         "specs": dict(zip(seats, specs, strict=True)),
+        "resolved": resolved_block(arms),
         "draft": (
             f"snake on the run's forecaster's projection, over {payload['pool']['draft']}; an "
             "arm on a forecaster of its own reads it from the season's first day, not at the "
@@ -3928,7 +3967,8 @@ def screen_record(
     results: Mapping[str, Mapping[str, Any]],
     timing: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """A screen's record: its spec, the code's commit and the fit's hash, the season scale used,
+    """A screen's record: its spec, the baseline's knobs as it plays them (``resolved``), the
+    code's commit and the fit's hash, the season scale used,
     the measure and the rule, every row of the list in its order (a played pair's with its
     result and its file, one still to play as left for the next piece), the survivors, what is
     left, and under ``timing`` everything that is a time: each pair's estimate and the pieces'
@@ -3938,7 +3978,11 @@ def screen_record(
     for r in rows:
         d = r.payload()
         if r.key in results:
-            d |= {"status": sc.PLAYED, "result": dict(results[r.key]), "file": f"{r.key}.json"}
+            d |= {
+                "status": sc.PLAYED,
+                "result": dict(results[r.key]),
+                "file": reader.pair_file(r.key),
+            }
         elif r.status == sc.PLAY:
             d["status"] = sc.LEFT
         out.append(d)
@@ -3949,6 +3993,9 @@ def screen_record(
         "screen_version": sc.SCREEN_VERSION,
         "note": SCREEN_NOTE,
         "spec": dict(spec),
+        # The baseline's knobs as it plays them (PR dynamic knobs): each pair's own record keeps
+        # both arms' (``resolved``).
+        "resolved": {"knobs": dict(rn.arm_of(spec["arm"]).knobs)},
         "code_sha": reader.code_sha(ROOT),
         "fit_sha": plan.sha,
         "fit_file": str(plan.fit_path),
@@ -3974,8 +4021,8 @@ def cmd_screen(args: argparse.Namespace) -> int:
     if args.max_minutes is not None and not args.max_minutes > 0:
         print("refused: --max-minutes is a span in minutes, above 0")
         return 2
-    unknown = [n for n in args.levers or () if n not in sc.NAMES]
-    if unknown and unknown[0] in sc.NOT_LEVERS:
+    unknown = [n for n in args.levers or () if not sc.known(n)]
+    if unknown and (unknown[0] in sc.NOT_LEVERS or policy.is_override(unknown[0])):
         print(f"refused: {sc.unlisted(unknown[0])}")
         return 2
     if unknown:
@@ -3984,7 +4031,11 @@ def cmd_screen(args: argparse.Namespace) -> int:
             f"{', '.join(sc.NAMES)}"
         )
         return 2
-    names = [n for n in sc.NAMES if not args.levers or n in args.levers]
+    # The list's levers named (every one when none is), then the split levers named (PR dynamic
+    # knobs), played only when named; each in its own fixed order, whatever the order typed.
+    names = [n for n in sc.NAMES if not args.levers or n in args.levers] + sc.split_order(
+        args.levers or ()
+    )
     seasons_text = args.seasons
     if seasons_text is None:
         latest = gate_season(args.data)
@@ -4047,6 +4098,12 @@ def cmd_screen(args: argparse.Namespace) -> int:
     for r in refused:
         print(f"refused: {r.why}")
     if refused:
+        return 2
+    try:
+        # A split pair's key holds an ``@`` its file does not: no two pairs in one file.
+        reader.pair_files([r.key for r in rows if r.status == sc.PLAY])
+    except ValueError as e:
+        print(f"refused: {e}")
         return 2
     results: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -4444,16 +4501,19 @@ def tune_spec(
     plan: ReplayPlan,
     confirm: int | None,
     screen: Mapping[str, Any] | None,
+    order2: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """What a tune's folder is started with and every later piece is held to: a screen's spec
     for the same arm and world (:func:`screen_spec`: the two versions, the baseline arm's spec
     verbatim, the world's flags, the fit's hash and the book's), its ``levers`` the tune's in the
-    order they are searched, and the tune's own: ``tune_version``, the passes, the season it
-    confirms on (None for none) and the screen its order came from (its name and its spec's
-    hash). Every choice is here before the first pair."""
+    order they are searched, its ``overrides`` the second stage's (PR dynamic knobs; empty, no
+    second stage), and the tune's own: ``tune_version``, the passes, the season it confirms on
+    (None for none) and the screen its order came from (its name and its spec's hash). Every
+    choice is here before the first pair."""
     return {
         "tune_version": tn.TUNE_VERSION,
         **screen_spec(args, base, [o["lever"] for o in order], plan),
+        "overrides": [o["lever"] for o in order2],
         "passes": args.passes,
         "confirm": confirm,
         "screen": None
@@ -4475,10 +4535,12 @@ def tune_record(
     left: Mapping[str, Any] | None,
     timing: Mapping[str, Any],
     screen: Mapping[str, Any] | None = None,
+    order2: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """A tune's record: its spec, the code's commit and the fit's hash, the league and its kind,
-    the measure and the search's rule, the order with where each place comes from and what the
-    screen it came from was played under that this tune is not (``screen``), the season scale
+    the measure and the search's rule and the second stage's (PR dynamic knobs), the order of
+    each stage with where each place comes from and what the screen it came from was played
+    under that this tune is not (``screen``), the season scale
     used, every finished step (each value's pair with its result and its file, the choice and
     why), the final set, the confirmation (its cells with the final pair's mechanism counts,
     the ledger's look, the verdict), what is left, and under ``timing`` everything that is a
@@ -4498,8 +4560,10 @@ def tune_record(
         "league": {"rules": rules.payload(), "label": rules.label(), "kind": league_kind(plan)},
         "measure": measure,
         "rule": tn.SEARCH_RULE,
+        "dynamic_rule": tn.DYNAMIC_RULE,
         "carry": tn.CARRY_NOTE,
         "order": [dict(o) for o in order],
+        "overrides_order": [dict(o) for o in order2],
         "screen": None if screen is None else dict(screen),
         "scale": None if scale is None else dict(scale),
         "steps": [dict(s) for s in steps],
@@ -4560,10 +4624,10 @@ def cmd_tune(args: argparse.Namespace) -> int:
             f"{', '.join(sc.NAMES)}"
         )
         return 2
-    if args.screen is None and not args.levers:
+    if args.screen is None and not args.levers and not args.overrides:
         print(
-            "refused: a tune names its levers: --screen NAME (that screen's survivors) or "
-            "--levers by name"
+            "refused: a tune names its levers: --screen NAME (that screen's survivors), "
+            "--levers by name or --overrides by name"
         )
         return 2
     # The season the final set is confirmed on: never the hold-out, never one of the search's.
@@ -4657,15 +4721,25 @@ def cmd_tune(args: argparse.Namespace) -> int:
                 "none (no confirmation, not a verdict)"
             )
             return 2
+    # The second stage's overrides (PR dynamic knobs): the screen's surviving split rows' or
+    # those named; none, no second stage.
+    try:
+        order2 = tn.split_order_of(screen, args.overrides)
+    except KeyError as e:
+        print(f"refused: {e.args[0] if e.args else e}")
+        return 2
     try:
         order = tn.order_of(screen, args.levers)
     except (ValueError, KeyError) as e:
-        print(f"refused: {e.args[0] if e.args else e}")
-        return 2
+        if not (isinstance(e, ValueError) and order2):
+            print(f"refused: {e.args[0] if e.args else e}")
+            return 2
+        order = []
     names = [o["lever"] for o in order]
+    names2 = [o["lever"] for o in order2]
     workers = args.workers or rn.workers_default()
     name = args.name or "tune-" + "-".join(str(t) for t in plan.seasons)
-    spec = tune_spec(args, base, order, plan, confirm, screen)
+    spec = tune_spec(args, base, order, plan, confirm, screen, order2)
     try:
         state = reader.read_tune(args.data, name)
     except reader.SimReadError as e:
@@ -4709,7 +4783,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
     # The season scale is the baseline's, measured once before any pair, whatever moves later.
     ctx = sc.Context(rules.scoring, rules.waivers)
     scale = (state or {}).get("scale")
-    if any(r.scale for r in sc.rows_of(base, names, plan.shapes_read, ctx)):
+    if any(r.scale for r in sc.rows_of(base, [*names, *names2], plan.shapes_read, ctx)):
         scale = scale_in_force(wa, base, scale, read, said, workers, "tune")
         if isinstance(scale, int):
             return scale
@@ -4732,13 +4806,13 @@ def cmd_tune(args: argparse.Namespace) -> int:
 
     # The plan: each lever's values as the baseline gives them, one task of each lever's first
     # pair timed (a lever timed by an earlier piece is not timed again).
-    listed = {n: tn.values_of(n, base, plan.shapes_read, ctx) for n in names}
+    listed = {n: tn.values_of(n, base, plan.shapes_read, ctx) for n in (*names, *names2)}
     before = dict((state or {}).get("timing") or {})
     estimates: dict[str, dict[str, Any]] = dict(before.get("estimates") or {})
     firsts: dict[str, Any] = {}
     timed_keys: dict[str, Mapping[str, Any]] = {}
     untimed = []
-    for n in names:
+    for n in (*names, *names2):
         row = next((r for r in listed[n] if r.status == sc.PLAY), None)
         if row is None or n in estimates:
             continue
@@ -4777,28 +4851,42 @@ def cmd_tune(args: argparse.Namespace) -> int:
         return estimate_hours(slowest, confirm_tasks, workers)
 
     pairs = sum(1 for n in names for r in listed[n] if r.status == sc.PLAY)
+    pairs2 = sum(1 for n in names2 for r in listed[n] if r.status == sc.PLAY)
     search_hours = args.passes * sum(
         pair_hours(n) for n in names for r in listed[n] if r.status == sc.PLAY
-    )
-    confirm_all = 0.0 if confirm is None else len(kinds) * confirm_hours()
+    ) + sum(pair_hours(n) for n in names2 for r in listed[n] if r.status == sc.PLAY)
+    # With a second stage the confirmation may be two sets: against the baseline and against
+    # the static best.
+    confirm_sets = 2 if names2 else 1
+    confirm_all = 0.0 if confirm is None else confirm_sets * len(kinds) * confirm_hours()
     whole_hours = (
         args.expected_hours if args.expected_hours is not None else search_hours + confirm_all
     )
-    rows = [r for n in names for r in listed[n]]
+    # Each row with the name it is searched under: a list lever's own, or an override's (PR
+    # dynamic knobs), whose rows name their split lever (``knob@axis``) and are timed under the
+    # override's name.
+    named_rows = [(n, r) for n in (*names, *names2) for r in listed[n]]
+    rows = [r for _, r in named_rows]
     texts = []
-    for r in rows:
+    for n, r in named_rows:
         if r.status != sc.PLAY:
             texts.append(sc.status_words(r.payload()))
             continue
-        e = estimates[r.lever]
+        e = estimates[n]
         texts.append(
             f"a pair of {e['tasks']} tasks, one of the lever's took {e['seconds_one']:.1f}s, "
-            f"about {pair_hours(r.lever):.2f} h"
+            f"about {pair_hours(n):.2f} h"
         )
     print(
         f"the tune {name}, its plan: {args.passes} pass(es) over {len(names)} lever(s) in this "
         f"order, fixed before any pair: {tn.order_words(order)}"
     )
+    if names2:
+        print(
+            f"then the second stage, from where the first ends: one pass over {len(names2)} "
+            f"override(s) in this order, fixed before any pair: {tn.order_words(order2)}; it "
+            f"stops once the arm holds {policy.MAX_OVERRIDES} overrides"
+        )
     print(
         f"the search's cells: season(s) {', '.join(str(t) for t in plan.seasons)} by "
         f"{', '.join(f.label for f in plan.named)}, {world.paths} paths a cell; never the "
@@ -4813,12 +4901,19 @@ def cmd_tune(args: argparse.Namespace) -> int:
         print(
             f"the confirmation: the final set against the baseline on {confirm}, once, against "
             + " and against ".join(tn.RIVALS_WORDS[k] for k in kinds)
-            + f": up to {len(kinds)} pair(s) of {confirm_tasks} tasks, about {confirm_all:.2f} h, "
-            "both arms on the cheapest tier that reads every value that moved"
+            + (
+                ", and when the second stage moves the arm, the dynamic best against the static "
+                "best as well"
+                if names2
+                else ""
+            )
+            + f": up to {confirm_sets * len(kinds)} pair(s) of {confirm_tasks} tasks, about "
+            f"{confirm_all:.2f} h, both arms on the cheapest tier that reads every value that "
+            "moved"
         )
     print(
-        f"the whole tune: about {args.passes * pairs} pair(s) of the search, as the baseline "
-        f"lists them, and the confirmation, about {whole_hours:.2f} h on {workers} workers (a "
+        f"the whole tune: about {args.passes * pairs + pairs2} pair(s) of the search, as the "
+        f"baseline lists them, and the confirmation, about {whole_hours:.2f} h on {workers} workers (a "
         "pass that moves no lever ends the search; a lever that moved is tried from its new "
         "value in a later pass, and a lever first read after another moved is timed then: the "
         "search may play pairs this plan does not list, and the hour's rule is read again "
@@ -4855,7 +4950,19 @@ def cmd_tune(args: argparse.Namespace) -> int:
             args.data,
             name,
             tune_record(
-                name, spec, plan, scale, measure, order, steps, final, conf, left, timing, screened
+                name,
+                spec,
+                plan,
+                scale,
+                measure,
+                order,
+                steps,
+                final,
+                conf,
+                left,
+                timing,
+                screened,
+                order2,
             ),
         )
 
@@ -4940,115 +5047,152 @@ def cmd_tune(args: argparse.Namespace) -> int:
     # The pairs met so far, by their two arms: a later pass that comes to the same two arms (a
     # lever whose current arm no step has changed since) takes that result and plays nothing.
     met: dict[str, tuple[str, dict[str, Any]]] = {}
-    for turn in range(1, args.passes + 1):
-        moved_now = False
-        for lever in names:
-            values_ = tn.values_of(lever, current, plan.shapes_read, ctx)
-            values: list[dict[str, Any]] = []
-            for r in values_:
-                d = r.payload()
-                if r.status != sc.PLAY:
-                    values.append(d)
-                    continue
-                key = tn.pair_key(turn, r.key)
-                a, b = r.a or {}, r.b or {}
-                pair = on_file(key, a, b)
-                if isinstance(pair, str):
-                    print(f"refused: {pair}")
-                    return 2
-                two = ident(wa, a, b)
-                earlier = met.get(two)
-                file = key
-                if pair is not None:
-                    result = pair["tune"]["result"]
-                    met_hours += pair_hours(lever)
-                    print(f"pass {turn}, {r.key}: played before: {tn.value_words(result)}")
-                elif earlier is not None:
-                    file, result = earlier
-                    d["same_as"] = file
-                    print(
-                        f"pass {turn}, {r.key}: the same two arms as {file} on the same paths, "
-                        f"not played again: {tn.value_words(result)}"
-                    )
-                else:
-                    got = planned(wa, a, b, f"the pair of {key}")
-                    if isinstance(got, int):
-                        return got
-                    pair_plan, made = got
-                    if lever not in estimates:
-                        # A lever with no pair from the baseline: timed when it first has one.
-                        seconds, first = timed_task(made.task, *made.tasks[made.slow])
-                        estimates[lever] = {"seconds_one": seconds, "tasks": len(made.tasks)}
-                        firsts[two] = first
-                        print(
-                            f"pass {turn}, {r.key}: lever {lever} has its first pair here, none "
-                            f"from the baseline: one task timed, {seconds:.1f}s, about "
-                            f"{pair_hours(lever):.2f} h a pair"
-                        )
-                    refusal = start()
-                    if refusal is not None:
-                        print(f"refused: {refusal}")
-                        return 2
-                    ahead = 0.0 if confirm is None else len(kinds) * confirm_hours()
-                    stopped = past_the_hour(pair_hours(lever), ahead, key)
-                    if stopped is not None:
-                        halted = True
-                        left = {"stopped": stopped, "next": key}
-                        break
-                    stopped = over(60.0 * pair_hours(lever), key)
-                    if stopped is not None:
-                        left = {"stopped": stopped, "next": key}
-                        break
-                    t0 = clock.perf_counter()
-                    payload, note, ran = play_pair(
-                        pair_plan, made, wa, workers, f"{name}-{key}", firsts.pop(two, None)
-                    )
-                    result = tn.value_result(payload, made.keys, ran, measure)
-                    payload["tune"] = {
-                        "name": name,
-                        "tune_version": tn.TUNE_VERSION,
-                        "pass": turn,
-                        **d,
-                        "status": sc.PLAYED,
-                        "result": result,
-                    }
-                    payload["finished_at"] = datetime.now(UTC).isoformat()
-                    path = reader.write_tune_pair(args.data, name, key, payload)
-                    piece["played"].append(key)
-                    met_hours += pair_hours(lever)
-                    print(
-                        f"pass {turn}, {r.key}: {tn.value_words(result)} "
-                        f"({clock.perf_counter() - t0:.0f}s); written: {path}"
-                    )
-                    code = max(code, audit_exit(note))
-                if earlier is None:
-                    voided += int(result["voided"])
-                    met[two] = (key, result)
-                values.append(d | {"status": sc.PLAYED, "result": result, "file": f"{file}.json"})
-            if stopped is not None:
+    # The two stages (PR dynamic knobs): the list's levers over the passes, then the overrides
+    # once from where the first ends (the static best). With no override to search, the first
+    # stage's end is the final arm, as before.
+    static_best: dict[str, Any] | None = None
+    dynamic_stop: str | None = None
+    # Each pair's file, by the key kept in it: a split pair's key holds an ``@`` its file does
+    # not, so no two keys may meet in one file (``readers.pair_files``).
+    files_of: dict[str, str] = {}
+    stages = [(tn.STATIC_STAGE, names, args.passes), (tn.DYNAMIC_STAGE, names2, 1)]
+    for stage, levers_, passes in stages:
+        if stage == tn.DYNAMIC_STAGE:
+            static_best = dict(current)
+            if not levers_:
                 break
-            step: dict[str, Any] = {
-                "pass": turn,
-                "lever": lever,
-                "from": sc.value_of(rn.arm_of(current), lever),
-                "values": values,
-                "choice": tn.choose([v for v in values if v.get("result") is not None]),
-                "change": None,
-            }
-            taken = step["choice"]["key"]
-            if taken is not None:
-                row = next(r for r in values_ if r.key == taken)
-                step["change"] = tn.change_of(row.a or {}, row.b or {})
-                current = sc.applied(current, step["change"])
-                moved_now = True
-                if lever not in moved:
-                    moved.append(lever)
-            step["why"] = tn.step_words(step)
-            steps.append(step)
-            print(f"pass {turn}: {step['why']}")
-            if started:
-                save()
-        if stopped is not None or not moved_now:
+        for turn in range(1, passes + 1):
+            moved_now = False
+            for lever in levers_:
+                if stage == tn.DYNAMIC_STAGE:
+                    held = len(policy.overrides_of(rn.arm_of(current).knobs))
+                    if held >= policy.MAX_OVERRIDES:
+                        dynamic_stop = tn.FULL.format(n=held)
+                        print(f"the second stage: {dynamic_stop}")
+                        break
+                values_ = tn.values_of(lever, current, plan.shapes_read, ctx)
+                values: list[dict[str, Any]] = []
+                for r in values_:
+                    d = r.payload()
+                    if r.status != sc.PLAY:
+                        values.append(d)
+                        continue
+                    key = tn.pair_key(turn, r.key, stage)
+                    kept = files_of.setdefault(reader.pair_file(key), key)
+                    if kept != key:
+                        print(
+                            f"refused: the pairs {kept!r} and {key!r} would be kept in one file, "
+                            f"{reader.pair_file(key)}"
+                        )
+                        return 2
+                    a, b = r.a or {}, r.b or {}
+                    pair = on_file(key, a, b)
+                    if isinstance(pair, str):
+                        print(f"refused: {pair}")
+                        return 2
+                    two = ident(wa, a, b)
+                    earlier = met.get(two)
+                    file = key
+                    if pair is not None:
+                        result = pair["tune"]["result"]
+                        met_hours += pair_hours(lever)
+                        print(f"pass {turn}, {r.key}: played before: {tn.value_words(result)}")
+                    elif earlier is not None:
+                        file, result = earlier
+                        d["same_as"] = file
+                        print(
+                            f"pass {turn}, {r.key}: the same two arms as {file} on the same "
+                            f"paths, not played again: {tn.value_words(result)}"
+                        )
+                    else:
+                        got = planned(wa, a, b, f"the pair of {key}")
+                        if isinstance(got, int):
+                            return got
+                        pair_plan, made = got
+                        if lever not in estimates:
+                            # A lever with no pair from the baseline: timed when it first has one.
+                            seconds, first = timed_task(made.task, *made.tasks[made.slow])
+                            estimates[lever] = {"seconds_one": seconds, "tasks": len(made.tasks)}
+                            firsts[two] = first
+                            print(
+                                f"pass {turn}, {r.key}: lever {lever} has its first pair here, "
+                                f"none from the baseline: one task timed, {seconds:.1f}s, about "
+                                f"{pair_hours(lever):.2f} h a pair"
+                            )
+                        refusal = start()
+                        if refusal is not None:
+                            print(f"refused: {refusal}")
+                            return 2
+                        ahead = (
+                            0.0
+                            if confirm is None
+                            else confirm_sets * len(kinds) * (confirm_hours())
+                        )
+                        stopped = past_the_hour(pair_hours(lever), ahead, key)
+                        if stopped is not None:
+                            halted = True
+                            left = {"stopped": stopped, "next": key}
+                            break
+                        stopped = over(60.0 * pair_hours(lever), key)
+                        if stopped is not None:
+                            left = {"stopped": stopped, "next": key}
+                            break
+                        t0 = clock.perf_counter()
+                        payload, note, ran = play_pair(
+                            pair_plan, made, wa, workers, f"{name}-{key}", firsts.pop(two, None)
+                        )
+                        result = tn.value_result(payload, made.keys, ran, measure)
+                        payload["tune"] = {
+                            "name": name,
+                            "tune_version": tn.TUNE_VERSION,
+                            "stage": stage,
+                            "pass": turn,
+                            **d,
+                            "status": sc.PLAYED,
+                            "result": result,
+                        }
+                        payload["finished_at"] = datetime.now(UTC).isoformat()
+                        path = reader.write_tune_pair(args.data, name, key, payload)
+                        piece["played"].append(key)
+                        met_hours += pair_hours(lever)
+                        print(
+                            f"pass {turn}, {r.key}: {tn.value_words(result)} "
+                            f"({clock.perf_counter() - t0:.0f}s); written: {path}"
+                        )
+                        code = max(code, audit_exit(note))
+                    if earlier is None:
+                        voided += int(result["voided"])
+                        met[two] = (key, result)
+                    values.append(
+                        d | {"status": sc.PLAYED, "result": result, "file": reader.pair_file(file)}
+                    )
+                if stopped is not None:
+                    break
+                step: dict[str, Any] = {
+                    "stage": stage,
+                    "pass": turn,
+                    "lever": lever,
+                    "from": sc.value_of(rn.arm_of(current), lever),
+                    "values": values,
+                    "choice": tn.choose([v for v in values if v.get("result") is not None]),
+                    "change": None,
+                }
+                taken = step["choice"]["key"]
+                if taken is not None:
+                    row = next(r for r in values_ if r.key == taken)
+                    step["change"] = tn.change_of(row.a or {}, row.b or {})
+                    current = sc.applied(current, step["change"])
+                    moved_now = True
+                    if lever not in moved:
+                        moved.append(lever)
+                step["why"] = tn.step_words(step)
+                steps.append(step)
+                print(f"pass {turn}: {step['why']}")
+                if started:
+                    save()
+            if stopped is not None or not moved_now:
+                break
+        if stopped is not None:
             break
     if stopped is None:
         # The final set: what the current arm holds that the baseline does not.
@@ -5063,6 +5207,11 @@ def cmd_tune(args: argparse.Namespace) -> int:
             "tier": tier,
             "unread": tn.unread_of(levers, arms[tn.RUN][1], plan.shapes_read),
         }
+        if names2:
+            final["static_best"] = dict(static_best or current)
+            final["overrides"] = policy.overrides_of(last_arm.knobs)
+            if dynamic_stop is not None:
+                final["dynamic_stop"] = dynamic_stop
         # A kind of rivals against which the final arm is the baseline's seat (the two differ
         # only in what neither reads there) is known before the season is read: replay would
         # refuse that pair, so it is not planned.
@@ -5072,6 +5221,12 @@ def cmd_tune(args: argparse.Namespace) -> int:
             if same:
                 one_seat[k] = same
         conf = {"season": confirm, "status": tn.NOT_YET, "look": None}
+        # The second set (PR dynamic knobs): the dynamic best against the static best, when the
+        # second stage moved the arm from a static best that is not the baseline.
+        dynamic = [n for n in levers if policy.is_override(n)]
+        against: dict[str, Any] | None = None
+        sets: list[tuple[dict[str, Any], str, dict[str, tuple[dict[str, Any], dict[str, Any]]]]]
+        sets = []
         if confirm is None:
             conf["status"] = tn.NO_CONFIRMATION
         elif not final["set"]:
@@ -5079,7 +5234,6 @@ def cmd_tune(args: argparse.Namespace) -> int:
         elif len(final["unread"]) == len(levers) or tn.RUN in one_seat:
             conf["status"] = tn.SAME_SEAT
         else:
-            ca = pair_args(args, str(confirm))
             playing = [k for k in kinds if k not in one_seat]
             conf |= {
                 "tier": tier,
@@ -5087,6 +5241,33 @@ def cmd_tune(args: argparse.Namespace) -> int:
                 "files": {k: f"confirm-{k}.json" for k in playing},
                 "one_seat": one_seat,
             }
+            sets.append((conf, "confirm", {k: arms[k] for k in playing}))
+            if dynamic and static_best is not None and tn.change_of(base, static_best):
+                tier2 = tn.tier_of(dynamic)
+                arms2 = {
+                    k: tn.confirm_arms(static_best, current, tier2, k == tn.STATIC, "dynamic")
+                    for k in kinds
+                }
+                one2 = {k: s for k in kinds if (s := pair_one_seat(plan, *arms2[k]))}
+                against = {"note": tn.AGAINST_STATIC, "status": tn.NOT_YET, "tier": tier2}
+                if tn.RUN in one2:
+                    against["status"] = tn.SAME_SEAT
+                else:
+                    playing2 = [k for k in kinds if k not in one2]
+                    against |= {
+                        "arms": {k: {"a": arms2[k][0], "b": arms2[k][1]} for k in kinds},
+                        "files": {k: f"confirm-static-{k}.json" for k in playing2},
+                        "one_seat": one2,
+                    }
+                    sets.append((against, "confirm-static", {k: arms2[k] for k in playing2}))
+                conf["against_static"] = against
+            elif dynamic:
+                conf["against_static"] = {
+                    "note": tn.AGAINST_STATIC,
+                    "status": tn.STATIC_IS_BASE,
+                }
+        if sets:
+            ca = pair_args(args, str(confirm))
             ledger = args.data / reader.LEDGER
             spec_sha = spec_hash(spec)
             # A tune is its folder: the look it has is the one its first piece's start names.
@@ -5102,16 +5283,24 @@ def cmd_tune(args: argparse.Namespace) -> int:
                     conf["look"] = look_block(own, lines, ledger)
             else:
                 conf["look_note"] = TUNE_OTHER_SEASON.format(season=CONFIRMATION)
+            jobs = [
+                (target, f"{stem}-{k}", k, pair_)
+                for target, stem, pairs_ in sets
+                for k, pair_ in pairs_.items()
+            ]
             payloads: dict[str, Mapping[str, Any]] = {}
-            for i, k in enumerate(playing):
-                key = f"confirm-{k}"
-                a, b = arms[k]
+            for i, (target, key, k, (a, b)) in enumerate(jobs):
+                whose = (
+                    f"the confirmation's pair against {tn.RIVALS_WORDS[k]}"
+                    if target is conf
+                    else f"the dynamic best against the static best, against {tn.RIVALS_WORDS[k]}"
+                )
                 pair = on_file(key, a, b)
                 if isinstance(pair, str):
                     print(f"refused: {pair}")
                     return 2
                 if pair is not None:
-                    payloads[k] = pair
+                    payloads[key] = pair
                     met_hours += confirm_hours()
                     kept = (pair.get("tune") or {}).get("look")
                     if confirm == CONFIRMATION and conf["look"] is None and kept:
@@ -5124,7 +5313,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
                 if refusal is not None:
                     print(f"refused: {refusal}")
                     return 2
-                ahead = (len(playing) - i - 1) * confirm_hours()
+                ahead = (len(jobs) - i - 1) * confirm_hours()
                 stopped = past_the_hour(confirm_hours(), ahead, key)
                 if stopped is not None:
                     halted = True
@@ -5137,7 +5326,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
                 # The season the search never played is read here, for the first time.
                 said_now = io.StringIO()
                 with contextlib.redirect_stdout(said_now):
-                    got = planned(ca, a, b, f"the confirmation's pair against {tn.RIVALS_WORDS[k]}")
+                    got = planned(ca, a, b, whose)
                 print(said_now.getvalue(), end="")
                 if isinstance(got, int):
                     # What only a whole plan finds (the early check asks the rest): the final
@@ -5147,7 +5336,7 @@ def cmd_tune(args: argparse.Namespace) -> int:
                         for x in said_now.getvalue().splitlines()
                         if x.startswith("refused: ")
                     ]
-                    conf |= {"status": tn.UNPLANNED, "why": whys[0] if whys else None}
+                    target |= {"status": tn.UNPLANNED, "why": whys[0] if whys else None}
                     halted = True
                     break
                 pair_plan, made = got
@@ -5194,36 +5383,43 @@ def cmd_tune(args: argparse.Namespace) -> int:
                     "name": name,
                     "tune_version": tn.TUNE_VERSION,
                     "confirmation": k,
-                    "tier": tier,
+                    **({} if target is conf else {"against": "static_best"}),
+                    "tier": target["tier"],
                     "look": conf["look"],
                 }
                 payload["finished_at"] = datetime.now(UTC).isoformat()
                 path = reader.write_tune_pair(args.data, name, key, payload)
                 piece["played"].append(key)
                 met_hours += confirm_hours()
-                payloads[k] = payload
-                print(
-                    f"the confirmation against {tn.RIVALS_WORDS[k]}: played "
-                    f"({clock.perf_counter() - t0:.0f}s); written: {path}"
+                payloads[key] = payload
+                said_whose = (
+                    f"the confirmation against {tn.RIVALS_WORDS[k]}" if target is conf else whose
                 )
+                print(f"{said_whose}: played ({clock.perf_counter() - t0:.0f}s); written: {path}")
                 code = max(code, audit_exit(note))
                 save()
-            if stopped is None and conf["status"] == tn.NOT_YET:
-                cells = {k: tn.confirmation_of(payloads[k], confirm) for k in playing}
-                lost = sum(int(payloads[k]["audit"]["paths_voided"]) for k in playing)
-                voided += lost
-                # Each named forecaster with no cell on the season, by replay's reason; one the
-                # search read is no verdict. One the search read whose cell is there and not
-                # read leaves a verdict on the others, and the verdict's line names it.
-                skipped = tn.skipped_of(payloads[tn.RUN], confirm)
+            if stopped is None and not halted:
                 searched = tn.searched_of(steps)
-                missing = {label: why_ for label, why_ in skipped.items() if label in searched}
-                conf |= {
-                    "status": tn.CONFIRMED,
-                    "cells": cells,
-                    "skipped": skipped,
-                    "verdict": tn.verdict_of(cells, lost, missing, list(one_seat), searched),
-                }
+                for target, stem, pairs_ in sets:
+                    if target["status"] != tn.NOT_YET:
+                        continue
+                    by = {k: payloads[f"{stem}-{k}"] for k in pairs_}
+                    cells = {k: tn.confirmation_of(by[k], confirm) for k in pairs_}
+                    lost = sum(int(by[k]["audit"]["paths_voided"]) for k in pairs_)
+                    voided += lost
+                    # Each named forecaster with no cell on the season, by replay's reason; one
+                    # the search read is no verdict. One the search read whose cell is there and
+                    # not read leaves a verdict on the others, and the verdict's line names it.
+                    skipped = tn.skipped_of(by[tn.RUN], confirm)
+                    missing = {lb: why_ for lb, why_ in skipped.items() if lb in searched}
+                    target |= {
+                        "status": tn.CONFIRMED,
+                        "cells": cells,
+                        "skipped": skipped,
+                        "verdict": tn.verdict_of(
+                            cells, lost, missing, list(target.get("one_seat") or {}), searched
+                        ),
+                    }
     if stopped is not None:
         piece["stopped"] = stopped
         print(("refused: " if halted else "stopped: ") + stopped)
@@ -5249,6 +5445,16 @@ def cmd_tune(args: argparse.Namespace) -> int:
         print(f"the confirmation, the final set against the baseline, {on}: {where}")
         for line_ in tn.confirmation_lines(conf, measure):
             print(line_)
+        against = conf.get("against_static")
+        if against is not None and against["status"] == tn.CONFIRMED:
+            print(
+                f"the dynamic best against the static best, both arms on the {against['tier']} "
+                "tier, on the same season:"
+            )
+            for line_ in tn.confirmation_lines(against, measure):
+                print(line_)
+        elif against is not None:
+            print(f"the dynamic best against the static best: {against['status']}")
     elif conf is not None:
         print(
             f"the confirmation: {conf['status']}" + (f" ({conf['why']})" if conf.get("why") else "")
@@ -6257,7 +6463,9 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="NAME",
         help="the levers to screen, by name, in the list's order whatever the order named "
-        f"(default every lever of the list: {', '.join(sc.NAMES)})",
+        f"(default every lever of the list: {', '.join(sc.NAMES)}); a split lever "
+        "(knob@axis, or one situation of it, knob@axis.situation) is played only when named: "
+        "each of the lever's nudges in each situation alone",
     )
     _cell_args(
         sn, "the latest season on file that is neither the hold-out nor the confirmation season"
@@ -6301,6 +6509,15 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME",
         help="the levers to tune, by name: in the screen's order with --screen, else the "
         "list's (default the screen's survivors)",
+    )
+    tu.add_argument(
+        "--overrides",
+        nargs="+",
+        default=None,
+        metavar="KNOB@AXIS.SITUATION",
+        help="the second stage's overrides, by name, searched once from where the first stage "
+        "ends: in the screen's order with --screen, else the split levers' (default the "
+        "screen's surviving split rows; none, no second stage)",
     )
     tu.add_argument(
         "--passes",

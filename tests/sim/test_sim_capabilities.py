@@ -77,7 +77,7 @@ def test_the_capability_a_run_was_played_on():
     for nothing in (None, 0, True, "21", 2.5):
         assert cap.at(nothing) is None
     assert cap.current().replay_version == cli.REPLAY_VERSION
-    assert cap.latest() is cap.LOG[-1] and cap.latest().id == "replay-22"
+    assert cap.latest() is cap.LOG[-1] and cap.latest().id == "replay-23"
     # a mark that took a live change in closes it: the take-in closes the odds calibration's
     # three (#485, #486, #487); #488 was display and the scorecard, nothing to take in
     assert cap.taken_in("#424").id == "replay-20"
@@ -88,6 +88,10 @@ def test_the_capability_a_run_was_played_on():
     assert took["kind"] == "engine" and took["screen_version"] == 7
     p = cap.at(20).payload()
     assert p["takes_in"] == ["#424"] and p["screen_version"] == 6 and p["kind"] == "engine"
+    # dynamic knobs (PR dynamic knobs): what the seat's policy can do, with every version stepped
+    dyn = cap.at(23).payload()
+    assert dyn["kind"] == "seat" and dyn["takes_in"] == []
+    assert (dyn["screen_version"], dyn["tune_version"]) == (8, 2)
 
 
 def test_days_are_central_by_the_us_rule():

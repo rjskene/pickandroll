@@ -324,6 +324,14 @@ class SimState:
     #: A decision of such a seat depends on its own figure, so the runner's cache of shared
     #: decisions keys on it beside :meth:`key`, which leaves it out: no other seat reads it.
     stakes: Mapping[int, float] = field(default_factory=dict)
+    #: The week's ``standing`` (#172, PR dynamic knobs, ``policy.standing_of``: ``safe``,
+    #: ``line``, ``behind``, or None where the axis names no situation) of each team whose
+    #: strategy follows the axis or whose situations are counted, by team: set by the runner on
+    #: each week's first simulated day from the weeks finished before it, and the same all week,
+    #: as :attr:`stakes`. Empty when no arm of the run names an override. A decision of such a
+    #: team depends on it, so the runner's cache of shared decisions keys on the overrides it
+    #: puts in force beside :meth:`key`, which leaves it out.
+    standing: Mapping[int, str | None] = field(default_factory=dict)
     #: The bracket's rounds as this arm has seeded them (#172, PR bracket): week number to that
     #: round's matchups (team ids, the higher seed first; ``league.round_pairs``), set once a
     #: round on its first simulated morning from this arm's own totals (``policy.seed_round``).

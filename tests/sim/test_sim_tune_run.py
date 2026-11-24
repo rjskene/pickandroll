@@ -26,13 +26,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pickandroll.sim import audit, shapes
+from pickandroll.sim import audit, policy, shapes
 from pickandroll.sim import cli as ss
 from pickandroll.sim import forecast as fc
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim import screen as sc
 from pickandroll.sim import tune as tn
+from pickandroll.sim.lab import server as sv
 from tests.sim.sim_league import KNOBS, make_data_dir
 
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
@@ -276,7 +277,7 @@ def test_the_search_takes_the_lever_built_to_help_and_leaves_the_one_built_to_do
     to its nudge again, the better of its two values, and leaves the look ahead where it is,
     saying it did nothing."""
     rec, out = whole[:2]
-    assert (rec["kind"], rec["name"], rec["tune_version"]) == ("tune", "whole", 1)
+    assert (rec["kind"], rec["name"], rec["tune_version"]) == ("tune", "whole", 2)
     assert rec["note"] == ss.TUNE_NOTE and rec["rule"] == tn.SEARCH_RULE
     assert rec["carry"] == tn.CARRY_NOTE and rec["hold_out"] == 2025 and rec["left"] is None
     assert rec["measure"] == "matchup_wins" and len(rec["fit_sha"]) == 64
@@ -343,7 +344,8 @@ def test_each_value_is_a_pair_against_the_current_arm_with_one_tune_block(data: 
     value = rec["steps"][0]["values"][1]
     assert got["tune"] == {
         "name": "whole",
-        "tune_version": 1,
+        "tune_version": 2,
+        "stage": "static",
         "pass": 1,
         **{k: v for k, v in value.items() if k != "file"},
     }
@@ -528,7 +530,7 @@ def test_the_order_is_the_screen_s_strongest_first(data: Path, screened):
         "3.00 SE)"
     ) in out
     spec = rec["spec"]
-    assert spec["levers"] == ["pool", "daily_cap"] and spec["tune_version"] == 1
+    assert spec["levers"] == ["pool", "daily_cap"] and spec["tune_version"] == 2
     assert spec["screen"] == {"name": "s1", "spec_sha": ss.spec_hash(screened["spec"])}
     assert (spec["passes"], spec["confirm"], spec["arm"]) == (1, None, BASE)
     assert {k: v for k, v in spec.items() if k in screened["spec"] and k != "levers"} == {
@@ -1020,9 +1022,9 @@ def test_a_tune_is_resumed_only_on_the_spec_it_was_started_with(data: Path, whol
         assert f"refused: the tune 'whole' was started with another spec ({why}" in out
         assert "name this one another (--name)" in out and "its plan" not in out
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(tn, "TUNE_VERSION", 2)
+        mp.setattr(tn, "TUNE_VERSION", tn.TUNE_VERSION + 1)
         code, out = tune(data, name="whole")
-    assert code == 2 and "tune_version: started with 1, now 2" in out, out
+    assert code == 2 and "tune_version: started with 2, now 3" in out, out
     assert record(data, "whole") == whole[0]
     # A pair's file holding other arms than this tune's value refuses the run by name.
     file = reader.tune_pair_path(data, "whole", "p1-pool-45")
@@ -1924,3 +1926,108 @@ def test_the_search_reads_the_measure_the_league_s_standings_count(data, flags, 
     )
     pair = pair_of(data, name, "p1-pool-45")
     assert pair["league"]["rules"] == rules and pair["audit"]["paths_voided"] == 0
+
+
+# --------------------------------------------------------------------------- the second stage
+#: The overrides the second stage is given (PR dynamic knobs): four, each worth one in the world
+#: below at one of its values; the league is small, so its axis is ``phase`` (two teams both in
+#: the final have no cut line, and ``standing`` names no situation there).
+OVERRIDES = (
+    "daily_cap@phase.run_in",
+    "daily_cap@phase.opening",
+    "daily_cap@phase.bracket",
+    "protection_floor@phase.opening",
+)
+
+
+def override_worth(arm: rn.Arm, season: int) -> float:
+    """A wider pool is worth more, as :data:`WIDER` says, and so is each override at its value:
+    a third add in the opening and the bracket, one in the run-in, a floor above 0 in the
+    opening."""
+    v = lambda name: sc.value_of(arm, name)
+    return (
+        pool(arm) / 15
+        + (v("daily_cap@phase.opening") == 3)
+        + (v("daily_cap@phase.run_in") == 1)
+        + (v("daily_cap@phase.bracket") == 3)
+        + (float(v("protection_floor@phase.opening")) > 0)
+    )
+
+
+def test_the_second_stage_searches_overrides_from_the_static_best_and_stops_at_three(data):
+    """The first stage moves the pool; the second starts from there (the static best), takes
+    the first three overrides in its order, each at the value that helps, and stops at the
+    cap with the fourth unsearched. Its pairs are the ``d`` pass's, each step names its stage,
+    and the confirmation sets the dynamic best against the static best beside the final set
+    against the baseline."""
+    order = [o["lever"] for o in tn.split_order_of(None, list(OVERRIDES))]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(worth_world(override_worth)))
+        code, out = tune(data, "--overrides", *OVERRIDES, levers=("pool",), name="dynamic")
+    assert code == 0, out
+    rec = record(data, "dynamic")
+    assert rec["tune_version"] == tn.TUNE_VERSION == 2 and rec["dynamic_rule"] == tn.DYNAMIC_RULE
+    assert rec["spec"]["overrides"] == order
+    assert [o["lever"] for o in rec["overrides_order"]] == order
+    stages = [s["stage"] for s in rec["steps"]]
+    assert stages == [tn.STATIC_STAGE] * stages.count(tn.STATIC_STAGE) + [tn.DYNAMIC_STAGE] * 3
+    final = rec["final"]
+    taken = order[:3]
+    assert set(final["overrides"]) == set(taken) and set(taken) <= set(final["levers"])
+    # Each taken at the value that helps: the pool's worth and one for each.
+    assert override_worth(rn.arm_of(final["arm"]), 2024) == pytest.approx(60 / 15 + 3)
+    assert final["static_best"]["pool"] == 60 and not policy.overrides_of(
+        final["static_best"]["knobs"]
+    )
+    assert final["dynamic_stop"] == tn.FULL.format(n=3)
+    assert f"the second stage: {tn.FULL.format(n=3)}" in out
+    # The first override's pairs are the dynamic pass's.
+    first = next(s for s in rec["steps"] if s["stage"] == tn.DYNAMIC_STAGE)
+    assert first["lever"] == order[0] and first["change"] is not None
+    played = [v for v in first["values"] if v.get("file")]
+    assert played and all(v["file"].startswith("d1-") for v in played)
+    # Each names the file its pair is kept in (the key's ``@`` made safe), and it is there.
+    folder = reader.tune_dir(data, "dynamic")
+    for step in rec["steps"]:
+        for v in step["values"]:
+            if v.get("file"):
+                assert "@" not in v["file"] and (folder / v["file"]).is_file(), v["file"]
+    pair = pair_of(data, "dynamic", f"d1-{played[0]['key']}")
+    assert pair["tune"]["stage"] == tn.DYNAMIC_STAGE
+    assert reader.pair_file(f"d1-{played[0]['key']}") == played[0]["file"]
+    # The lab lists the tune and says nothing of it missing (the folder's made-up screens aside).
+    m = sv.Lab(data).model()
+    assert "dynamic" in {t.get("name") for t in m["tunes"]}
+    assert not [x for x in m["generated"]["lacks"] if "dynamic" in x]
+    # The confirmation: the final set against the baseline, and the dynamic best against the
+    # static best, each its own pair on the confirmation season.
+    conf = rec["confirmation"]
+    against = conf["against_static"]
+    assert against["note"] == tn.AGAINST_STATIC
+    assert against["files"] == {"run": "confirm-static-run.json"}
+    assert against["arms"]["run"]["a"]["pool"] == 60
+    assert against["arms"]["run"]["b"]["name"] == "B:dynamic"
+    static = pair_of(data, "dynamic", "confirm-static-run")
+    assert static["seasons"] == [2026] and static["specs"] == against["arms"]["run"]
+
+
+def test_a_second_stage_from_the_baseline_says_the_static_best_is_the_baseline(data):
+    """When the first stage moves nothing, the dynamic best is confirmed against the baseline
+    alone, and the record says the static best is the baseline."""
+
+    def worth(arm: rn.Arm, season: int) -> float:
+        return float(sc.value_of(arm, "daily_cap@phase.opening") == 3)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "task_paired", made_up(worth_world(worth)))
+        code, out = tune(
+            data, "--overrides", "daily_cap@phase.opening", levers=("pool",), name="from-base"
+        )
+    assert code == 0, out
+    rec = record(data, "from-base")
+    assert rec["final"]["overrides"] == {"daily_cap@phase.opening": 3}
+    assert rec["final"]["static_best"] == BASE and "dynamic_stop" not in rec["final"]
+    assert rec["confirmation"]["against_static"] == {
+        "note": tn.AGAINST_STATIC,
+        "status": tn.STATIC_IS_BASE,
+    }

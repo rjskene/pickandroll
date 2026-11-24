@@ -182,7 +182,7 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
     tier = str(spec.get("tier", ""))
     if tier not in (*policy.TIERS, "static"):
         raise ValueError(f"tier {tier!r}: one of {policy.TIERS} or static")
-    knobs = policy.check_knobs(spec.get("knobs") or {})
+    knobs = policy.check_arm_knobs(spec.get("knobs") or {})
     executes = str(spec.get("executes", policy.QUEUE_SET))
     if executes not in policy.EXECUTES:
         raise ValueError(f"executes {executes!r}: one of {policy.EXECUTES}")
@@ -215,14 +215,25 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
 
 def stash_named(arms: Iterable[Arm]) -> bool:
     """Whether a run of ``arms`` names a stash threshold (#172, PR G): one of them holds a
-    number for the knob. Such a run counts the returning players each seat dropped."""
-    return any(arm.knobs.get("stash_threshold") is not None for arm in arms)
+    number for the knob, as its base or in an override (PR dynamic knobs). Such a run counts the
+    returning players each seat dropped."""
+    return any(policy.stash_named(arm.knobs) for arm in arms)
+
+
+def overrides_named(arms: Iterable[Arm]) -> bool:
+    """Whether a run of ``arms`` names an override (#172, PR dynamic knobs): such a run counts
+    each arm's seat's days in each situation (``counts.SITUATIONS``)."""
+    return any(policy.overrides_of(arm.knobs) for arm in arms)
 
 
 def mirrored(arm: Arm) -> bool:
     """Whether ``arm``'s rivals in a comparison are its mirror, the surrogate on its knobs and
     fields: what the surrogate reads, the arm's run reads too."""
     return str(arm.opponents.get("kind", "static")) == "mirror"
+
+
+#: An override one arm names and the other does not.
+_MISSING = object()
 
 
 def same_seat(
@@ -252,8 +263,14 @@ def same_seat(
 
     if identity(a) != identity(b):
         return None
+    over_a, over_b = policy.overrides_of(a.knobs), policy.overrides_of(b.knobs)
+    overrides = sorted(
+        {k for k in {*over_a, *over_b} if over_a.get(k, _MISSING) != over_b.get(k, _MISSING)},
+        key=lambda k: (policy.KNOBS.index(policy.parse_override(k)[0]), k),
+    )
     names = (
         [k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]]
+        + overrides
         + [f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)]
         + [f for f in policy.SEASON_FIELDS if getattr(a, f) != getattr(b, f)]
     )
@@ -268,17 +285,18 @@ def same_seat(
             mirror = rivals and mirrored(arm)
             for shape in shapes:
                 table = (
-                    policy.reads(arm, shape, mirror)
+                    policy.reads(arm, shape, mirror, overrides)
                     | policy.field_reads(arm, mirror)
                     | policy.season_reads(arm, shape)
                 )
                 rows.append(table[name])
         if policy.READ in rows:
             return None
-        also = policy.WHEN_READ_FAAB.get(name)
-        only = policy.WHEN_READ_H2H.get(name)
+        known = policy.parse_override(name)[0] if policy.is_override(name) else name
+        also = policy.WHEN_READ_FAAB.get(known)
+        only = policy.WHEN_READ_H2H.get(known)
         out.append(
-            f"{name} ({rows[0]}; read by {policy.WHEN_READ[name]})"
+            f"{name} ({rows[0]}; read by {policy.WHEN_READ[known]})"
             + (f", and {also}" if also else "")
             + (f"; {only}" if only else "")
         )
@@ -318,11 +336,31 @@ def counted_of(arms: Sequence[Arm]) -> tuple[str, ...]:
     fields any of them names (``policy.SEASON_FIELDS``'s order), then ``guard_pool`` when any
     of them on a tier that builds a union pool (``policy.UNION_TIERS``) sets it above 0 (#172,
     PR pool): an arm of another tier that sets it reads nothing of it, and a run of such arms
-    alone counts none. None named or set, nothing counted, and the run's counts are as before
-    the fields."""
+    alone counts none; then ``situations`` when any of them names an override (PR dynamic
+    knobs, :func:`overrides_named`). None named or set, nothing counted, and the run's counts
+    are as before the fields."""
     names = tuple(f for f in policy.SEASON_FIELDS if any(f in arm.named for arm in arms))
     sets = any(arm.tier in policy.UNION_TIERS and arm.fields.guard_pool > 0 for arm in arms)
-    return (*names, *(("guard_pool",) if sets else ()))
+    over = overrides_named(arms)
+    return (
+        *names,
+        *(("guard_pool",) if sets else ()),
+        *((ct.SITUATIONS_COUNTED,) if over else ()),
+    )
+
+
+def override_refused(arm: Arm, shapes: Sequence[policy.Shape]) -> str | None:
+    """Why ``arm`` may not play a run whose leagues are ``shapes`` (#172, PR dynamic knobs): it
+    names an override and one of them has no bracket read, so there are no regular weeks to cut
+    and no cut line to read, as a stake is refused there (:func:`stake_refused`). None when it
+    may. By the name, on any tier, read there or not."""
+    named = list(policy.overrides_of(arm.knobs))
+    if named and any(not shape.bracket for shape in shapes):
+        return (
+            f"arm {arm.name} names override {named[0]}: a situation reads the bracket's weeks "
+            "and the cut line, and the league's bracket is not read, so it is not trusted"
+        )
+    return None
 
 
 def check_fit(spec: Mapping[str, Any], sha: str) -> None:
@@ -832,11 +870,14 @@ def _rotation(teams: Sequence[int], i: int) -> list[int]:
     return [teams[(j + i) % n] for j in range(n)] if n else []
 
 
-def _cap(strategy: Any) -> int:
+def _cap(strategy: Any, setup: Setup, state: SimState, team: int, week: int) -> int:
+    """The executor's cap on the adds ``team``'s strategy queues today: its ``daily_cap`` in
+    force that morning (``policy.knobs_on``, PR dynamic knobs), the one its search read; 1 for a
+    strategy with no knobs (a market or a static rival)."""
     knobs = getattr(strategy, "knobs", None)
     if knobs is None:
         return 1
-    return int(policy.knob(knobs, "daily_cap"))
+    return int(policy.knob(policy.knobs_on(knobs, setup, state, team, week), "daily_cap"))
 
 
 @dataclass(frozen=True)
@@ -937,14 +978,23 @@ class _Tables:
         return self._mixed[key]
 
 
-def blend_of(strat: Any) -> tuple[float, float] | None:
-    """The recent-form blend a team's strategy reads (#172, PR take-in): an arm's seat's or its
-    mirror rival's, on its knobs (``policy.blend_of``); None for a market or a static rival,
-    which holds no knob and believes the run's forecaster as read, and for a seat at
-    ``rate_shrink`` 0."""
+def blend_of(
+    strat: Any,
+    setup: Setup | None = None,
+    state: SimState | None = None,
+    team: int | None = None,
+    week: int | None = None,
+) -> tuple[float, float] | None:
+    """The recent-form blend ``team``'s strategy reads in week ``week`` (#172, PR take-in): an
+    arm's seat's or its mirror rival's, on its knobs in force that morning (``policy.blend_of``
+    of ``policy.knobs_on``, PR dynamic knobs; with no league, state and team given, on its base
+    knobs); None for a market or a static rival, which holds no knob and believes the run's
+    forecaster as read, and for a seat at ``rate_shrink`` 0."""
     if not isinstance(strat, op.Seat | op.Mirror):
         return None
-    return policy.blend_of(strat.knobs)
+    if setup is None or state is None or team is None:
+        return policy.blend_of(policy.in_force(strat.knobs, policy.NOWHERE))
+    return policy.blend_of(policy.knobs_on(strat.knobs, setup, state, team, week))
 
 
 def _blends(
@@ -952,12 +1002,14 @@ def _blends(
     variant: Mapping[int, op.Strategy],
     holds: Mapping[int, str],
     state: SimState,
+    setup: Setup,
+    week: int,
 ) -> dict[int, tuple[Mapping[int, Rates], Mapping[int, float]]]:
-    """Each team of ``variant`` whose strategy blends (:func:`blend_of`), with its blended
-    beliefs and values on ``state``'s rosters."""
+    """Each team of ``variant`` whose strategy blends in week ``week`` (:func:`blend_of`), with
+    its blended beliefs and values on ``state``'s rosters."""
     out = {}
     for t, strat in variant.items():
-        blend = blend_of(strat)
+        blend = blend_of(strat, setup, state, t, week)
         if blend is not None:
             out[t] = tables.blended(holds.get(t), state, blend)
     return out
@@ -986,9 +1038,17 @@ def decision_key(
 
     A seat that reads a stake (the guard PR) decides on its own week's figure too
     (``SimState.stakes``, which the state's key leaves out), so the key holds it, None for a
-    seat with no stake."""
+    seat with no stake. A strategy whose knobs name overrides (PR dynamic knobs) decides on the
+    knobs in force that morning, which its situation sets (the week's phase, which the day in
+    the state's key fixes, and its standing, which the state's key leaves out), so the key
+    holds the overrides in force too (``policy.forced_on``); a strategy with none has the key
+    it had."""
     level = state.stakes.get(team) if getattr(strat, "stake", 0.0) > 0 else None
     view = policy.week_view(setup, state, team, week) if _reads_week(strat) else None
+    knobs = getattr(strat, "knobs", None)
+    if knobs and any(policy.is_override(k) for k in knobs):
+        forced = policy.forced_on(knobs, setup, state, team, week)
+        return (team, repr(strat), state.key(), level, view, forced)
     return (team, repr(strat), state.key(), level, view)
 
 
@@ -1038,6 +1098,14 @@ def simulate(
     seat with a stake in a league whose bracket is not read is refused by name before any day
     (ValueError), by the field: on any tier, read there or not (:func:`stake_refused`).
 
+    Dynamic knobs (PR dynamic knobs): on each week's first simulated day the state of a variant
+    takes the week's standing (``policy.standing_of``) of each team whose strategy's knobs
+    follow ``standing`` or whose situations ``counted`` names, and holds it all week
+    (``SimState.standing``). Each morning a seat and a mirror rival decide, cap their queue and
+    blend on their knobs in force (``policy.knobs_on``): their own situation, never the seat's.
+    A strategy that names an override in a league whose bracket is not read is refused by name
+    before any day (:func:`override_refused`).
+
     With an ``on_day`` (PR trace) each seat's queue is handed a ``why`` list and the day record
     carries what it left out (``DayRecord.unqueued``); without one none is made. Either way the
     seasons are the same."""
@@ -1049,6 +1117,12 @@ def simulate(
                     raise ValueError(
                         f"seat {t} ({strat.name}) names stake {strat.stake:g}: "
                         f"{policy.stake_unread(setup)}"
+                    )
+                named = list(policy.overrides_of(getattr(strat, "knobs", None) or {}))
+                if named:
+                    raise ValueError(
+                        f"seat {t} ({getattr(strat, 'name', strat.kind)}) names override "
+                        f"{named[0]}: {policy.overrides_unread(setup)}"
                     )
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -1065,6 +1139,19 @@ def simulate(
         sorted(
             {t for t, strat in v.items() if getattr(strat, "stake", 0.0) > 0}
             | {t for t, names in counted[vi].items() if "stake" in names}
+        )
+        for vi, v in enumerate(variants)
+    ]
+    # The teams whose week's standing the state holds (PR dynamic knobs): those whose strategy
+    # follows the axis and the seats whose situations are counted.
+    standing = [
+        sorted(
+            {
+                t
+                for t, strat in v.items()
+                if policy.STANDING in policy.axes_of(getattr(strat, "knobs", None) or {})
+            }
+            | {t for t, names in counted[vi].items() if ct.SITUATIONS_COUNTED in names}
         )
         for vi, v in enumerate(variants)
     ]
@@ -1088,6 +1175,19 @@ def simulate(
                     stakes={t: stk.level(setup.spec, s.totals, t, week.number) for t in staked[vi]},
                 )
                 if staked[vi]
+                else s
+                for vi, s in enumerate(states)
+            ]
+            # And the week's standing of each team that follows it or counts it, as the stake.
+            states = [
+                replace(
+                    s,
+                    standing={
+                        t: policy.standing_of(setup.spec, s.totals, t, week.number)
+                        for t in standing[vi]
+                    },
+                )
+                if standing[vi]
                 else s
                 for vi, s in enumerate(states)
             ]
@@ -1158,7 +1258,10 @@ def simulate(
         values = [{t: tv[1] for t, tv in seat.items()} for seat in seats]
         # The blend toward recent form (PR take-in): each seat and mirror rival whose knobs blend
         # decides, and sets its lineup, on its table blended; every other on its table as read.
-        blends = [_blends(tables, variants[vi], holds[vi], s) for vi, s in enumerate(states)]
+        blends = [
+            _blends(tables, variants[vi], holds[vi], s, setup, week.number)
+            for vi, s in enumerate(states)
+        ]
         cache: dict[tuple[Any, ...], policy.Decision] = {}
         lineups: list[dict[int, dict[int, str]]] = []
         for vi, state in enumerate(states):
@@ -1190,7 +1293,7 @@ def simulate(
                     state,
                     team,
                     decision,
-                    _cap(strat),
+                    _cap(strat, setup, state, team, week.number),
                     setup.max_weekly_adds,
                     plans[vi],
                     spots,
@@ -1232,7 +1335,7 @@ def simulate(
                 if stash:
                     tallies[vi].left(decided_state, state)
                 values[vi] = {t: tables.of(label, state)[1] for t, label in holds[vi].items()}
-                blends[vi] = _blends(tables, variants[vi], holds[vi], state)
+                blends[vi] = _blends(tables, variants[vi], holds[vi], state, setup, week.number)
             states[vi] = state
             lineup = {
                 t: policy.starters_of(
@@ -1335,15 +1438,17 @@ def _counted(arms: Sequence[Arm], seated: Mapping[int, Arm]) -> dict[int, tuple[
     (:func:`counted_of`): the season fields any of the run's arms names, on each seat whose
     arm's tier reads them (``policy.GUARDED_TIERS``); and ``guard_pool`` when any arm sets it
     (PR pool), on each seat whose arm is on a tier that builds a union pool
-    (``policy.UNION_TIERS``), so the arm at 0 shows its zeros beside the other's. Empty when
-    none is named or set. A rival's seat counts none."""
+    (``policy.UNION_TIERS``), so the arm at 0 shows its zeros beside the other's; and its days
+    in each situation when any arm names an override (PR dynamic knobs), on every arm's seat,
+    whatever its tier. Empty when none is named or set. A rival's seat counts none."""
     names = counted_of(arms)
     out: dict[int, tuple[str, ...]] = {}
     for t, arm in seated.items():
         mine = tuple(
             name
             for name in names
-            if arm.tier in (policy.UNION_TIERS if name == "guard_pool" else policy.GUARDED_TIERS)
+            if name == ct.SITUATIONS_COUNTED
+            or arm.tier in (policy.UNION_TIERS if name == "guard_pool" else policy.GUARDED_TIERS)
         )
         if mine:
             out[t] = mine
@@ -1358,8 +1463,9 @@ def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
 def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | None:
     """The season scale (``policy.scale_of``) for ``arm`` in seat ``team`` on the path's first
     simulated day, on the state, beliefs (the arm's forecaster's) and statuses the seat decides
-    on there (yesterday's nothing landed, cleared held players back). None on the ranking tier
-    and a static seat. It reads the world's cached figures, draws nothing from a generator and
+    on there (yesterday's nothing landed, cleared held players back), on its knobs in force that
+    day (PR dynamic knobs: the opening, and the line, as no week is finished). None on the
+    ranking tier and a static seat. It reads the world's cached figures, draws nothing from a generator and
     decides nothing, so no outcome and no solve count changes with it."""
     if arm.tier not in ("exact", "surrogate"):
         return None
@@ -1391,12 +1497,15 @@ def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | No
     )
     if w.own(arm.forecaster) in w.split:
         beliefs = w.seat_beliefs(day, w.own(arm.forecaster), rostered_of(state))
-    blend = policy.blend_of(arm.knobs)
+    state = replace(state, day=day)
+    week = setup.week_of(day)
+    knobs = policy.knobs_on(arm.knobs, setup, state, team, None if week is None else week.number)
+    blend = policy.blend_of(knobs)
     built = policy.problem_of(
         setup,
-        replace(state, day=day),
+        state,
         team,
-        arm.knobs,
+        knobs,
         beliefs,
         status,
         returns,

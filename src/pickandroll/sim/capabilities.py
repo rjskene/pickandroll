@@ -82,6 +82,8 @@ class Mark:
 
 #: The take-in's pull request (#172, PR take-in), set when it is opened.
 TAKEIN_PR = 502
+#: Dynamic knobs' pull request (#172, PR dynamic knobs), set when it is opened.
+DYNAMIC_PR = 503
 #: The log, oldest first (by the day it landed, then by pull request).
 LOG: tuple[Mark, ...] = (
     Mark(
@@ -265,6 +267,15 @@ LOG: tuple[Mark, ...] = (
         replay_version=22,
         screen_version=7,
         takes_in=("#485", "#486", "#487"),
+    ),
+    Mark(
+        "replay-23", "2026-11-24", DYNAMIC_PR, "seat", "Dynamic knobs",
+        "A knob may take another value by the seat's situation, the season's phase or its "
+        "standing at the cut line; the screen splits levers by situation and the tune searches "
+        "overrides last.",
+        replay_version=23,
+        screen_version=8,
+        tune_version=2,
     ),
 )  # fmt: skip
 
