@@ -81,7 +81,7 @@ class Mark:
 
 
 #: The take-in's pull request (#172, PR take-in), set when it is opened.
-TAKEIN_PR = 0
+TAKEIN_PR = 502
 #: The log, oldest first (by the day it landed, then by pull request).
 LOG: tuple[Mark, ...] = (
     Mark(
