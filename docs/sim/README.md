@@ -3411,8 +3411,8 @@ built leaves the last one on the page and says so in the header.
 day. A picker lists the traces on the box (the pair and its values, where it came from, the
 season, the path and its check, whose level sits beside it), and one line never leaves the tab
 (it rides in the bar): one path proves nothing, a pair is judged on its record's figures over
-every path, on the Knobs page. The layout is the lead's working default (the mock's third cut);
-the user has not yet said yes to it. From the top:
+every path, on the Knobs page. The layout (the mock's third cut) has the user's ok of
+2026-11-23. From the top:
 
 - **the bar**, kept on screen while the page scrolls: play and pause, the clock (the week, the
   day, day n of N), a scrubber, three speeds, and a strip of the weeks with both arms' results
