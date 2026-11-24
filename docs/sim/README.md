@@ -3694,13 +3694,16 @@ path N's seat and league shape to the record's. After the path is played, a reco
 its paths' outcomes (`by_path`) is compared on them too.
 
 - **checked:** a trace whose outcomes equal the record's path.
-- **world and seat only:** a trace of a record that keeps no path's outcome (both screens
-  played before this PR), or of a path the record voided, was compared on everything else and
-  says so.
+- **world and seat only:** a trace of a record that keeps no path's outcome (both first screens,
+  played before PR trace), or of a path the record voided, was compared on everything else and
+  says so. Both first screens' records are of an earlier replay version than the code's, so a
+  trace of one now drifts on its version first, before this check is reached.
 - **drifted:** when anything differs, the command says what and stops, and writes nothing.
   With `--drifted` it writes the trace marked drifted, with what differed. A record older than
   the take-in (replay version 21 or lower) drifts on its version, and under `--drifted` its arms
   play the take-in's five knobs at today's defaults (live's engine), not as the record played them.
+  A record of version 22 drifts on its version too (PR dynamic knobs). Its arms name no override,
+  so under `--drifted` they play version 22's season, outcome for outcome.
 - **not from a record:** the arms form has nothing to check on.
 
 **What a trace holds.** The run's common part (the fit's and the code's hashes, the hash seed,
