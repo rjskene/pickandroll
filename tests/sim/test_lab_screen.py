@@ -512,7 +512,8 @@ def test_another_pair_s_file_draws_nothing_on_the_pair_in_play_and_is_said_in_wo
 
 @pytest.mark.parametrize(
     ("seconds", "quiet"),
-    [(1000, None), (1300, scv.QUIET_WORDS)],  # 40 s, then 340 s, since the last write
+    # 40 s, 240 s (more than one path's time, less than three) and 340 s since the last write.
+    [(1000, None), (1200, None), (1300, scv.QUIET_WORDS)],
 )
 def test_a_progress_file_gone_quiet_is_said_after_three_paths_time(seconds, quiet):
     """The pair's own path takes ``seconds_one`` (100 s here): the file last written at 960 s is
@@ -529,6 +530,24 @@ def test_a_progress_file_gone_quiet_is_said_after_three_paths_time(seconds, quie
     cut = {**prog, "state": "cut", "why": "made-up words"}
     v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(1300), progress=cut)
     assert v["cut"] == "rate_cv-minus: made-up words" and v["in_play"]["so_far"]["quiet"] is None
+
+
+@pytest.mark.parametrize("updated_at", ["missing", None, "not a time", 7])
+def test_a_progress_file_with_no_time_of_its_last_write_is_drawn_and_never_quiet(updated_at):
+    """A file for the pair in play whose ``updated_at`` is missing or not a time, at a late clock:
+    its paths are drawn as with one, ``quiet`` is None (nothing can say how long it has been),
+    and nothing raises."""
+    prog = progress_file("rate_cv-minus", [(800, 0.5, False), (900, -0.25, False)], at_=960)
+    if updated_at == "missing":
+        del prog["updated_at"]
+    else:
+        prog["updated_at"] = updated_at
+    v = scv.view("s-live", IN_PLAY, IN_PLAY_LANDED, clock(9000), progress=prog)
+    so = v["in_play"]["so_far"]
+    assert (so["done"], so["total"], so["n"], so["mean"]) == (2, 4, 2, 0.125)
+    assert [m["side"] for m in so["marks"]] == ["ahead", "behind"]
+    assert so["quiet"] is None and v["cut"] is None
+    json.dumps(v, allow_nan=False)
 
 
 def test_a_progress_file_whose_pair_has_landed_is_the_record_s_to_say():
