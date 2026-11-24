@@ -395,7 +395,9 @@ def test_the_cautions_size_never_judge_and_name_the_world():
     assert v["cautions"][0] == scv.SIZES_WORDS
     assert v["cautions"][1] == "One season and one seed: 2022-23, seed 1, over 12 paths a pair."
     text = json.dumps(v)
-    assert not re.search(r"optimal|winner\b(?!s)|\bpunt", text.replace("called a winner", ""))
+    # The cautions say no lever is called a winner; nothing in the view says one is, or "optimal".
+    assert not re.search(r"optimal|\bpunt", text, re.IGNORECASE)
+    assert text.count("winner") == text.count("no lever here is called a winner")
 
 
 def test_the_model_names_each_screen_s_folder_and_state():
