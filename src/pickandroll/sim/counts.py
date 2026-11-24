@@ -30,6 +30,8 @@ In a run where an arm sets ``guard_pool`` above 0 (PR pool) also, on the run's a
 the exact tier, the days a union pool was built, the adds the guard's list brought beyond the
 head and the days it brought any, the days the seat queued or claimed one of them, and the
 days the guard refused the best single move of an add of the head: such a run's only.
+In a run where an arm names an override (PR dynamic knobs) also, on every arm's seat, the days
+it spent in each situation: such a run's only.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import date
 from typing import Any
 
+from . import policy
 from .engine import HELD
 from .state import Setup, SimState
 
@@ -142,6 +145,18 @@ SEASON: dict[str, tuple[str, ...]] = {
 #: counts, with every other move.
 PLANS = ("plan_days", "plan_steps")
 
+#: The name a run's ``counted`` gives a seat whose situations it counts (PR dynamic knobs,
+#: ``run.counted_of``).
+SITUATIONS_COUNTED = "situations"
+#: The situations' counts (PR dynamic knobs), after the queue's, only in a run where an arm
+#: names an override, on every arm's seat whatever its tier: the simulated days the seat spent
+#: in each situation of each axis (``policy.SITUATIONS``), ``days_`` and the situation's name,
+#: so a reader sees how much of a season an override governed. ``phase`` has a situation every
+#: day of a league whose bracket is read; ``standing`` none in a bracket week, so its three sum
+#: to the regular weeks' days. Never a rival's. A run that names none has none, so its counts
+#: are as before.
+SITUATIONS = tuple(f"days_{w}" for axis in policy.AXES for w in policy.SITUATIONS[axis])
+
 #: The counts that part by construction between two arms and are no difference of the season:
 #: what a pair's two rows may differ in while the two arms played one season. The screen's
 #: "did nothing" sets them aside when it says whether the two arms' counts are equal
@@ -214,6 +229,13 @@ class Tally:
         self.games = dict.fromkeys(self.teams, 0)
         self._held: dict[int, set[int]] = {t: set() for t in self.teams}
         self.counted = {t: tuple(names) for t, names in (counted or {}).items() if names}
+        #: A counted seat's days in each situation (PR dynamic knobs).
+        self.spec = setup.spec
+        self.situations: dict[int, dict[str, int]] = {
+            t: dict.fromkeys(SITUATIONS, 0)
+            for t, names in self.counted.items()
+            if SITUATIONS_COUNTED in names
+        }
         #: The sets a counted seat decided past the guard, and its stake by week.
         self.past = dict.fromkeys(self.counted, 0)
         self.stakes: dict[int, dict[int, float]] = {t: {} for t in self.counted}
@@ -284,12 +306,20 @@ class Tally:
 
     def day(self, week: int, state: SimState) -> None:
         """A simulated day of ``week``: each held player's stint goes on or begins; on the
-        week's first, a counted seat's stake for the week is kept (``SimState.stakes``); in a
-        FAAB league each team's dollars are read, once the morning's claims are decided."""
+        week's first, a counted seat's stake for the week is kept (``SimState.stakes``); a
+        counted seat's day goes to its situation on each axis (PR dynamic knobs: the week's
+        phase, and the standing the runner set for the week, ``SimState.standing``); in a FAAB
+        league each team's dollars are read, once the morning's claims are decided."""
         if week not in self.weeks:
             for t, by_week in self.stakes.items():
                 if t in state.stakes:
                     by_week[week] = float(state.stakes[t])
+        if self.situations:
+            phase = policy.phase_of(self.spec, week)
+            for t, row in self.situations.items():
+                for where in (phase, state.standing.get(t)):
+                    if where is not None:
+                        row[f"days_{where}"] += 1
         self.weeks.add(week)
         for t in self.teams:
             now = {k for k, slot in state.rosters.get(t, ()) if slot in HELD}
@@ -369,6 +399,8 @@ class Tally:
                     "plan_days": float(self.plan_days.get(t, 0)),
                     "plan_steps": float(self.plan_steps.get(t, 0)),
                 }
+            if t in self.situations:
+                out[t] |= {m: float(n) for m, n in self.situations[t].items()}
         return out
 
 
@@ -376,9 +408,9 @@ def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
     when a row has them (a waiver run's), then the bid counts (a FAAB run's), then the stash
     count (a run's that names a stash threshold, PR G), then the guard's, the stake's and the
-    union pool's (a run that names them, :data:`SEASON`), then the queue's (a run with an arm that executes ``queue``, PR E)."""
+    union pool's (a run that names them, :data:`SEASON`), then the queue's (a run with an arm that executes ``queue``, PR E), then the situations' (a run with an arm that names an override, PR dynamic knobs)."""
     season = (m for group in SEASON.values() for m in group)
-    extra = (*CLAIMS, *BIDS, *STASH, *season, *PLANS)
+    extra = (*CLAIMS, *BIDS, *STASH, *season, *PLANS, *SITUATIONS)
     return (*METRICS, *(m for m in extra if any(m in r for r in rows)))
 
 
@@ -406,6 +438,8 @@ __all__ = [
     "PACING",
     "PLANS",
     "SEASON",
+    "SITUATIONS",
+    "SITUATIONS_COUNTED",
     "STASH",
     "Tally",
     "metrics_in",

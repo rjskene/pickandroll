@@ -19,7 +19,10 @@ What it holds, for each arm and each day (:meth:`Recorder.on_day`):
    that many times inside the term's figure), ``stake`` and the week's ``L`` as the seat reads
    it (as it would read it, for an arm that reads none), the adds this week and today against
    their caps, and under FAAB the dollars left and the pace's factor (None where the pace has
-   no bound);
+   no bound). Each is the value in force that morning (PR dynamic knobs,
+   ``policy.knobs_on``), and an arm that names overrides has each knob they name under its own
+   name too, beside a day's ``situation`` (its phase and its standing); an arm that names none
+   has the day it had;
 3. ``decision``: the tier and its solves, the set, its held-slot moves, the plan's steps,
    whether the plan led and whether the guard would have refused the set (``past_guard``,
    under the arm's guard ``off``), the union pool's refused count (at a ``guard_pool``), what
@@ -165,12 +168,14 @@ class Recorder:
         bracket = setup.spec is not None and week.number in setup.spec.playoff_weeks
         view = policy.week_view(setup, state, me, week.number)
         decision = self._decision(side, setup, r)
+        situation = self._situation(side, setup, state, week.number)
         self.days[side].append(
             {
                 "date": r.day.isoformat(),
                 "week": week.number,
                 "bracket": bracket,
-                "knobs": self._knobs(side, setup, state, r),
+                "knobs": self._knobs(side, setup, state, r, week.number),
+                **({} if situation is None else {"situation": situation}),
                 "decision": decision,
                 "roster": self._roster(state, r.starters.get(me, {})),
                 "matchup": {
@@ -253,9 +258,24 @@ class Recorder:
         block["final"] = {"me": _totals(mine), "them": _totals(theirs)}
         block["result"] = week_result(setup.spec, mine, theirs)
 
-    def _knobs(self, side: str, setup: Setup, state: SimState, r: rn.DayRecord) -> dict[str, Any]:
+    def _situation(
+        self, side: str, setup: Setup, state: SimState, week: int
+    ) -> dict[str, str | None] | None:
+        """The seat's situation this morning (PR dynamic knobs, ``policy.situation_of``): its
+        phase and its standing, for an arm that names an override; None for one that names none,
+        whose day is as before."""
+        if not policy.overrides_of(self.arms[side].knobs):
+            return None
+        return policy.situation_of(setup, state, self.me, week)._asdict()
+
+    def _knobs(
+        self, side: str, setup: Setup, state: SimState, r: rn.DayRecord, week: int
+    ) -> dict[str, Any]:
         arm, me = self.arms[side], self.me
-        weight = float(policy.knob(arm.knobs, "season_weight"))
+        # The knobs in force this morning (PR dynamic knobs): an arm's own where it names no
+        # override.
+        knobs = policy.knobs_on(arm.knobs, setup, state, me, week)
+        weight = float(policy.knob(knobs, "season_weight"))
         level = self._level[side]
         share = 1.0 - arm.stake * (level or 0.0)
         today = len(r.queued.get(me, ())) + sum(
@@ -265,15 +285,20 @@ class Recorder:
             "season_weight": weight,
             "season_weight_later": weight * share,
             "later_share": share,
-            "playoff_weight": float(policy.knob(arm.knobs, "playoff_weight")),
+            "playoff_weight": float(policy.knob(knobs, "playoff_weight")),
             "stake": float(arm.stake),
             "stake_level": level,
             "reads_stake": arm.stake > 0,
             "adds_week": int(state.adds_used.get(me, 0)),
             "adds_week_cap": setup.max_weekly_adds,
             "adds_today": today,
-            "adds_today_cap": int(policy.knob(arm.knobs, "daily_cap")),
+            "adds_today_cap": int(policy.knob(knobs, "daily_cap")),
         }
+        # Each knob an override names, at its value in force, under its own name: the viewer
+        # charts a number that moves (PR dynamic knobs).
+        for name in policy.overrides_of(arm.knobs):
+            base = policy.parse_override(name)[0]
+            out.setdefault(base, knobs[base])
         if setup.bidding:
             dollars = int(state.dollars.get(me, 0))
             out |= {"faab_left": dollars, "faab_budget": setup.budget}

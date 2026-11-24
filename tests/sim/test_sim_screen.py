@@ -86,7 +86,7 @@ def differ(a: rn.Arm, b: rn.Arm) -> set[str]:
 
 # --------------------------------------------------------------------------- the list
 def test_the_list_is_written_in_the_code_and_is_the_brief_s():
-    assert sc.SCREEN_VERSION == 7
+    assert sc.SCREEN_VERSION == 8
     assert sc.NAMES == (
         "protection_floor",
         "daily_cap",

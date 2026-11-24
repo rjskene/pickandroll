@@ -284,7 +284,7 @@ def test_a_replay_records_its_run(run_data: Path):
     # The seats believe only the games played: the payload names the belief, its weights and
     # where they came from (no season before 2024 has its prior season on file: the default),
     # the newcomer's rule, the pool and the news spread.
-    assert payload["replay_version"] == 22 and payload["belief"]["kind"] == "causal"
+    assert payload["replay_version"] == 23 and payload["belief"]["kind"] == "causal"
     weights = payload["belief"]["weights"]["2024"]["prior"]
     assert weights["source"] == "the default" and weights["left_out"] == {
         "2023": "prior: season 2022 is not on file"
@@ -392,7 +392,7 @@ def test_a_replay_keys_its_figures_by_forecaster(blocks_data: Path, capsys):
     out = capsys.readouterr().out
     assert "2 tasks (2 cells x 1 paths)" in out
     payload = json.loads(_written(out).read_text())
-    assert payload["replay_version"] == 22 and payload["oracle_shape"] == "stat"
+    assert payload["replay_version"] == 23 and payload["oracle_shape"] == "stat"
     assert list(payload["forecasters"]["2024"]) == ["espn", "oracle:0.2"]
     assert set(payload["results"]["2024"]) == {"espn", "oracle:0.2"}
     assert set(payload["counts"]["by_season"]["2024"]) == {"espn", "oracle:0.2"}

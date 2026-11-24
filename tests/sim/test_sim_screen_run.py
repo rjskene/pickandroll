@@ -153,7 +153,7 @@ def test_the_loop_plays_each_pair_and_lists_every_row_in_the_list_s_order(data: 
     }
     # The spec: the baseline verbatim, the levers in the list's order, the world's flags.
     spec = rec["spec"]
-    assert spec["arm"] == BASE and spec["screen_version"] == 7 and spec["fit_sha"] == rec["fit_sha"]
+    assert spec["arm"] == BASE and spec["screen_version"] == 8 and spec["fit_sha"] == rec["fit_sha"]
     assert spec["replay_version"] == ss.REPLAY_VERSION
     assert set(spec) == {"screen_version", "replay_version", "arm", "levers", "world", "fit_sha"}
     assert spec["levers"] == ["protection_floor", "weeks_ahead", "surrogate_days", "system"]

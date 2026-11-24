@@ -204,11 +204,22 @@ class _LastView:
 _SEASON_VIEW = _LastView()
 
 
+def in_force(
+    knobs: Mapping[str, Any], setup: Setup, state: SimState, team: int
+) -> Mapping[str, Any]:
+    """The knobs ``team``'s seat or mirror rival decides on this morning (#172, PR dynamic
+    knobs): ``policy.knobs_on`` in the week of ``state.day``, the team's own situation. Knobs
+    that name no override are handed on as they are."""
+    week = setup.week_of(state.day)
+    return policy.knobs_on(knobs, setup, state, team, None if week is None else week.number)
+
+
 @dataclass(frozen=True)
 class Mirror:
     """The surrogate on the shared beliefs, with the knobs and fields given (the arm's), but for
     the stash threshold, which a rival keeps at None (``policy.rival_knobs``, PR G): the knob
-    is the arm's own seat's. It is dropped when the rival is made, so two arms that differ only
+    is the arm's own seat's. Each morning it decides on those knobs in force in its own
+    situation (:func:`in_force`, PR dynamic knobs), never the seat's. It is dropped when the rival is made, so two arms that differ only
     in it face one rival and share its decisions. The arm's ``bid`` block the rival does take:
     in a FAAB league it bids by it when the arm names one (PR F2)."""
 
@@ -242,7 +253,7 @@ class Mirror:
             setup,
             state,
             team,
-            self.knobs,
+            in_force(self.knobs, setup, state, team),
             beliefs,
             status,
             returns,
@@ -305,7 +316,7 @@ class Seat:
             setup,
             state,
             team,
-            self.knobs,
+            in_force(self.knobs, setup, state, team),
             beliefs,
             status,
             returns,

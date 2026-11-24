@@ -35,9 +35,12 @@ from . import policy
 from . import run as rn
 from . import screen as sc
 
-#: The tune's version in its record: 1, the search and the confirmation of PR H2. A change to a
-#: rule below is a new version, and a folder started under another is refused.
-TUNE_VERSION = 1
+#: The tune's version in its record: 2 since PR dynamic knobs (a second stage of overrides only,
+#: from the first stage's final arm, :data:`DYNAMIC_RULE`; the confirmation then sets the
+#: dynamic best against the baseline and against the static best), 1 the search and the
+#: confirmation of PR H2. A change to a rule below is a new version, and a folder started under
+#: another is refused.
+TUNE_VERSION = 2
 #: The passes over the levers when ``--passes`` names none.
 PASSES = 1
 #: What a second step's key adds to its nudge's.
@@ -104,6 +107,39 @@ SEARCH_RULE = (
     "difference that is not above one SE is passed over, and the step says so; an oracle's "
     "cells and a season that fails espn's freeze check are shown and not read"
 )
+#: The tune's two stages (PR dynamic knobs): the static search over the list's levers, then the
+#: overrides' search from where it ends.
+STATIC_STAGE, DYNAMIC_STAGE = "static", "dynamic"
+#: The second stage's rule, for the record and the plan.
+DYNAMIC_RULE = (
+    "the second stage: from the first stage's final arm (the static best), one override at a "
+    "time (knob@axis.situation, a split lever's row in one situation), in an order fixed before "
+    "any pair; an override's values are none (the current), each of the split lever's nudges in "
+    "that situation, taken from the knob's value in force there, and each nudge again; chosen by "
+    "the first stage's rule; one pass, and it stops once the arm holds policy.MAX_OVERRIDES "
+    "overrides or when the pass takes nothing; a value the arm cannot hold (a second axis on a "
+    "knob already overridden, one override too many, a value an override's refusal meets) is "
+    "not played, with the refusal's words"
+)
+#: Why the second stage stops before a lever: the arm holds the most overrides an arm names.
+FULL = (
+    "the arm holds {n} overrides, the most an arm names (policy.MAX_OVERRIDES): the second "
+    "stage stops"
+)
+#: What the confirmation adds when the second stage moved the arm from a static best that is
+#: not the baseline: the dynamic best against the static best, the user's question.
+AGAINST_STATIC = (
+    "the dynamic best against the static best: does a schedule beat the best static setting on "
+    "a season neither was chosen on"
+)
+
+#: Why the dynamic best is not set against the static best: the first stage took nothing, so
+#: the static best is the baseline and the confirmation against it is that pair.
+STATIC_IS_BASE = (
+    "the first stage moved nothing, so the static best is the baseline: the confirmation "
+    "against the baseline is this one"
+)
+
 #: What the current arm takes from a chosen value.
 CARRY_NOTE = (
     "the current arm takes the lever's own value and nothing else: a value found on another "
@@ -240,6 +276,9 @@ def order_of(screen: Mapping[str, Any] | None, names: Sequence[str] | None) -> l
     measure = screen["measure"]
     best: dict[str, tuple[float, Mapping[str, Any]]] = {}
     for row in screen["rows"]:
+        if "override" in row:
+            # A split lever's row (PR dynamic knobs) is the second stage's (:func:`split_order_of`).
+            continue
         x = strength_of(row, measure)
         if x is None or (names is None and not row["result"]["survives"]):
             continue
@@ -264,6 +303,68 @@ def order_of(screen: Mapping[str, Any] | None, names: Sequence[str] | None) -> l
                 "lever": n,
                 "from": row["key"],
                 # An SE of zero has no finite ratio: the record keeps none and the words say so.
+                "strength": x if math.isfinite(x) else None,
+                "place": BY_SCREEN if math.isfinite(x) else BY_SCREEN + " (its SE is zero)",
+            }
+        )
+    out += [{"lever": n, "from": None, "strength": None, "place": UNSCREENED} for n in rest]
+    return out
+
+
+def _override_index(name: str) -> tuple[int, int]:
+    """An override's place: its split lever's in :data:`screen.SPLIT_NAMES`, then its
+    situation's."""
+    base, axis, where = policy.parse_override(name)
+    return sc.SPLIT_NAMES.index(f"{base}@{axis}"), policy.SITUATIONS[axis].index(where)
+
+
+def split_order_of(
+    screen: Mapping[str, Any] | None, names: Sequence[str] | None
+) -> list[dict[str, Any]]:
+    """The second stage's levers (PR dynamic knobs), each an override's name
+    (``knob@axis.situation``), in the order they are searched, fixed before any pair, by
+    :func:`order_of`'s rule on the screen's split rows: with a ``screen`` and no ``names``, the
+    overrides of its surviving split rows, the strongest first; with both, those named, the ones
+    the screen played first by their strongest played row; with ``names`` alone, the split
+    levers' order. Empty when there is none: the tune then has no second stage. A name that is
+    no split lever's situation is a KeyError (``screen.unlisted``)."""
+    if names is not None:
+        names = list(dict.fromkeys(names))
+        bad = [n for n in names if (sc.split_of(n) or (None, None, None))[2] is None]
+        if bad:
+            raise KeyError(
+                sc.unlisted(bad[0])
+                if sc.split_of(bad[0]) is None
+                else f"override {bad[0]!r} names no situation: knob@axis.situation"
+            )
+    if screen is None:
+        return [
+            {"lever": n, "from": None, "strength": None, "place": BY_HAND}
+            for n in sorted(names or (), key=_override_index)
+        ]
+    measure = screen["measure"]
+    best: dict[str, tuple[float, Mapping[str, Any]]] = {}
+    for row in screen["rows"]:
+        over = row.get("override")
+        if over is None:
+            continue
+        x = strength_of(row, measure)
+        if x is None or (names is None and not row["result"]["survives"]):
+            continue
+        if over not in best or x > best[over][0]:
+            best[over] = (x, row)
+    wanted = list(best) if names is None else names
+    ranked = sorted(
+        (n for n in wanted if n in best), key=lambda n: (-best[n][0], _override_index(n))
+    )
+    rest = sorted((n for n in wanted if n not in best), key=_override_index)
+    out = []
+    for n in ranked:
+        x, row = best[n]
+        out.append(
+            {
+                "lever": n,
+                "from": row["key"],
                 "strength": x if math.isfinite(x) else None,
                 "place": BY_SCREEN if math.isfinite(x) else BY_SCREEN + " (its SE is zero)",
             }
@@ -512,9 +613,10 @@ def values_of(
     return out
 
 
-def pair_key(turn: int, row_key: str) -> str:
-    """A played value's name in the tune's folder: its pass and its row's key."""
-    return f"p{turn}-{row_key}"
+def pair_key(turn: int, row_key: str, stage: str = STATIC_STAGE) -> str:
+    """A played value's name in the tune's folder: its pass and its row's key; a second stage's
+    (PR dynamic knobs) begins ``d`` where the first's begins ``p``."""
+    return f"{'d' if stage == DYNAMIC_STAGE else 'p'}{turn}-{row_key}"
 
 
 # --------------------------------------------------------------------------- a value's result
@@ -719,9 +821,14 @@ def step_words(step: Mapping[str, Any]) -> str:
 # --------------------------------------------------------------------------- the final set
 def tier_of(moved: Sequence[str]) -> str:
     """The tier the final set is confirmed on: the cheapest that reads every lever that moved
-    (the exact tier when one of them is the exact tier's, else the surrogate)."""
+    (the exact tier when one of them is the exact tier's, else the surrogate); an override's
+    by its knob's lever (PR dynamic knobs)."""
     tiers = {lever.name: lever.tier for lever in sc.LEVERS}
-    return "exact" if any(tiers[n] == "exact" for n in moved) else "surrogate"
+
+    def base(n: str) -> str:
+        return policy.parse_override(n)[0] if policy.is_override(n) else n
+
+    return "exact" if any(tiers[base(n)] == "exact" for n in moved) else "surrogate"
 
 
 def unread_of(
@@ -740,14 +847,19 @@ def unread_of(
 
 
 def confirm_arms(
-    base: Mapping[str, Any], final: Mapping[str, Any], tier: str, static: bool
+    base: Mapping[str, Any],
+    final: Mapping[str, Any],
+    tier: str,
+    static: bool,
+    suffix: str = "tuned",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The confirmation's pair: arm A the baseline and arm B the final arm, both on ``tier``;
-    with ``static``, both against static rivals instead of the arms' own."""
+    with ``static``, both against static rivals instead of the arms' own. Arm B is named arm
+    A's name and ``suffix``."""
     more = {"tier": tier, **({"opponents": {"kind": "static"}} if static else {})}
     a = sc.applied(base, more)
     name = rn.arm_of(a).name
-    return a, sc.applied(final, {**more, "name": f"{name}:tuned"})
+    return a, sc.applied(final, {**more, "name": f"{name}:{suffix}"})
 
 
 # --------------------------------------------------------------------------- the confirmation
@@ -992,6 +1104,7 @@ __all__ = [
     "ADVISORY",
     "AGAIN",
     "AGAINST",
+    "AGAINST_STATIC",
     "AHEAD",
     "BEATEN",
     "BEHIND",
@@ -1006,8 +1119,11 @@ __all__ = [
     "DEPENDS_BOTH",
     "DEPENDS_FORECASTER",
     "DEPENDS_SEASON",
+    "DYNAMIC_RULE",
+    "DYNAMIC_STAGE",
     "FLAT_CELL",
     "FLIPS",
+    "FULL",
     "HOLDS",
     "LEVEL",
     "MIXED",
@@ -1031,6 +1147,8 @@ __all__ = [
     "SEARCH_RULE",
     "SECOND",
     "STATIC",
+    "STATIC_IS_BASE",
+    "STATIC_STAGE",
     "TAKEN",
     "TUNE_VERSION",
     "UNCONFIRMED",
@@ -1059,6 +1177,7 @@ __all__ = [
     "second_of",
     "signs_of",
     "skipped_of",
+    "split_order_of",
     "standing_of",
     "step_words",
     "strength_of",

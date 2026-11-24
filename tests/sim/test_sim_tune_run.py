@@ -528,7 +528,7 @@ def test_the_order_is_the_screen_s_strongest_first(data: Path, screened):
         "3.00 SE)"
     ) in out
     spec = rec["spec"]
-    assert spec["levers"] == ["pool", "daily_cap"] and spec["tune_version"] == 1
+    assert spec["levers"] == ["pool", "daily_cap"] and spec["tune_version"] == 2
     assert spec["screen"] == {"name": "s1", "spec_sha": ss.spec_hash(screened["spec"])}
     assert (spec["passes"], spec["confirm"], spec["arm"]) == (1, None, BASE)
     assert {k: v for k, v in spec.items() if k in screened["spec"] and k != "levers"} == {
