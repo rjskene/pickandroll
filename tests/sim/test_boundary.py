@@ -255,6 +255,7 @@ CORE = (
     "lab.model",
     "trace",
     "lab.trace_view",
+    "lab.screen_view",
     "capabilities",
 )
 #: What the core never imports: files, processes, the network, stores on disk.

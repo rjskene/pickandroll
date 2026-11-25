@@ -251,7 +251,8 @@
     const runs = M.runs, n = notes();
     const rows = runs.map((r) => {
       const x = ruleset(r.ruleset);
-      return `<tr><td><b>${esc(r.name)}</b><br><span class="sub">${esc(r.kind)}${r.design ? " · " + esc(r.design) : ""}</span></td><td><span class="c${tone(r.ruleset)}">${esc(x ? x.name : r.ruleset)}</span></td>
+      const nm = r.kind === "screen" && r.folder ? `<a href="#screen" data-screen="${esc(r.folder)}"><b>${esc(r.name)}</b></a>` : `<b>${esc(r.name)}</b>`;
+      return `<tr><td>${nm}<br><span class="sub">${esc(r.kind)}${r.design ? " · " + esc(r.design) : ""}</span></td><td><span class="c${tone(r.ruleset)}">${esc(x ? x.name : r.ruleset)}</span></td>
       <td>${r.season_words.map(esc).join(", ") || "n/a"}<br><span class="sub">${esc(r.forecasters)}</span></td><td class="n">${esc(r.paths)}<br><span class="sub">seed ${esc(r.seed)}</span></td>
       <td class="n">${esc(r.pairs_done)}${r.pairs_left ? " · " + esc(r.pairs_left) + " left" : ""}<br><span class="sub">${esc(r.not_played)} not played</span></td><td class="n">${esc(r.cleared)}</td>
       <td class="n">${isNum(r.hours) ? fx(r.hours, 1) + " h" : "n/a"}<br><span class="sub">${r.pieces.length} piece(s)</span></td><td>${levelBadge(r.audit.level)}<br><span class="sub">${esc(r.audit.breaches)} breaches, ${esc(r.audit.voided)} voided</span></td><td>${capw(r.capability)}${r.behind_live && r.behind_live.length ? `<br><span class="sub">behind live: ${r.behind_live.map((e) => esc(e.issue)).join(", ")}</span>` : ""}${r.live_since && r.live_since.length ? `<br><span class="sub">live changed since: ${r.live_since.map((e) => esc(e.issue)).join(", ")}</span>` : ""}</td><td><code>${esc(r.code_sha || "")}</code><br><span class="sub">${esc(r.status)}</span></td></tr>`;
@@ -285,6 +286,8 @@
   // ------------------------------------------------------------------ season, openings, explainer
   // The Season tab is season.js's: a trace played day by day (PR viewer).
   const seasonPage = () => `<p class="lede">${esc(M.viewer.words)}</p><div id="season-view" class="sv"></div>`;
+  // The Screen tab is screen.js's: a screen as it is played (PR live screen).
+  const screenPage = () => `<p class="lede">${esc(M.screen_view.words)}</p><div id="screen-view" class="sv"></div>`;
   function openingsPage() {
     const n = notes(), st = { asked: "word", planned: "ok" };
     const props = n ? n.proposals.map((p) => `<div class="item"><b>${esc(p.title)}</b><span class="badge">${esc(p.state || p.date)}</span><p>${esc(p.text)}</p></div>`).join("") : "";
@@ -295,14 +298,21 @@
   const explainer = () => `<iframe class="exframe" src="/explainer" title="Season Sim Explained" referrerpolicy="no-referrer"></iframe>`;
 
   // ------------------------------------------------------------------ shell
-  const PAGES = { overview: ["Overview", overview], knobs: ["Knobs", knobs], checks: ["Checks", checksPage], runs: ["Runs", runsPage], season: ["Season", seasonPage], openings: ["Openings", openingsPage], explainer: ["Explainer", explainer] };
+  const PAGES = { overview: ["Overview", overview], knobs: ["Knobs", knobs], checks: ["Checks", checksPage], runs: ["Runs", runsPage], season: ["Season", seasonPage], screen: ["Screen", screenPage], openings: ["Openings", openingsPage], explainer: ["Explainer", explainer] };
   let stale = null;
   const pageKey = () => { const id = (location.hash || "#overview").slice(1); return PAGES[id] ? id : "overview"; };
   function header() {
     const s = M.notes && M.notes.state, g = M.generated;
-    const line = s ? `<span class="dot ${s.running ? "run" : ""}"></span>${esc(s.text)}` : `<span class="dot"></span>no notes file · built ${day(g.at)}`;
-    document.getElementById("state").innerHTML = stale ? `<span class="dot bad"></span>${esc(stale)}; the page shows the last model` : line;
+    // The status text yields to the tabs: cut when the page is narrow, its full text on hover.
+    const text = stale ? `${stale}; the page shows the last model` : s ? s.text : `no notes file · built ${day(g.at)}`;
+    const el = document.getElementById("state");
+    el.innerHTML = `<span class="dot ${stale ? "bad" : s && s.running ? "run" : ""}"></span><span class="st">${esc(text)}</span>`;
+    el.title = text;
+    topHeight();
   }
+  // The top bar's height, for what sticks under it: it grows when the status text wraps under the tabs.
+  function topHeight() { document.documentElement.style.setProperty("--toph", document.querySelector(".top").offsetHeight + "px"); }
+  window.addEventListener("resize", topHeight);
   // keep: a redraw of the same tab after the model changed keeps the reader's scroll.
   function render(keep) {
     const key = pageKey(), y = window.scrollY;
@@ -310,9 +320,10 @@
     header();
     TIPS.length = 0; tipEl.hidden = true;
     page.classList.toggle("bleed", key === "explainer");
-    document.documentElement.style.setProperty("--toph", document.querySelector(".top").offsetHeight + "px");
+    topHeight();
     page.innerHTML = PAGES[key][1]();
     if (window.SeasonView) { if (key === "season") window.SeasonView.mount(document.getElementById("season-view"), M); else window.SeasonView.stop(); }
+    if (window.ScreenView) { if (key === "screen") window.ScreenView.mount(document.getElementById("screen-view"), M); else window.ScreenView.stop(); }
     if (keep) window.scrollTo(0, y);
   }
   function showTip(el, x, y) {
@@ -327,8 +338,12 @@
     if (b) { K[b.dataset.k] = b.dataset.v; render(); return; }
     const sv = e.target.closest("button[data-sv]");
     if (sv && window.SeasonView) { window.SeasonView.act(sv.dataset.sv, sv.dataset.v); return; }
+    const sc = e.target.closest("button[data-sc]");
+    if (sc && window.ScreenView) { window.ScreenView.act(sc.dataset.sc, sc.dataset.v); return; }
     const tr = e.target.closest("a[data-trace]");
     if (tr && window.SeasonView) window.SeasonView.choose(tr.dataset.trace);
+    const sn = e.target.closest("a[data-screen]");
+    if (sn && window.ScreenView) window.ScreenView.choose(sn.dataset.screen);
     const el = e.target.closest("[data-tip]");
     if (el) showTip(el, e.clientX, e.clientY); else tipEl.hidden = true;
   });
@@ -338,8 +353,14 @@
     if (el) showTip(el, e.clientX, e.clientY); else tipEl.hidden = true;
   });
   page.addEventListener("mouseleave", () => { tipEl.hidden = true; });
-  page.addEventListener("input", (e) => { if (e.target.dataset && e.target.dataset.sv === "scrub" && window.SeasonView) window.SeasonView.act("scrub", e.target.value); });
-  page.addEventListener("change", (e) => { if (e.target.dataset && e.target.dataset.sv === "pick" && window.SeasonView) window.SeasonView.act("pick", e.target.value); });
+  page.addEventListener("input", (e) => {
+    if (e.target.dataset && e.target.dataset.sv === "scrub" && window.SeasonView) window.SeasonView.act("scrub", e.target.value);
+    if (e.target.dataset && e.target.dataset.sc === "scrub" && window.ScreenView) window.ScreenView.act("scrub", e.target.value);
+  });
+  page.addEventListener("change", (e) => {
+    if (e.target.dataset && e.target.dataset.sv === "pick" && window.SeasonView) window.SeasonView.act("pick", e.target.value);
+    if (e.target.dataset && e.target.dataset.sc === "pick" && window.ScreenView) window.ScreenView.act("pick", e.target.value);
+  });
   window.addEventListener("hashchange", () => { if (M) render(); });
   // The model is read again about once a minute while the tab is visible, and the page is drawn
   // again only when the model was built again (the server keeps it until the records change).
@@ -358,6 +379,8 @@
         if (!first && pageKey() === "explainer") { header(); return; }
         // On the Season tab a new model changes the traces' list; the trace plays on.
         if (!first && pageKey() === "season" && window.SeasonView) { header(); window.SeasonView.list(M); return; }
+        // On the Screen tab likewise: the picker's lines change; the screen's own poll moves it.
+        if (!first && pageKey() === "screen" && window.ScreenView) { header(); window.ScreenView.list(M); return; }
         render(!first);
       })
       .catch((e) => {

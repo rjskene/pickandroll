@@ -39,8 +39,10 @@ from typing import Any
 from .. import capabilities as cap
 from .. import screen as sc
 
-#: The model's own version (its shape, for the page): no record's version moves with it.
-LAB_VERSION = 1
+#: The model's own version (its shape, for the page): no record's version moves with it. 2 since
+#: PR live screen: a screen's run names its folder and its state as played (:func:`live_state`),
+#: and the notes' ``state`` may name the planned pieces.
+LAB_VERSION = 2
 
 #: The outcomes a pair records, in the page's order, with their words and which way is better.
 OUTCOMES: Mapping[str, Mapping[str, Any]] = {
@@ -194,6 +196,30 @@ LEVERS: Mapping[str, Mapping[str, str]] = {
         "label": "Guard's list size",
         "words": "the size of the guard's list the exact tier's pools take beside their best pool",
     },
+    # The take-in's (PR take-in; labels since PR live screen): the odds calibration's knobs.
+    "later_weeks": {
+        "label": "Later weeks' roster",
+        "words": (
+            "the roster a team's later week is projected on: legal (live's: held slots, told "
+            "return dates, each day's active spots) or uncapped (the simulator's rule before)"
+        ),
+    },
+    "rate_shrink": {
+        "label": "Recent-form weight",
+        "words": "the most weight a player's recent form takes in his per-game line; 0 blends none",
+    },
+    "rate_shrink_games": {
+        "label": "Recent-form games",
+        "words": "the games in the recent window at which recent form takes half its weight",
+    },
+    "rate_cv": {
+        "label": "Line's error (spread)",
+        "words": "the per-game line's own error as a share of it, which widens the week's spread",
+    },
+    "miss_rate": {
+        "label": "Missed games (spread)",
+        "words": "the chance a healthy player misses a started game, which discounts the games",
+    },
 }
 #: A tier in the page's words.
 TIERS = {
@@ -216,6 +242,13 @@ VIEWER = (
 VIEWER_NOTE = (
     "One path proves nothing: a pair is judged on its record's figures over every path, on the "
     "Knobs page."
+)
+#: What the Screen tab is (PR live screen): a screen as it is played, read from its record.
+SCREEN_VIEW = (
+    "A screen as it is played: every pair of its list on one board, the pair in play as its two "
+    "arms, the clock of its pieces, and its story from the first piece to now. Read from what the "
+    "screen writes when each pair ends, and while a pair is played from its progress file when "
+    "the run keeps one; the lab plays nothing."
 )
 
 
@@ -315,7 +348,8 @@ def _item(x: Any, section: str, i: int) -> dict[str, Any]:
 
 def notes_of(x: Any) -> dict[str, Any]:
     """The lead's notes, checked: an object of :data:`NOTE_KEYS`, each optional. ``state`` is
-    ``{"running": text or null, "text": text}``; each list section's items have the fields of
+    ``{"running": text or null, "text": text}`` and may add ``"pieces"``, the planned pieces of
+    the screen in play in words (PR live screen); each list section's items have the fields of
     :data:`NOTE_ITEMS` (required, then optional), texts all but an ``engine`` item's
     ``taken_in`` (a replay version or null), a ``date`` as YYYY-MM-DD and the choices of
     :data:`NOTE_CHOICES`; a season's ``id`` is said as 2022-23, an ``engine`` item's ``issue``
@@ -332,12 +366,16 @@ def notes_of(x: Any) -> dict[str, Any]:
     out["rulesets"] = {}
     if "state" in x:
         s = x["state"]
-        if not isinstance(s, Mapping) or set(s) - {"running", "text"}:
-            raise NotesError("notes: state: an object of running and text")
+        if not isinstance(s, Mapping) or set(s) - {"running", "text", "pieces"}:
+            raise NotesError("notes: state: an object of running, text and pieces")
         running = s.get("running")
         if running is not None:
             running = _text(running, "state.running")
         out["state"] = {"running": running, "text": _text(s.get("text"), "state.text")}
+        # The planned pieces of the screen in play, in words (PR live screen): the record knows
+        # when its pieces ran, never when the next will.
+        if "pieces" in s:
+            out["state"]["pieces"] = _text(s["pieces"], "state.pieces")
     for section in NOTE_ITEMS:
         if section not in x:
             continue
@@ -907,6 +945,41 @@ def _pieces(timing: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     ]
 
 
+#: A screen's state as played (:func:`live_state`, PR live screen).
+IN_PLAY, PAUSED, FINISHED, NOT_STARTED = (
+    "in play",
+    "paused between pieces",
+    "finished",
+    "not started",
+)
+
+
+def live_state(record: Mapping[str, Any]) -> dict[str, Any]:
+    """A screen's state as its record says it (PR live screen): ``in play`` while its last piece
+    is open (no ``finished_at``), with the pair in play the first of ``left``; ``paused between
+    pieces`` when no piece is open and pairs are left; ``finished`` when none is left; ``not
+    started`` with no piece. A piece stopped from outside before it wrote its end reads as open
+    while it is the last: the record cannot tell the two apart."""
+    pieces = (record.get("timing") or {}).get("pieces") or []
+    left = [str(k) for k in record.get("left") or []]
+    played = sum(1 for r in record.get("rows") or [] if r.get("result"))
+    if not pieces:
+        state = NOT_STARTED
+    elif pieces[-1].get("finished_at") is None:
+        state = IN_PLAY
+    elif left:
+        state = PAUSED
+    else:
+        state = FINISHED
+    return {
+        "state": state,
+        "in_play": left[0] if state == IN_PLAY and left else None,
+        "played": played,
+        "left": len(left),
+        "pieces": len(pieces),
+    }
+
+
 def _seasons(xs: Any) -> list[int]:
     """A record's seasons, from a list of them or one alone."""
     if isinstance(xs, int | str):
@@ -1325,6 +1398,8 @@ def build(
             {
                 "name": name,
                 "kind": "screen",
+                "folder": s["folder"],
+                "live": live_state(rec),
                 "ruleset": rk,
                 "seasons": _seasons(world.get("seasons")),
                 "forecasters": _words(world.get("forecasters")),
@@ -1630,6 +1705,7 @@ def build(
         "capabilities": _capabilities(engine, timeline, notes is not None, runs),
         "notes": None if notes is None else dict(notes),
         "viewer": {"title": "Season", "words": VIEWER, "note": VIEWER_NOTE},
+        "screen_view": {"title": "Screen", "words": SCREEN_VIEW},
         "generated": dict(generated) | {"lacks": sorted(dict.fromkeys(lacks))},
     }
 
@@ -1735,7 +1811,8 @@ def _ruleset_card(
     best_up = max(better, key=z, default=None)
     screens = [x for x in mine if x["kind"] == "screen"]
     latest = screens[-1] if screens else None
-    base_cell = (baseline or {}).get("cells", [None])[0] if baseline else None
+    # A baseline whose pair file holds no cells has none (a model that fails here fails whole).
+    base_cell = ((baseline or {}).get("cells") or [None])[0] if baseline else None
     stages = _stages(rs, rk, m, base_cell, best_up, tunes)
     tuned = [t["name"] for t in tunes if t["ruleset"] == rk]
     for st, run in zip(
@@ -2294,21 +2371,28 @@ def _season_flags(
 __all__ = [
     "COUNTS",
     "FAMILY",
+    "FINISHED",
+    "IN_PLAY",
     "LAB_VERSION",
     "LEVERS",
     "LUCK",
     "NOTE_ITEMS",
     "NOTE_KEYS",
+    "NOT_STARTED",
     "ONE_SE",
     "OUTCOMES",
+    "PAUSED",
     "RIVAL_KEYS",
     "TWO_SE",
     "NotesError",
     "baseline_of",
     "build",
+    "capability_of",
     "chips",
     "diff_of",
     "domain",
+    "lever_label",
+    "live_state",
     "luck",
     "notes_of",
     "rules_label",

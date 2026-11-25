@@ -2031,3 +2031,75 @@ def test_a_second_stage_from_the_baseline_says_the_static_best_is_the_baseline(d
         "note": tn.AGAINST_STATIC,
         "status": tn.STATIC_IS_BASE,
     }
+
+
+# --------------------------------------------------------------------------- the progress file
+def test_a_tune_keeps_its_pair_in_play_s_progress_file_and_records_as_without_it(
+    data: Path, tmp_path: Path, monkeypatch
+):
+    """PR live screen: a tune's folder keeps the progress file while a search pair and a
+    confirmation pair are played, removes it after each, and its records are byte for byte the
+    ones a run with ``cli.PROGRESS`` off writes (two copies of the module's data root, the clock
+    pinned; the tune's own record all but its measured ``timing``)."""
+    from tests.sim.test_sim_progress import Pinned
+
+    watched, unwatched = tmp_path / "watched", tmp_path / "unwatched"
+    for root in (watched, unwatched):
+        shutil.copytree(data, root, symlinks=True)
+    monkeypatch.setattr(ss, "datetime", Pinned)
+    monkeypatch.setattr(ss, "task_paired", made_up(WIDER))
+    seen: list[tuple[str, str, bool, int | None]] = []
+    start, done, close = ss.PairWatch.start, ss.PairWatch.done, ss.PairWatch.close
+
+    def look(w: ss.PairWatch, step: str) -> None:
+        f = w.folder / reader.PROGRESS_FILE
+        seen.append(
+            (step, w.key, f.exists(), json.loads(f.read_text())["done"] if f.exists() else None)
+        )
+
+    def watched_start(self, made, first):
+        start(self, made, first)
+        look(self, "start")
+
+    def watched_done(self, index, result):
+        done(self, index, result)
+        look(self, "done")
+
+    def watched_close(self):
+        close(self)
+        look(self, "close")
+
+    monkeypatch.setattr(ss.PairWatch, "start", watched_start)
+    monkeypatch.setattr(ss.PairWatch, "done", watched_done)
+    monkeypatch.setattr(ss.PairWatch, "close", watched_close)
+    code, out = tune(watched, levers=("pool",), name="progress")
+    assert code == 0, out
+    keys = list(dict.fromkeys(k for _, k, _, _ in seen))
+    assert any(k.startswith("p1-") for k in keys) and any(k.startswith("confirm-") for k in keys)
+    for key in keys:
+        mine = [(step, there, n) for step, k, there, n in seen if k == key]
+        assert mine[-1] == ("close", False, None), key  # gone once its record is written
+        counts = [n for step, there, n in mine[:-1] if there]
+        assert len(counts) == len(mine) - 1 and counts == sorted(counts) and counts[-1] >= 1, key
+        assert reader.read_tune_pair(watched, "progress", key) is not None
+    assert not (reader.tune_dir(watched, "progress") / reader.PROGRESS_FILE).exists()
+    # The same tune with the writing off: the same records.
+    monkeypatch.setattr(ss, "PROGRESS", False)
+    code, out = tune(unwatched, levers=("pool",), name="progress")
+    assert code == 0, out
+
+    def kept(root: Path) -> dict[str, bytes]:
+        folder = reader.tune_dir(root, "progress")
+        return {
+            f.name: f.read_bytes().replace(str(root).encode(), b"<root>")
+            for f in sorted(folder.iterdir())
+        }
+
+    mine, theirs = kept(watched), kept(unwatched)
+    assert set(mine) == set(theirs) and reader.TUNE_FILE in mine
+    for f in sorted(set(mine) - {reader.TUNE_FILE}):
+        assert mine[f] == theirs[f], f
+    a, b = (json.loads(x[reader.TUNE_FILE]) for x in (mine, theirs))
+    assert {k: v for k, v in a.items() if k != "timing"} == {
+        k: v for k, v in b.items() if k != "timing"
+    }

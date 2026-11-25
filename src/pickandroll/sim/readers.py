@@ -38,6 +38,11 @@ RUNS_DIR = SIM_DIR / "runs"
 SCREENS_DIR = SIM_DIR / "screens"
 #: A screen's record in its folder.
 SCREEN_FILE = "screen.json"
+#: A screen's or a tune's progress file (PR live screen): the pair in play, rewritten whole each
+#: time one of its tasks comes back and removed once the pair's record is written. Not a ``.json``
+#: name, so nothing that reads a folder's records (the tune's resume, the lab's model) takes it for
+#: one; only the lab's Screen tab reads it.
+PROGRESS_FILE = "in-play.progress"
 #: The tunes' folders (#172, PR H2): one a tune, a file a played pair and the tune's record.
 TUNES_DIR = SIM_DIR / "tunes"
 #: A tune's record in its folder.
@@ -539,6 +544,17 @@ def write_screen_pair(data_dir: Path, name: str, key: str, payload: Mapping[str,
     return _write_whole(screen_pair_path(data_dir, name, key), payload)
 
 
+def write_progress(folder: Path, payload: Mapping[str, Any]) -> Path:
+    """The pair in play's progress file in ``folder`` (:data:`PROGRESS_FILE`), whole: written beside
+    and moved into place, never appended."""
+    return _write_whole(folder / PROGRESS_FILE, payload, compact=True)
+
+
+def clear_progress(folder: Path) -> None:
+    """The progress file removed, once its pair's record is written (none there is no error)."""
+    (folder / PROGRESS_FILE).unlink(missing_ok=True)
+
+
 # --------------------------------------------------------------------------- a tune's folder (PR H2)
 def tune_dir(data_dir: Path, name: str) -> Path:
     """A tune's folder under ``data/sim/tunes/``, its name made safe as a run's is."""
@@ -633,6 +649,7 @@ __all__ = [
     "FIT_DIR",
     "PERIOD_ONE",
     "PERIOD_SOURCE",
+    "PROGRESS_FILE",
     "RUNS_DIR",
     "SCREENS_DIR",
     "SCREEN_FILE",
@@ -641,6 +658,7 @@ __all__ = [
     "TUNE_FILE",
     "SimReadError",
     "belief_weights",
+    "clear_progress",
     "code_sha",
     "espn_rates",
     "fit_hash",
@@ -665,6 +683,7 @@ __all__ = [
     "trace_path",
     "tune_dir",
     "tune_pair_path",
+    "write_progress",
     "write_run",
     "write_screen",
     "write_screen_pair",
