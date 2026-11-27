@@ -49,6 +49,59 @@
     return `${w.seasons.map(esc).join(", ") || "no season"} · ${esc(w.paths)} paths · seed ${esc(w.seed)} · ${w.tiers.map(esc).join(", ")}`;
   }
 
+  // ------------------------------------------------------------------ results (PR results tab)
+  // One card a screen or tune, newest first, in plain words: every figure and every line is the
+  // model's (model.results_of); a difference inside one SE is level, never better or worse.
+  const sideOf = (d) => (d.side === "better" ? "up" : d.side === "worse" ? "down" : "lvl");
+  const judged = (d, o) => `<b class="${sideOf(d)}">${signed(d.mean, o)}</b> ± ${pm(d.se, o)} <small class="sub">${esc(d.words)}</small>`;
+  const cellOf = (x, m, many) => `<div>${many ? `<span class="sub">${esc(x.season_words)} ${esc(x.forecaster)}: </span>` : ""}${judged(x.measure, m)}<br><span class="sub">playoff odds</span> ${judged(x.made_playoffs, "made_playoffs")}</div>`;
+  const change = (e, m, many) => `<li><b>${esc(e.label)}</b>${e.values ? ` <span class="sub">${vals(e)}</span>` : ""}${e.cells.map((x) => cellOf(x, m, many)).join("")}</li>`;
+  function resScreen(c) {
+    const s = c.screen, m = c.measure, n = s.counts, many = s.cells > 1;
+    const base = s.baseline.map((b) => `<div class="hero"><div><div class="big">${val(b.measure.mean, m)}<span class="pm">± ${pm(b.measure.se, m)}</span></div><small class="sub">${esc(c.measure_words)} a season</small></div>
+        <div class="stat"><b>${val(b.made_playoffs.mean, "made_playoffs")}</b><small>makes the playoffs</small></div></div>
+      <p class="sub">${esc(b.season_words)} · ${esc(b.forecaster)} · ${esc(b.paths)} paths${s.baseline_tier ? " · " + esc(s.baseline_tier) : ""}</p>`).join("") || `<p class="empty">${esc(s.no_baseline)}</p>`;
+    const tally = [["up", n.up, "cleared one SE, better"], ["down", n.down, "cleared one SE, worse"], ["lvl", n.level, "inside one SE: level"], ["lvl", n.did_nothing, "did nothing"]]
+      .map(([k, v, w]) => `<div class="stat"><b class="${k}">${esc(v)}</b><small>${w}</small></div>`).join("");
+    const rest = [n.mixed ? `${esc(n.mixed)} better in one cell and worse in another` : "", n.not_played ? `${esc(n.not_played)} not played` : "", n.left ? `${esc(n.left)} left to play` : ""].filter(Boolean).join(" · ");
+    const up = s.up.length ? `<div class="k">Every change that cleared one SE upward, best first</div><ul class="res-list">${s.up.map((e) => change(e, m, many)).join("")}</ul>` : `<p class="sub">No change cleared one SE upward.</p>`;
+    const down = s.down.length ? `<div class="k">The largest that cleared one SE downward${s.down_more ? `, and ${esc(s.down_more)} more` : ""}</div><ul class="res-list">${s.down.map((e) => change(e, m, many)).join("")}</ul>` : "";
+    const en = s.engine;
+    const engine = !en ? "" : `<div class="res-engine"><div class="k">The engine's own update</div><p class="sub">${esc(en.words)}</p>${!en.played ? `<p class="empty">${esc(en.status || "not played")}</p>` : en.did_nothing ? `<p class="sub">did nothing</p>` : en.cells.map((x) => cellOf(x, m, many)).join("")}</div>`;
+    return `<div class="k">Today's settings</div>${base}
+      <div class="k">The single changes played, on ${esc(c.measure_words)}</div><div class="stats res-tally">${tally}</div>${rest ? `<p class="sub">${rest}</p>` : ""}
+      ${up}${down}${engine}`;
+  }
+  function resTune(c) {
+    const t = c.tune, m = c.measure, f = t.final, cf = t.confirmation;
+    const levers = t.levers.map((l) => `<li><b>${esc(l.label)}</b> <span class="sub">${l.from != null ? "from " + esc(l.from) : ""}${t.stages > 1 && l.stage ? " · " + esc(l.stage) : ""}</span> · <b class="${l.moved ? "up" : "lvl"}">${esc(l.words)}</b>${l.values.length ? `<ul>${l.values.map((v) => `<li>${v.values ? vals(v) : esc(v.nudge)}: ${v.mean == null ? esc(v.status || "") : judged(v, m)}${v.standing ? ` <span class="sub">(${esc(v.standing)})</span>` : ""}</li>`).join("")}</ul>` : ""}</li>`).join("");
+    const set = f ? (f.set.length ? f.set.map((x) => `${esc(x.label)} <b>${esc(x.value)}</b>`).join(" · ") : esc(f.words)) : esc(t.final_words);
+    const cells = cf.cells.map((x) => `<div class="stat res-conf"><span class="k">Against ${esc(x.rivals)} · ${esc(x.forecaster)}</span>${judged(x.measure, m)}<br><span class="sub">playoff odds</span> ${judged(x.made_playoffs, "made_playoffs")}${x.read ? "" : `<small>not read</small>`}</div>`).join("");
+    return `<div class="k">The search, lever by lever, on ${esc(c.measure_words)}</div><ul class="res-list">${levers || `<li class="empty">No lever in its order.</li>`}</ul>
+      <div class="k">Final set</div><p>${set}</p>
+      <div class="k">The test${cf.season_words ? ` on ${esc(cf.season_words)}` : ""}: ${esc(cf.status)}</div>
+      ${cells ? `<div class="stats">${cells}</div>` : ""}
+      ${cf.verdict ? `<p class="verdict">${esc(cf.verdict.words || cf.verdict.state)}</p>` : ""}`;
+  }
+  function resCard(c) {
+    const r = c.reading;
+    const read = r ? `<div class="entry"><div class="when"><span class="badge ${esc(r.level)}">${esc(r.level)}</span>${esc(r.date)}</div><p>${esc(r.text)}</p></div>` : `<p class="empty">${esc(c.no_reading)}</p>`;
+    const watch = c.kind === "screen" && c.folder ? ` <a href="#screen" data-screen="${esc(c.folder)}">Watch it on the Screen tab.</a>` : "";
+    return `<details class="panel res rs t${tone(c.ruleset)}"${c.folded ? "" : " open"}><summary><span class="k">${esc(c.ruleset_name)} · ${esc(c.kind)} · ${esc(c.days || "no piece yet")} · ${esc(c.state_words)}</span>
+        <h2>${esc(c.name)}</h2><span class="sub">played on ${capw(c.capability)}${c.folded ? " · folded: of an engine live has left" : ""}</span></summary>
+      ${c.earlier ? `<p class="caution">${esc(c.earlier)}</p>` : ""}
+      <p class="did">${esc(c.did)}${watch}</p>
+      ${c.kind === "screen" ? resScreen(c) : resTune(c)}
+      <div class="k">The lead's reading</div>${read}
+      <div class="k">What this does not show</div><ul class="res-not">${c.not_shown.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`;
+  }
+  function resultsPage() {
+    const R = M.results;
+    const how = `<section class="panel res-how"><h2>How to read this</h2><ul>${R.how.map((h) => `<li><b>${esc(h.term)}</b>: ${esc(h.words)}</li>`).join("")}</ul></section>`;
+    return `<p class="lede">What each screen and tune found, in plain words, newest first. <b>Every figure is read from the records</b>; a run played on an engine live has left is folded shut.</p>
+      ${how}${R.cards.length ? R.cards.map(resCard).join("") : `<section class="panel"><p class="empty">${esc(R.none)}</p></section>`}`;
+  }
+
   // ------------------------------------------------------------------ overview
   function rsCard(x) {
     const m = x.measure, b = x.baseline && x.baseline.cells[0];
@@ -185,7 +238,7 @@
     if (K.rs === "both" && !pair) K.rs = withScreen[0].key;
     const opts = withScreen.map((x) => [x.key, x.name]).concat(pair ? [["both", "Side by side"]] : []);
     const one = withScreen.find((x) => x.key === K.rs);
-    return `<p class="lede">Every change the screens tried, B (the change) against A (the baseline) on the same simulated seasons. A dot is the change's effect; its bar is one SE either side, the thin line two. <b>Right is better for the seat.</b></p>
+    return `<p class="caution">${esc(M.knobs.line)}</p><p class="lede">Every change the screens tried, B (the change) against A (the baseline) on the same simulated seasons. A dot is the change's effect; its bar is one SE either side, the thin line two. <b>Right is better for the seat.</b></p>
       <section class="panel"><div class="controls">
         <div class="ctl"><span class="k">Ruleset</span>${seg("rs", opts)}</div>
         <div class="ctl"><span class="k">Outcome</span>${seg("out", [["measure", "League's measure"], ...Object.keys(M.outcomes).map((o) => [o, M.outcomes[o].label])])}</div>
@@ -298,9 +351,10 @@
   const explainer = () => `<iframe class="exframe" src="/explainer" title="Season Sim Explained" referrerpolicy="no-referrer"></iframe>`;
 
   // ------------------------------------------------------------------ shell
-  const PAGES = { overview: ["Overview", overview], knobs: ["Knobs", knobs], checks: ["Checks", checksPage], runs: ["Runs", runsPage], season: ["Season", seasonPage], screen: ["Screen", screenPage], openings: ["Openings", openingsPage], explainer: ["Explainer", explainer] };
+  const PAGES = { results: ["Results", resultsPage], overview: ["Overview", overview], knobs: ["Knobs", knobs], checks: ["Checks", checksPage], runs: ["Runs", runsPage], season: ["Season", seasonPage], screen: ["Screen", screenPage], openings: ["Openings", openingsPage], explainer: ["Explainer", explainer] };
   let stale = null;
-  const pageKey = () => { const id = (location.hash || "#overview").slice(1); return PAGES[id] ? id : "overview"; };
+  // The first tab, Results, is the page a bare address opens (PR results tab).
+  const pageKey = () => { const id = (location.hash || "#results").slice(1); return PAGES[id] ? id : "results"; };
   function header() {
     const s = M.notes && M.notes.state, g = M.generated;
     // The status text yields to the tabs: cut when the page is narrow, its full text on hover.

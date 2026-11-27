@@ -418,6 +418,13 @@ def check_lines(m: dict[str, Any]) -> list[str]:
             else ""
         )
     )
+    cards = (m.get("results") or {}).get("cards") or []
+    lines.append(
+        f"results: {len(cards)} card(s) ({sum(1 for c in cards if c['kind'] == 'screen')} screen, "
+        f"{sum(1 for c in cards if c['kind'] == 'tune')} tune), "
+        f"{sum(1 for c in cards if c['folded'])} folded shut, "
+        f"{sum(1 for c in cards if c['reading'])} with the lead's reading"
+    )
     caps = m.get("capabilities") or {}
     now = caps.get("current") or {}
     last = caps.get("latest") or {}

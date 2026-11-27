@@ -1193,7 +1193,8 @@ def test_the_page_is_titled_and_has_every_tab():
     html = (STATIC / "index.html").read_text()
     assert "<title>Season Sim Lab</title>" in html
     js = (STATIC / "app.js").read_text()
-    for tab in ("Overview", "Knobs", "Checks", "Runs", "Season", "Openings", "Explainer"):
+    for tab in ("Results", "Overview", "Knobs", "Checks", "Runs", "Season", "Screen", "Openings",
+                "Explainer"):  # fmt: skip
         assert f'["{tab}",' in js
     assert 'src="/explainer"' in js
 

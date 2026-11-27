@@ -3604,8 +3604,10 @@ command will not start, and a file that turns bad while the lab runs is said in 
 `generated.notes` and left out. Without a notes file, the sections that need one say "no notes
 file".
 
-**The pages.** Overview (a card a ruleset, the four stages, the queue and the latest
-assessments); Knobs (one ruleset, or the first two side by side with whether a shared row agrees
+**The pages.** Results (**The Results tab** below; the first tab, and the page a bare address
+opens); Overview (a card a ruleset, the four stages, the queue and the latest
+assessments); Knobs (a line at its top: one row is one pair of a screen, one knob moved one step
+against today's settings; then one ruleset, or the first two side by side with whether a shared row agrees
 or splits, by outcome, raw or in SEs, by lever or best first); Checks (the luck bars and the flags
 a ruleset, the seasons' ledger, the assessment log); Runs (the table, the time line, the short
 looks, the traces, the tunes; a screen's name opens it on the Screen tab); Season (**The Season
@@ -3619,6 +3621,47 @@ While the tab is visible the page asks for the model about once a minute and dra
 when the model was built again, keeping the reader's tab, Knobs switches and scroll (the
 Explainer's frame is not reloaded); a tune's pieces show as they land. A model that could not be
 built leaves the last one on the page and says so in the header.
+
+**The Results tab** (PR results tab) says what each run found, in plain words, for a reader who
+has never seen the simulator: one card a screen or tune under the data root, newest first (a
+written replay has none; its line stays on Runs). It is the model's `results`
+(`model.results_of`): every figure on it is a record's, every line the model's.
+
+- **How to read this**, always at the top: a pair, a screen and a tune in a line each
+  (`model.READ_HOW`); a screen finds candidates and judges none, and only a tune's last step is
+  evidence.
+- **A card's head**: the ruleset, screen or tune, the Central days it was played (from its pieces),
+  played, in play, paused between pieces or not started, and the capability it was played on. A
+  run of an engine live has left (behind live when it started, or live changed since: the
+  Overview's "of an engine live has left") is folded shut, and says so in words: a figure from
+  before a capability mark is not carried across the mark.
+- **What it did**, a sentence from the record: a screen's count of single changes, its paths and
+  season; a tune's levers, its paths and season, the season of its test and, while it is not
+  finished, how many levers are searched so far.
+- **What came out.** A screen: today's settings on the league's measure and the playoff odds (arm
+  A of the baseline row); how many single changes cleared one SE upward, downward, both ways in
+  different cells, stayed inside one SE (level), did nothing, were not played or are left; every
+  change that cleared upward, best first, and the three largest that cleared downward (and how
+  many more), each with its values, its difference and SE on the measure and on the playoff
+  odds. The row that turns live's update off at once (`all-off`, `screen.ALL_OFF`) is not a knob:
+  it is shown apart as the engine's own update, read the other way round (the update on less
+  off). A tune: each lever searched, its values with their differences and the record's
+  standing, "moved to" or "stayed at"; the levers not searched yet (the first "in play now" while
+  a piece plays); the final set; and its test on the season no search has played, against the
+  run's rivals and against static rivals with the playoff odds, and the record's verdict in its
+  own words (or the record's status: not played yet, nothing to confirm).
+- **The lead's reading**: the newest assessment in the notes whose `run` names the run, else "not
+  written yet". The notes need no new key.
+- **What this does not show**, by kind: the run's seasons and one seed; that a screen sizes and
+  never judges, or that a tune's search is not evidence and its confirmation is; and that nothing
+  here changes a live setting.
+
+A difference is better or worse only beyond one SE, on the outcome's own direction, and always
+with its SE; inside one SE it is level. A screen's card reads its rows as the Knobs page does, so
+a screen of version 6 (whose pair records hold no `by_path`) reads as one of version 8. A tune's
+state is read as a screen's is (`model.tune_state`): its record writes `left` only when a piece
+ends with work left, so while a piece plays the open piece says it is in play, and the Runs
+page's tune says "in play" too (it said "finished" before). The lab's version is 3 since this PR.
 
 **The Season tab** (PR viewer) plays a trace: one path of one pair, both arms at once, day by
 day. A picker lists the traces on the box (the pair and its values, where it came from, the
@@ -3782,7 +3825,8 @@ screen's folder and its state (the lab's version 2).
 **`lab --check`** builds the model once and prints a line a section, counts and words only:
 what was read and refused, the rulesets, the knobs, each ruleset's checks and stages, the runs,
 the traces by their check's level, a screen in play or paused (`live:`, its name, its state and
-its pairs played and left; PR live screen), the capabilities (now, the last update, the versions the runs
+its pairs played and left; PR live screen), the Results tab's cards (`results:`, by kind, how many
+are folded shut and how many have the lead's reading; PR results tab), the capabilities (now, the last update, the versions the runs
 were played on, what the simulator is behind live in, the runs of an engine live has left), the
 seasons' ledger, the notes, the
 explainer and what is not recorded. Then it exits.

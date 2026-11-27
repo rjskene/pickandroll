@@ -347,3 +347,21 @@ details.same { margin-top: 8px; color: var(--muted); } details.same summary { cu
 .sc-both { margin: 6px 0; }
 .caution + .caution { margin-top: 8px; }
 @media (max-width: 700px) { .sc-row { grid-template-columns: 1fr; gap: 4px; } }
+
+/* results (PR results tab): one card a run, folded shut when it was played on an engine live has left */
+.res > summary { cursor: pointer; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.res > summary::-webkit-details-marker { display: none; }
+.res > summary h2::before { content: "▾ "; color: var(--dim); }
+.res:not([open]) > summary h2::before { content: "▸ "; }
+.res > .k, .res-engine .k { display: block; margin-top: 14px; }
+.res .did { margin-top: 10px; max-width: 900px; }
+.res .did a { color: var(--accent); }
+.res .hero { align-items: flex-end; }
+.res-tally { margin-top: 4px; }
+.res-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.res-list ul { margin: 2px 0 0; padding-left: 16px; }
+.res-not { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+.res-engine { border-left: 3px solid var(--them); background: var(--panel-2); padding: 2px 12px 10px; margin-top: 14px; border-radius: 0 6px 6px 0; }
+.res-conf { min-width: 220px; }
+.res-how ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; max-width: 900px; }
+.lvl { color: var(--text); }

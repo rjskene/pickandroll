@@ -20,6 +20,8 @@ The sections, as the page has them:
 - **capabilities** (PR capabilities): the simulator's log of marks (``sim/capabilities.py``),
   the live engine's changes from the notes, what each run was played on and was behind live
   in, and where a ruleset's figures cross a mark;
+- **results** (PR results tab): one card a screen or tune, newest first, each run's outcome in
+  plain words (:func:`results_of`);
 - **notes**: the lead's notes as given (:func:`notes_of` checks them);
 - **generated**: when, on what code, what was read and what was refused.
 """
@@ -38,11 +40,14 @@ from typing import Any
 
 from .. import capabilities as cap
 from .. import screen as sc
+from .. import tune as tn
 
 #: The model's own version (its shape, for the page): no record's version moves with it. 2 since
 #: PR live screen: a screen's run names its folder and its state as played (:func:`live_state`),
-#: and the notes' ``state`` may name the planned pieces.
-LAB_VERSION = 2
+#: and the notes' ``state`` may name the planned pieces. 3 since PR results tab: the model's
+#: ``results`` (one card a screen or tune, :func:`results_of`), the Knobs page's line, and a
+#: tune's state as played (:func:`tune_state`) on its run.
+LAB_VERSION = 3
 
 #: The outcomes a pair records, in the page's order, with their words and which way is better.
 OUTCOMES: Mapping[str, Mapping[str, Any]] = {
@@ -823,6 +828,7 @@ def tune_summary(
             else None
         )
     left = record.get("left")
+    state = tune_state(record)["state"]
     verdict = conf.get("verdict") or {}
     breaches = voided = 0
     for p in pairs.values():
@@ -833,7 +839,10 @@ def tune_summary(
         "name": run,
         "ruleset": rk,
         "measure": measure,
-        "status": "left for the next piece" if left else "finished",
+        # A tune's record leaves ``left`` empty while a piece plays: its last piece is open.
+        "status": "in play"
+        if state == IN_PLAY
+        else ("left for the next piece" if left else "finished"),
         "left": None if not left else {"next": left.get("next"), "stopped": left.get("stopped")},
         "order": [
             {
@@ -976,6 +985,29 @@ def live_state(record: Mapping[str, Any]) -> dict[str, Any]:
         "in_play": left[0] if state == IN_PLAY and left else None,
         "played": played,
         "left": len(left),
+        "pieces": len(pieces),
+    }
+
+
+def tune_state(record: Mapping[str, Any]) -> dict[str, Any]:
+    """A tune's state as its record says it (PR results tab), as :func:`live_state` reads a
+    screen's: ``in play`` while its last piece is open (a tune writes ``left`` only when a piece
+    ends with work left), ``paused between pieces`` when a piece ended with ``left``,
+    ``finished`` otherwise, ``not started`` with no piece; with the steps played and the levers
+    of its order."""
+    pieces = (record.get("timing") or {}).get("pieces") or []
+    if not pieces:
+        state = NOT_STARTED
+    elif pieces[-1].get("finished_at") is None:
+        state = IN_PLAY
+    elif record.get("left"):
+        state = PAUSED
+    else:
+        state = FINISHED
+    return {
+        "state": state,
+        "steps": len(record.get("steps") or []),
+        "levers": len(record.get("order") or []),
         "pieces": len(pieces),
     }
 
@@ -1310,6 +1342,496 @@ def capability_flags(
     return out
 
 
+# --------------------------------------------------------------------------- the Results tab
+#: How to read a card (PR results tab), always shown at the top of the Results tab.
+READ_HOW: tuple[Mapping[str, str], ...] = (
+    {
+        "term": "A pair",
+        "words": (
+            "the same seasons played twice, once with today's settings and once with one "
+            "change. The difference is that change's effect."
+        ),
+    },
+    {
+        "term": "A screen",
+        "words": (
+            "many pairs, one knob moved one step in each. A screen of N rows tested N single "
+            "changes. It finds candidates and judges none."
+        ),
+    },
+    {
+        "term": "A tune",
+        "words": (
+            "takes the few changes that looked good, tries more of their values on the same "
+            "season, then plays the chosen set once on a season no search has played. Only "
+            "that last step is evidence."
+        ),
+    },
+)
+#: The Knobs page's line at its top (PR results tab).
+KNOBS_LINE = (
+    "One row is one pair of a screen: one knob moved one step against today's settings, B (the "
+    "change) against A (today's settings)."
+)
+#: The screen's row that turns every change the simulator took in from live off at once
+#: (``screen.ALL_OFF``: its lever's key ``all`` and its one step ``off``). Its card shows it apart
+#: from the knobs, as the engine's own update, the other way round: the update on less off.
+ENGINE_ROW = "all-off"
+ENGINE_WORDS = (
+    "Live's own update, all of it at once: the changes the simulator took in from live's odds "
+    "calibration ({knobs}), on against all of them off. The row's arm B turns them off; it is "
+    "read here the other way round, the update on less off. It is the engine's change, not a "
+    "knob's."
+)
+#: What a card of a run played on an engine live has left says, folded shut by default.
+EARLIER_WORDS = (
+    "Played on an engine live has left ({changes}): its figures are of the earlier engine. A "
+    "figure from before a capability mark is not carried across the mark."
+)
+#: A run no assessment in the notes names.
+NO_READING = "not written yet"
+#: A difference's side as a card says it: better and worse only beyond one SE, always with it.
+SIDE_WORDS = {
+    "better": "better, by more than one SE",
+    "worse": "worse, by more than one SE",
+    "level": "level: inside one SE",
+    "none": "no SE",
+}
+#: A run's state in a card's head.
+STATE_WORDS = {
+    FINISHED: "played",
+    IN_PLAY: "in play",
+    PAUSED: "paused between pieces",
+    NOT_STARTED: "not started",
+}
+#: The rows a screen's card lists that pointed down: the largest, by the size of the difference.
+DOWN_SHOWN = 3
+#: What no card shows, by kind (the first line is the run's own count of seasons).
+NOT_SHOWN = {
+    "screen": (
+        "A screen sizes changes and judges none: a row that cleared one SE is a candidate for a "
+        "tune, not a finding."
+    ),
+    "tune": (
+        "A tune's search is not evidence: it chose its values on the season it searched. Its "
+        "confirmation, played once on a season no search has played, is."
+    ),
+}
+NO_LIVE = "Nothing here changes a live setting: that is your ruling."
+NO_RUNS = "No screen or tune is recorded yet."
+
+
+def row_label(name: str) -> str:
+    """A lever's or an override's name as the page says it: the lab's label for the knob, and an
+    override's situation after it (``rate_cv@standing.behind`` is "Line's error (spread) ·
+    standing behind")."""
+    knob, _, where = str(name).partition("@")
+    label = lever_label(knob)
+    return f"{label} · {where.replace('.', ' ')}" if where else label
+
+
+def judged(d: Mapping[str, Any], cleared: bool | None = None, flip: bool = False) -> dict[str, Any]:
+    """A difference as a card shows it: its mean and SE, and its side, better or worse only when
+    it clears one SE (``cleared``, the record's own rule when given; else its size above its SE),
+    level inside it, "none" without an SE. ``flip`` reads it the other way round (A less B)."""
+    mean, se = d.get("mean"), d.get("se")
+    if flip and mean is not None:
+        mean = -mean
+    clears = (
+        (mean is not None and se is not None and abs(mean) > se) if cleared is None else cleared
+    )
+    if mean is None or se is None:
+        side = "none"
+    elif not clears or not mean:
+        side = "level"
+    else:
+        side = "better" if mean * d.get("better", 1) > 0 else "worse"
+    return {"mean": mean, "se": se, "side": side, "words": SIDE_WORDS[side]}
+
+
+def _judged(diff: Mapping[str, Any], outcome: str, **kw: Any) -> dict[str, Any]:
+    d = diff.get(outcome) or {}
+    return judged(d | {"better": OUTCOMES[outcome]["better"]}, **kw)
+
+
+def days_words(pieces: Sequence[Mapping[str, Any]]) -> str | None:
+    """The (Central) days a run was played, from its pieces' times: "Nov 24, 2026", "Nov 24 to
+    Nov 26, 2026"; None with no time."""
+    times = [
+        t
+        for p in pieces
+        for t in (_when(p.get("started_at")), _when(p.get("finished_at")))
+        if t is not None
+    ]
+    if not times:
+        return None
+    a, b = (date.fromisoformat(cap.central_day(t)) for t in (min(times), max(times)))
+
+    def day(d: date) -> str:
+        return f"{d:%b} {d.day}"
+
+    if a == b:
+        return f"{day(a)}, {a.year}"
+    if a.year == b.year:
+        return f"{day(a)} to {day(b)}, {b.year}"
+    return f"{day(a)}, {a.year} to {day(b)}, {b.year}"
+
+
+def reading_of(notes: Mapping[str, Any] | None, run: str) -> dict[str, Any] | None:
+    """The newest assessment in the notes that names ``run`` (by date; on one date, the first in
+    the file, which lists the newest first); None when none does."""
+    got = [
+        (i, a) for i, a in enumerate((notes or {}).get("assessments") or []) if a.get("run") == run
+    ]
+    if not got:
+        return None
+    _, a = max(got, key=lambda p: (p[1]["date"], -p[0]))
+    return {"date": a["date"], "level": a["level"], "text": a["text"]}
+
+
+def not_shown_of(kind: str, seasons: Sequence[int]) -> list[str]:
+    """What a card does not show, by its kind: the run's seasons and seed, what its kind cannot
+    say, and that nothing changes a live setting."""
+    n = len(seasons)
+    many = "One season" if n == 1 else f"{n} seasons" if n else "No season recorded"
+    first = (
+        f"{many} and one seed: another season or another seed can move any row."
+        if kind == "screen"
+        else f"{many} searched and one seed; the test is one more season, played once."
+    )
+    return [first, NOT_SHOWN[kind], NO_LIVE]
+
+
+def _cells_of(rows: Sequence[Mapping[str, Any]], measure: str, flip: bool = False) -> list[dict]:
+    return [
+        {
+            "cell": r["cell"],
+            "season_words": season_words(r["season"]),
+            "forecaster": r["forecaster"],
+            "paths": r["paths"],
+            "measure": _judged(r["diff"], measure, cleared=r["survives"], flip=flip),
+            "made_playoffs": _judged(r["diff"], "made_playoffs", flip=flip),
+        }
+        for r in rows
+    ]
+
+
+def screen_result(
+    record: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    baseline: Mapping[str, Any] | None,
+    measure: str,
+) -> dict[str, Any]:
+    """What came out of a screen, from its record (its rows as :func:`screen_rows` reads them):
+    the baseline's line on the measure and the playoff odds; how many of its single changes
+    cleared the screen's rule upward, downward, both (in different cells), how many stayed
+    inside one SE, did nothing, were not played or are left; every row that cleared upward (or
+    both ways), best first, and the :data:`DOWN_SHOWN` largest that cleared downward; and the
+    row that turns live's update off (:data:`ENGINE_ROW`), apart and read the other way round."""
+    by_key: dict[str, list[Mapping[str, Any]]] = {}
+    for r in rows:
+        by_key.setdefault(str(r["key"]), []).append(r)
+    left = {str(k) for k in record.get("left") or []}
+    counts = dict.fromkeys(
+        ("listed", "played", "up", "down", "mixed", "level", "did_nothing", "not_played", "left"), 0
+    )
+    entries: list[dict[str, Any]] = []
+    engine = None
+    for key, cells in by_key.items():
+        first = cells[0]
+        if key == ENGINE_ROW:
+            engine = {
+                "key": key,
+                "played": bool(first["played"]),
+                "status": first.get("status"),
+                "words": ENGINE_WORDS.format(
+                    knobs=", ".join(lever_label(k).lower() for k in sc.ALL_OFF)
+                ),
+                "did_nothing": bool(first.get("did_nothing")),
+                "cells": _cells_of(cells, measure, flip=True) if first["played"] else [],
+            }
+            continue
+        counts["listed"] += 1
+        if not first["played"]:
+            counts["left" if key in left else "not_played"] += 1
+            continue
+        counts["played"] += 1
+        if first["did_nothing"]:
+            counts["did_nothing"] += 1
+            continue
+        got = _cells_of(cells, measure)
+        sides = {c["measure"]["side"] for c in got}
+        kind = (
+            "mixed"
+            if {"better", "worse"} <= sides
+            else "up"
+            if "better" in sides
+            else "down"
+            if "worse" in sides
+            else "level"
+        )
+        counts[kind] += 1
+        if kind != "level":
+            entries.append(
+                {
+                    "key": key,
+                    "lever": first["lever"],
+                    "label": row_label(str(first["lever"])),
+                    "nudge": first["nudge"],
+                    "values": first["values"],
+                    "tier": first["tier"],
+                    "kind": kind,
+                    "cells": got,
+                }
+            )
+
+    def size(e: Mapping[str, Any]) -> float:
+        return max(abs(c["measure"]["mean"] or 0.0) for c in e["cells"])
+
+    def best(e: Mapping[str, Any]) -> float:
+        better = OUTCOMES[measure]["better"]
+        return max((c["measure"]["mean"] or 0.0) * better for c in e["cells"])
+
+    up = sorted((e for e in entries if e["kind"] in ("up", "mixed")), key=best, reverse=True)
+    down = sorted((e for e in entries if e["kind"] == "down"), key=size, reverse=True)
+    cells = (baseline or {}).get("cells") or []
+    return {
+        "baseline": [
+            {
+                "cell": c["cell"],
+                "season_words": c["season_words"],
+                "forecaster": c["forecaster"],
+                "paths": c["paths"],
+                "measure": c["outcomes"][measure],
+                "made_playoffs": c["outcomes"]["made_playoffs"],
+            }
+            for c in cells
+        ],
+        "baseline_tier": None if not baseline else TIERS.get(baseline["tier"], baseline["tier"]),
+        "no_baseline": None
+        if cells
+        else "The baseline is not recorded: no played row of this screen sets nothing but its "
+        "tier in both arms.",
+        "counts": counts,
+        "cells": len({r["cell"] for r in rows if r["played"]}),
+        "up": up,
+        "down": down[:DOWN_SHOWN],
+        "down_more": max(0, len(down) - DOWN_SHOWN),
+        "engine": engine,
+        "rule": "cleared one SE on the league's measure, the screen's own rule",
+    }
+
+
+def _screen_did(run: Mapping[str, Any], result: Mapping[str, Any]) -> str:
+    n = result["counts"]["listed"]
+    seasons = ", ".join(run["season_words"]) or "no recorded season"
+    out = (
+        f"Tested {n} single change{'s' if n != 1 else ''}, one knob moved one step in each, "
+        f"each as a pair against today's settings on {run['paths']} paths of {seasons}"
+        f" ({run['forecasters'] or 'no recorded'} forecaster)."
+    )
+    if result["engine"] is not None:
+        out += " It also played live's own update turned off at once, as one more pair."
+    c = result["counts"]
+    if c["left"]:
+        out += f" {c['played']} of {n} played so far, {c['left']} left."
+    return out
+
+
+def tune_result(record: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
+    """What came out of a tune, from its record (and :func:`tune_summary`): each lever searched,
+    in the order played, with the values tried and their differences, and "moved to" or
+    "stayed"; the levers of its order not searched yet (the first in play while a piece plays);
+    the final set; the confirmation on the season no search has played, against the run's rivals
+    and against static rivals, with the playoff odds, and the record's own verdict in its
+    words."""
+    measure = summary["measure"]
+    state = tune_state(record)["state"]
+    raw = record.get("steps") or []
+    levers = []
+    for st, step in zip(summary["steps"], raw, strict=False):
+        values = []
+        taken_to = None
+        for v in st["values"]:
+            d = judged({"mean": v["mean"], "se": v["se"], "better": OUTCOMES[measure]["better"]})
+            values.append(
+                {
+                    "key": v["key"],
+                    "nudge": v["nudge"],
+                    "values": v["values"],
+                    "status": v["status"],
+                    "why": v["why"],
+                    "standing": v["standing"],
+                    "taken": v["taken"],
+                    **d,
+                }
+            )
+            if v["taken"] and v["values"]:
+                taken_to = v["values"]["b"]
+        moved = st["taken"] is not None
+        levers.append(
+            {
+                "lever": st["lever"],
+                "label": row_label(str(st["lever"])),
+                "pass": st["pass"],
+                "stage": step.get("stage"),
+                "from": st["from"],
+                "searched": True,
+                "moved": moved,
+                "words": f"moved to {taken_to}" if moved else f"stayed at {st['from']}",
+                "values": values,
+            }
+        )
+    done = {(x["lever"], x["pass"]) for x in levers}
+    waiting = [o for o in summary["order"] if (o["lever"], 1) not in done]
+    for i, o in enumerate(waiting):
+        levers.append(
+            {
+                "lever": o["lever"],
+                "label": o["label"],
+                "pass": 1,
+                "stage": None,
+                # An order's ``from`` is the screen's row that placed it, not a value: none here.
+                "from": None,
+                "searched": False,
+                "moved": False,
+                "words": "in play now" if i == 0 and state == IN_PLAY else "not searched yet",
+                "values": [],
+            }
+        )
+    final = summary["final"]
+    conf = summary["confirmation"]
+    cells = [
+        {
+            "kind": c["kind"],
+            "rivals": tn.RIVALS_WORDS.get(c["kind"], c["kind"]),
+            "forecaster": c["forecaster"],
+            "read": c["read"],
+            "measure": judged(c["measure"] | {"better": OUTCOMES[measure]["better"]}),
+            "made_playoffs": judged(c["made_playoffs"] | {"better": 1}),
+            "finish": c["finish"],
+        }
+        for c in conf["cells"]
+    ]
+    status = conf["status"]
+    if status is None:
+        status = (
+            "not played yet; the search comes first"
+            if state in (IN_PLAY, PAUSED, NOT_STARTED)
+            else "no confirmation recorded"
+        )
+    stages = {x["stage"] for x in levers if x["stage"]}
+    return {
+        "levers": levers,
+        "stages": len(stages),
+        "final": None
+        if final is None
+        else {
+            "set": [
+                {"lever": k, "label": row_label(k), "value": v} for k, v in final["set"].items()
+            ],
+            "words": None if final["set"] else "no lever moved: the final set is today's settings",
+        },
+        "final_words": None if final is not None else "not chosen yet: the search is not done",
+        "confirmation": {
+            "season_words": conf["season_words"],
+            "status": status,
+            "played": conf["status"] == tn.CONFIRMED,
+            "cells": cells,
+            "verdict": conf["verdict"],
+        },
+        "left": None
+        if state == FINISHED
+        else {
+            "searched": sum(1 for x in levers if x["searched"]),
+            "levers": len(summary["order"]),
+            "confirmation": conf["status"] != tn.CONFIRMED,
+        },
+    }
+
+
+def _tune_did(record: Mapping[str, Any], run: Mapping[str, Any], result: Mapping[str, Any]) -> str:
+    spec = record.get("spec") or {}
+    names = [
+        str(x) for x in spec.get("levers") or [o.get("lever") for o in record.get("order") or []]
+    ]
+    labels = ", ".join(row_label(n).lower() for n in names) or "no lever"
+    seasons = ", ".join(run["season_words"]) or "no recorded season"
+    confirm = spec.get("confirm")
+    test = (
+        f"its test is {season_words(int(confirm))}, a season no search has played, played once "
+        "with the set it chose"
+        if isinstance(confirm, int) and not isinstance(confirm, bool)
+        else "no season was named for its test"
+    )
+    k = len(names)
+    out = (
+        f"Searched {k} lever{'s' if k != 1 else ''} ({labels}), one at a time, each over a few "
+        f"values on {run['paths']} paths of {seasons}; {test}."
+    )
+    left = result["left"]
+    if left is not None:
+        out += f" {left['searched']} of {left['levers']} levers searched so far" + (
+            ", then the confirmation." if left["confirmation"] else "."
+        )
+    return out
+
+
+def results_of(
+    sources: Sequence[Mapping[str, Any]],
+    by_name: Mapping[str, Mapping[str, Any]],
+    names: Mapping[str, str],
+    notes: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """The Results tab (PR results tab): one card a screen or tune, newest first, each with its
+    head (ruleset, kind, days, state, capability; folded shut when it was played on an engine
+    live has left), what it did, what came out (:func:`screen_result`, :func:`tune_result`), the
+    lead's newest reading of it (:func:`reading_of`) and what it does not show
+    (:func:`not_shown_of`); with :data:`READ_HOW` and the Knobs page's line. ``sources``: each
+    ``{"kind", "name", "record", ...}``, with ``rows`` and ``baseline`` for a screen and
+    ``summary`` for a tune; ``by_name``: the model's runs by name; ``names``: each ruleset's
+    name by key."""
+    cards = []
+    for src in sources:
+        run = by_name[src["name"]]
+        kind = src["kind"]
+        record = src["record"]
+        state = run["live"]["state"]
+        earlier = list(run.get("behind_live") or []) + list(run.get("live_since") or [])
+        measure = record.get("measure") or "matchup_wins"
+        card: dict[str, Any] = {
+            "name": run["name"],
+            "kind": kind,
+            "folder": run.get("folder"),
+            "ruleset": run["ruleset"],
+            "ruleset_name": names.get(run["ruleset"], run["ruleset"]),
+            "measure": measure,
+            "measure_words": sc.MEASURE_WORDS.get(measure, measure),
+            "days": days_words(run["pieces"]),
+            "state": state,
+            "state_words": STATE_WORDS.get(state, state),
+            "capability": run.get("capability"),
+            "capability_words": cap_words(run.get("capability")),
+            "earlier": None if not earlier else EARLIER_WORDS.format(changes=_changes(earlier)),
+            "folded": bool(earlier),
+            "started_at": run.get("started_at"),
+            "reading": reading_of(notes, run["name"]),
+            "no_reading": NO_READING,
+            "not_shown": not_shown_of(kind, run["seasons"]),
+            "screen": None,
+            "tune": None,
+        }
+        if kind == "screen":
+            card["screen"] = screen_result(record, src["rows"], src["baseline"], measure)
+            card["did"] = _screen_did(run, card["screen"])
+        else:
+            card["tune"] = tune_result(record, src["summary"])
+            card["did"] = _tune_did(record, run, card["tune"])
+        cards.append(card)
+    cards.sort(key=lambda c: (_t(c["started_at"]), c["name"]), reverse=True)
+    return {"how": [dict(x) for x in READ_HOW], "cards": cards, "none": NO_RUNS}
+
+
 def build(
     screens: Sequence[Mapping[str, Any]],
     tunes: Sequence[Mapping[str, Any]],
@@ -1336,6 +1858,7 @@ def build(
     tune_list: list[dict[str, Any]] = []
     by_rs: dict[str, dict[str, Any]] = {}
     info: dict[str, dict[str, Any]] = {}  # a screen's baseline arm and baseline, by name
+    sources: list[dict[str, Any]] = []  # each screen's and tune's, for the Results tab
 
     def ruleset(
         rules: Mapping[str, Any], label: Any, world: Mapping[str, Any], shapes: Any, started: Any
@@ -1433,6 +1956,9 @@ def build(
         bl = baseline_of(name, rec, pairs)
         by_rs[rk].setdefault("baselines", []).append((started, bl))
         info[name] = {"arm": spec.get("arm"), "baseline": bl}
+        sources.append(
+            {"kind": "screen", "name": name, "record": rec, "rows": mine, "baseline": bl}
+        )
 
     # Tunes.
     for t in tunes:
@@ -1455,10 +1981,13 @@ def build(
         read = (spec.get("screen") or {}).get("name")
         apart = (rec.get("screen") or {}).get("replay_version")
         read_rv = apart.get("screen") if isinstance(apart, Mapping) else spec.get("replay_version")
+        sources.append({"kind": "tune", "name": name, "record": rec, "summary": summary})
         runs.append(
             {
                 "name": name,
                 "kind": "tune",
+                "folder": t["folder"],
+                "live": tune_state(rec),
                 "ruleset": rk,
                 "seasons": _seasons(world.get("seasons")),
                 "confirm": spec.get("confirm"),
@@ -1675,7 +2204,8 @@ def build(
         "levers": {k: dict(v) for k, v in LEVERS.items()},
         "tiers": dict(TIERS),
         "rulesets": rulesets,
-        "knobs": {"rows": rows, "domains": domains, "shared": shared},
+        "knobs": {"rows": rows, "domains": domains, "shared": shared, "line": KNOBS_LINE},
+        "results": results_of(sources, by_name, {rs["key"]: rs["name"] for rs in rulesets}, notes),
         "checks": {
             "all": all_luck,
             "comparisons": {
