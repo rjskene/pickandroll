@@ -3658,11 +3658,17 @@ written replay has none; its line stays on Runs). It is the model's `results`
   pair, the engine's change and not a knob's; and the difference with the update on, against it
   off (the row read the other way round). A tune: each lever searched, its values with their differences and the record's
   standing, "moved to" or "stayed at"; the levers not searched yet (the first "in play now" while
-  a piece plays); the final set; and its test on the season no search has played, against the
+  a piece plays). The record holds a lever's step only once its search is decided, so the lever in
+  its search (in play, or paused between pieces) lists the pairs of that search already written
+  in the folder (`model.written_of`), each as a searched value is listed, with how many are played
+  so far and that nothing is decided until all its values are played. Only this tune's pairs of
+  the first stage's first pass for that lever, that no step names, are shown; a pair whose audit
+  voided a path is counted and not shown, and a pair that cannot say all of that is left out.
+  Then the final set; and its test on the season no search has played, against the
   run's rivals and against static rivals with the playoff odds, and the record's verdict in its
   own words (or the record's status: not played yet, nothing to confirm).
 - **The lead's reading**: the newest assessment in the notes whose `run` names the run, else "not
-  written yet". The notes need no new key.
+  written yet".
 - **What this does not show**, by kind: the run's seasons and one seed; that a screen sizes and
   never judges, or that a tune's search is not evidence and its confirmation is; and that nothing
   here changes a live setting.

@@ -1444,6 +1444,10 @@ NOT_SHOWN = {
     ),
 }
 NO_LIVE = "Nothing here changes a live setting: that is your ruling."
+#: A tune's lever in play, under its pairs already written (PR results tab, the lead's notes).
+UNDECIDED = "Nothing is decided yet: the search picks among its values when all of them are played."
+#: The pairs of a lever in play held back from its card: the audit voided a path of each.
+HELD_WORDS = "{n} more played and not shown: the audit voided a path of {it}."
 NO_RUNS = "No screen or tune is recorded yet."
 
 
@@ -1700,13 +1704,77 @@ def _screen_did(run: Mapping[str, Any], result: Mapping[str, Any]) -> str:
     return out
 
 
-def tune_result(record: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
+def written_of(
+    name: str,
+    record: Mapping[str, Any],
+    pairs: Mapping[str, Mapping[str, Any]],
+    lever: str,
+    measure: str,
+) -> tuple[list[dict[str, Any]], int]:
+    """The pairs of ``lever``'s search already written in a tune's folder while its step is
+    not (a record holds a lever's step only once its search is decided): each pair whose own
+    ``tune`` block names this tune, the first stage, its first pass, this lever and a played
+    value, and that no step's value names as its file; in the order played, each as a searched
+    lever's value is listed (no standing, nothing taken). A pair whose audit voided a path is
+    held back and counted, never shown. A pair that cannot say all of that is left out: the
+    card says what the folder can tell it and guesses nothing."""
+    named = {
+        str(v.get("file"))
+        for st in record.get("steps") or []
+        for v in st.get("values") or []
+        if v.get("file")
+    }
+    got: list[tuple[str, str, dict[str, Any]]] = []
+    held = 0
+    for file, payload in pairs.items():
+        t = payload.get("tune")
+        if not isinstance(t, Mapping) or file in named:
+            continue
+        own = (t.get("name"), t.get("stage"), t.get("pass"), t.get("lever"), t.get("status"))
+        if own != (name, tn.STATIC_STAGE, 1, lever, sc.PLAYED):
+            continue
+        res = t.get("result") or {}
+        if int(res.get("voided") or 0):
+            held += 1
+            continue
+        vals = t.get("values")
+        d = judged(
+            {
+                "mean": _num(res.get("mean")),
+                "se": _num(res.get("se")),
+                "better": OUTCOMES[measure]["better"],
+            }
+        )
+        value = {
+            "key": t.get("key"),
+            "nudge": t.get("nudge"),
+            "values": None
+            if not isinstance(vals, Mapping)
+            else {"a": _shown(vals.get("a")), "b": _shown(vals.get("b"))},
+            "status": t.get("status"),
+            "why": t.get("why"),
+            "standing": None,
+            "taken": False,
+            **d,
+        }
+        got.append((str(payload.get("finished_at") or ""), file, value))
+    got.sort(key=lambda g: (g[0], g[1]))
+    return [g[2] for g in got], held
+
+
+def tune_result(
+    record: Mapping[str, Any],
+    summary: Mapping[str, Any],
+    pairs: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     """What came out of a tune, from its record (and :func:`tune_summary`): each lever searched,
     in the order played, with the values tried and their differences, and "moved to" or
     "stayed"; the levers of its order not searched yet (the first in play while a piece plays);
     the final set; the confirmation on the season no search has played, against the run's rivals
     and against static rivals, with the playoff odds, and the record's own verdict in its
-    words."""
+    words. The lever in play (or paused in its search) lists its pairs already written in the
+    folder (``pairs``, :func:`written_of`): nothing is decided until all its values are
+    played."""
     measure = summary["measure"]
     state = tune_state(record)["state"]
     raw = record.get("steps") or []
@@ -1742,11 +1810,27 @@ def tune_result(record: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[s
                 "moved": moved,
                 "words": f"moved to {taken_to}" if moved else f"stayed at {st['from']}",
                 "values": values,
+                "written_words": None,
+                "held_words": None,
             }
         )
     done = {(x["lever"], x["pass"]) for x in levers}
     waiting = [o for o in summary["order"] if (o["lever"], 1) not in done]
     for i, o in enumerate(waiting):
+        # Only the first lever waiting is in play, or paused in its search between pieces.
+        now = i == 0 and state in (IN_PLAY, PAUSED)
+        written, held = (
+            written_of(str(summary["name"]), record, pairs or {}, str(o["lever"]), measure)
+            if now
+            else ([], 0)
+        )
+        n = len(written) + held
+        if i == 0 and state == IN_PLAY:
+            words = "in play now"
+        elif now and n:
+            words = STATE_WORDS[PAUSED]
+        else:
+            words = "not searched yet"
         levers.append(
             {
                 "lever": o["lever"],
@@ -1757,8 +1841,16 @@ def tune_result(record: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[s
                 "from": None,
                 "searched": False,
                 "moved": False,
-                "words": "in play now" if i == 0 and state == IN_PLAY else "not searched yet",
-                "values": [],
+                "words": words,
+                "values": written,
+                "written_words": None
+                if words == "not searched yet"
+                else f"{n} value{'s' if n != 1 else ''} played so far. {UNDECIDED}"
+                if n
+                else "No value of it is played yet.",
+                "held_words": None
+                if not held
+                else HELD_WORDS.format(n=held, it="it" if held == 1 else "each"),
             }
         )
     final = summary["final"]
@@ -1900,7 +1992,7 @@ def results_of(
             card["screen"] = screen_result(record, src["rows"], src["baseline"], measure, update)
             card["did"] = _screen_did(run, card["screen"])
         else:
-            card["tune"] = tune_result(record, src["summary"])
+            card["tune"] = tune_result(record, src["summary"], src.get("pairs"))
             card["did"] = _tune_did(record, run, card["tune"])
         cards.append(card)
     cards.sort(key=lambda c: (_t(c["started_at"]), c["name"]), reverse=True)
@@ -2062,7 +2154,9 @@ def build(
         read = (spec.get("screen") or {}).get("name")
         apart = (rec.get("screen") or {}).get("replay_version")
         read_rv = apart.get("screen") if isinstance(apart, Mapping) else spec.get("replay_version")
-        sources.append({"kind": "tune", "name": name, "record": rec, "summary": summary})
+        sources.append(
+            {"kind": "tune", "name": name, "record": rec, "summary": summary, "pairs": pairs}
+        )
         runs.append(
             {
                 "name": name,

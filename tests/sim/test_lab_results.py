@@ -143,6 +143,34 @@ def test_the_row_that_turns_live_s_update_off_is_shown_apart_the_other_way_round
     assert card(built([one]), "s-plain")["screen"]["engine"] is None
 
 
+def test_a_row_the_record_says_does_not_survive_is_level_though_past_its_se():
+    """The screen's own rule decides, not the size of the mean above its SE (mutant 18)."""
+    held = row("held", "pool", 1.2, 0.5)
+    held["result"]["survives"] = False
+    s = screen("s-rule", ONE_WIN, [row("base", "pool", 0.0, did_nothing=True), held])
+    r = card(built([s]), "s-rule")["screen"]
+    assert r["counts"]["level"] == 1 and r["counts"]["up"] == 0 and r["up"] == []
+    (cell,) = md._cells_of(
+        [
+            x
+            for x in md.screen_rows("s-rule", "rs", s["record"], s["pairs"], {})
+            if x["key"] == "held"
+        ],
+        "matchup_wins",
+    )
+    assert (cell["measure"]["mean"], cell["measure"]["side"]) == (1.2, "level")
+
+
+def test_judged_reads_the_outcome_s_direction():
+    """On an outcome where lower is better (the final rank), a fall past its SE is better; no
+    card shows such an outcome today, so this pins the function (mutant 3)."""
+    assert md.OUTCOMES["rank"]["better"] == -1
+    fall = md._judged({"rank": {"mean": -0.8, "se": 0.3}}, "rank")
+    rise = md._judged({"rank": {"mean": 0.8, "se": 0.3}}, "rank")
+    assert (fall["side"], rise["side"]) == ("better", "worse")
+    assert md._judged({"rank": {"mean": -0.2, "se": 0.3}}, "rank")["side"] == "level"
+
+
 def test_a_row_that_cleared_both_ways_in_two_cells_is_listed_with_both():
     mix = row("mix", "pool", 1.0, 0.5, season="2023")
     mix["result"]["cells"]["2024"] = {
@@ -218,6 +246,13 @@ def test_a_finished_tune_s_card_reads_its_search_its_set_and_its_test():
     assert run["measure"]["mean"] == 0.3 and run["measure"]["side"] == "better"
     assert static["measure"]["mean"] == 0.15
     assert run["made_playoffs"]["side"] == "level"
+    # Playoff odds that rise past their SE are better (mutant 24).
+    up = tune("t-odds", ONE_WIN)
+    up["record"]["confirmation"]["cells"]["run"]["prior"]["difference"]["made_playoffs"] = {
+        "mean": 0.06, "se": 0.02, "n": 8,
+    }  # fmt: skip
+    odds = card(built([], [up]), "t-odds")["tune"]["confirmation"]["cells"][0]["made_playoffs"]
+    assert (odds["mean"], odds["side"]) == (0.06, "better")
     assert cf["verdict"]["words"] == "made-up verdict"  # the record's own words
     assert t["left"] is None and t["next"] is None
     assert c["title"] == f"{c['ruleset_name']}: tune"
@@ -261,6 +296,113 @@ def test_a_tune_in_play_says_what_is_done_and_what_is_left():
     # The Runs page's line says it too (it said "finished" before: its record has no ``left``).
     assert m["tunes"][0]["status"] == "in play"
     assert m["runs"][0]["live"]["state"] == md.IN_PLAY
+
+
+def test_a_tune_whose_first_piece_ended_and_second_is_open_is_in_play():
+    """The tune on the box today: its last piece decides, not its first (mutant 4)."""
+    t = _second_lever(tune("t-two", ONE_WIN))
+    t["record"]["timing"]["pieces"].append(
+        {"started_at": "2026-01-03T12:00:00+00:00", "finished_at": None, "played": []}
+    )
+    assert md.tune_state(t["record"])["state"] == md.IN_PLAY
+    c = card(built([], [t]), "t-two")
+    assert (c["state"], c["state_words"], c["days"]) == (md.IN_PLAY, "in play", "Jan 3, 2026")
+    assert c["tune"]["levers"][1]["words"] == "in play now"
+
+
+def test_of_two_levers_waiting_only_the_first_is_in_play():
+    """Mutant 16: every waiting lever said "in play now"."""
+    t = _second_lever(tune("t-three", ONE_WIN))
+    t["record"]["order"].append({"lever": "daily_cap", "from": 2, "strength": 0.5, "place": 3})
+    t["record"]["timing"]["pieces"][0]["finished_at"] = None
+    levers = card(built([], [t]), "t-three")["tune"]["levers"]
+    assert [x["words"] for x in levers] == ["moved to 20", "in play now", "not searched yet"]
+    assert levers[2]["values"] == [] and levers[2]["written_words"] is None
+
+
+def _written(name: str, key: str, mean: float, at: str, **tune_kw) -> dict:
+    """A pair of the lever ``min_gain`` written in a tune's folder, as the tune writes one."""
+    b = {"up": 1, "down": 0.25, "again": 2}[key.split("-")[-1]]
+    block_ = {
+        "name": name, "tune_version": 1, "stage": "static", "pass": 1, "key": key,
+        "lever": "min_gain", "nudge": f"min_gain: 0.5 to {b}", "values": {"a": 0.5, "b": b},
+        "status": "played", "why": None, "tier": "surrogate",
+        "result": {"mean": mean, "se": 0.2, "voided": 0, "signs": "above", "clears": False},
+    }  # fmt: skip
+    for k, v in tune_kw.items():
+        if k == "voided":
+            block_["result"]["voided"] = v
+        else:
+            block_[k] = v
+    return {"kind": "replay", "tune": block_, "finished_at": at}
+
+
+def _written_tune(name: str, paused: bool) -> dict:
+    """One decided lever (``pool``) and one in its search (``min_gain``) with two pairs
+    written, beside pairs the card must not show: another tune's, the second stage's, a second
+    pass's, one whose audit voided a path, one with no tune block, and the confirmation's."""
+    t = _second_lever(tune(name, ONE_WIN))
+    rec = t["record"]
+    if paused:
+        rec["left"] = {"next": "p1-min_gain-again", "stopped": "the piece's minutes ran out"}
+    else:
+        rec["timing"]["pieces"][0]["finished_at"] = None
+    t["pairs"] = {
+        "p1-min_gain-down.json": _written(name, "min_gain-down", -0.5, "2026-01-03T10:50:00+00:00"),
+        "p1-min_gain-up.json": _written(name, "min_gain-up", 0.4, "2026-01-03T10:20:00+00:00"),
+        "other.json": _written("t-other", "min_gain-up", 3.0, "2026-01-03T10:21:00+00:00"),
+        "d1-min_gain-up.json": _written(name, "min_gain-up", 3.0, "2026-01-03T10:22:00+00:00",
+                                        stage="dynamic"),
+        "p2-min_gain-up.json": _written(name, "min_gain-up", 3.0, "2026-01-03T10:23:00+00:00",
+                                        **{"pass": 2}),
+        "p1-min_gain-again.json": _written(name, "min_gain-again", 3.0,
+                                           "2026-01-03T10:24:00+00:00", voided=1),
+        "bare.json": {"kind": "replay", "finished_at": "2026-01-03T10:25:00+00:00"},
+        "confirm-run.json": {"kind": "replay"},
+    }  # fmt: skip
+    return t
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_the_lever_in_its_search_lists_its_pairs_already_written(paused):
+    """The record holds a lever's step only once its search is decided: until then its card
+    lists the pairs of that search already written in the folder, and says nothing is decided.
+    Only this tune's pairs of the first stage's first pass for that lever; one whose audit
+    voided a path is counted and not shown (the lead's notes, item 2)."""
+    c = card(built([], [_written_tune("t-w", paused)]), "t-w")
+    assert c["state_words"] == ("paused between pieces" if paused else "in play")
+    decided, now = c["tune"]["levers"]
+    assert decided["words"] == "moved to 20" and decided["written_words"] is None
+    assert now["words"] == ("paused between pieces" if paused else "in play now")
+    assert not now["searched"] and not now["moved"]
+    # In the order played: the up pair was written first.
+    assert [(v["key"], v["values"], v["mean"], v["side"]) for v in now["values"]] == [
+        ("min_gain-up", {"a": "0.5", "b": "1"}, 0.4, "better"),
+        ("min_gain-down", {"a": "0.5", "b": "0.25"}, -0.5, "worse"),
+    ]
+    assert all(v["standing"] is None and not v["taken"] for v in now["values"])
+    assert now["written_words"] == (
+        "3 values played so far. Nothing is decided yet: the search picks among its values when "
+        "all of them are played."
+    )
+    assert now["held_words"] == "1 more played and not shown: the audit voided a path of it."
+    # Still searching: no final set, the test after the search.
+    assert c["tune"]["final"] is None
+    assert (
+        c["tune"]["next"] == "Searching: 1 of 2 levers searched; the test comes after the search."
+    )
+
+
+def test_a_lever_in_play_with_no_pair_written_says_so():
+    t = _second_lever(tune("t-none-yet", ONE_WIN))
+    t["record"]["timing"]["pieces"][0]["finished_at"] = None
+    now = card(built([], [t]), "t-none-yet")["tune"]["levers"][1]
+    assert (now["words"], now["values"], now["written_words"], now["held_words"]) == (
+        "in play now",
+        [],
+        "No value of it is played yet.",
+        None,
+    )
 
 
 def test_a_tune_stopped_between_pieces_is_paused():
@@ -445,14 +587,15 @@ def test_the_days_a_run_was_played_are_central_days(pieces, words):
 
 # --------------------------------------------------------------------------- the page
 def _model(tmp_path: Path) -> Path:
-    t_live = _second_lever(tune("t-live", ONE_WIN))
-    t_live["record"]["timing"]["pieces"][0]["finished_at"] = None
+    t_live = _written_tune("t-live", paused=False)
     notes = md.notes_of(
         GOOD
         | {
             "rulesets": {},
             "assessments": [{"date": "2026-01-06", "level": "ok", "text": "read", "run": "s-made"}],
             "stands": STANDS | {"lines": [MARK + " a line the lead typed"]},
+            # A change live made that no version has taken in: the screens fold, the tunes not.
+            "engine": ENGINE[3:],
         }
     )
     m = built([made_screen(), on_version(made_screen("s-old"), 21)], [tune("t-1", ONE_WIN), t_live],
@@ -486,6 +629,23 @@ def test_the_results_tab_is_first_draws_every_card_and_escapes_every_value(tmp_p
     assert page.count("Where it stands") == 1 and html.escape(md.STANDS_LABEL) in page
     assert page.count("<h2>&lt;x-mark&gt;") == 4  # each card's title in plain words, escaped
     assert "Search done; the test is next." not in page and "Searching: 1 of 2" in page
+    # The lever in its search: its pairs written so far, and that nothing is decided.
+    assert "3 values played so far. Nothing is decided yet" in page
+    assert "the audit voided a path of it." in page
+    # A better figure is drawn up, a worse one down (mutant 21): every signed figure.
+    # The page signs a fall with U+2212.
+    signed = set(re.findall(r'<b class="(up|down|lvl)">([+\u2212])', page))
+    assert {("up", "+"), ("down", "\u2212")} <= signed
+    assert not signed & {("up", "\u2212"), ("down", "+")}
+    # A folded card is drawn shut, an open one open (mutant 22).
+    m = json.loads(f.read_text())
+    folded = {c["name"]: c["folded"] for c in m["results"]["cards"]}
+    assert sorted(folded.values()) == [False, False, True, True]
+    tags = re.findall(r'<details class="panel res[^>]*>.*?<code>([^<]*)</code>', page, re.DOTALL)
+    heads = re.findall(r'(<details class="panel res[^>]*>)', page)
+    assert len(tags) == len(heads) == 4
+    for name, head in zip(tags, heads, strict=True):
+        assert head.endswith(" open>") != folded[html.unescape(name)], name
     # The Knobs tab's line at its top.
     assert out["pages"]["knobs"].startswith('<p class="caution">' + html.escape(md.KNOBS_LINE))
 
