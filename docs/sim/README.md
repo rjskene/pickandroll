@@ -3630,22 +3630,33 @@ written replay has none; its line stays on Runs). It is the model's `results`
 - **How to read this**, always at the top: a pair, a screen and a tune in a line each
   (`model.READ_HOW`); a screen finds candidates and judges none, and only a tune's last step is
   evidence.
-- **A card's head**: the ruleset, screen or tune, the Central days it was played (from its pieces),
-  played, in play, paused between pieces or not started, and the capability it was played on. A
+- **Where it stands**, under it, only when the notes hold `stands` (`{"date", "lines"}`, one
+  line or more, optional): the lead's own summary across runs, with its date. It is the one place
+  on the tab whose figures are typed, not read from a record, and it says so.
+- **A card's head**: its title in plain words, the ruleset and the kind ("Public leagues: tune";
+  two runs of one ruleset and kind are told apart by their days); then the Central days it was
+  played (from its pieces), the folder's name, its state (played, in play, paused between pieces
+  or not started), and the capability it was played on. A
   run of an engine live has left (behind live when it started, or live changed since: the
   Overview's "of an engine live has left") is folded shut, and says so in words: a figure from
   before a capability mark is not carried across the mark.
-- **What it did**, a sentence from the record: a screen's count of single changes, its paths and
-  season; a tune's levers, its paths and season, the season of its test and, while it is not
-  finished, how many levers are searched so far.
+- **What it did**, a sentence from the record: a screen's single changes played (so the
+  sentence and the counts under it add up), those listed and not played and those left, apart,
+  its paths and season, and the engine row; a tune's levers, its paths and season and the season
+  of its test. A tune not finished says its next step in a line: how many levers are searched
+  while the search goes on, "Search done; the test is next." once the final set is chosen and
+  the confirmation is not played.
 - **What came out.** A screen: today's settings on the league's measure and the playoff odds (arm
   A of the baseline row); how many single changes cleared one SE upward, downward, both ways in
   different cells, stayed inside one SE (level), did nothing, were not played or are left; every
   change that cleared upward, best first, and the three largest that cleared downward (and how
   many more), each with its values, its difference and SE on the measure and on the playoff
   odds. The row that turns live's update off at once (`all-off`, `screen.ALL_OFF`) is not a knob:
-  it is shown apart as the engine's own update, read the other way round (the update on less
-  off). A tune: each lever searched, its values with their differences and the record's
+  it is shown apart as the engine's own update, in two sentences: what the update is (live's
+  changes the capability mark `model.ENGINE_MARK` took in, by issue, and the day live made them,
+  from the notes' `engine`; the knobs it moves in a tip), switched off as a whole in this one
+  pair, the engine's change and not a knob's; and the difference with the update on, against it
+  off (the row read the other way round). A tune: each lever searched, its values with their differences and the record's
   standing, "moved to" or "stayed at"; the levers not searched yet (the first "in play now" while
   a piece plays); the final set; and its test on the season no search has played, against the
   run's rivals and against static rivals with the playoff odds, and the record's verdict in its

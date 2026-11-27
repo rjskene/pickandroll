@@ -282,7 +282,7 @@ NOTE_CHOICES: Mapping[str, Mapping[str, tuple[str, ...]]] = {
     "proposals": {"state": ("asked", "taken", "declined")},
     "seasons": {"role": ROLES},
 }
-NOTE_KEYS = ("state", *NOTE_ITEMS, "rulesets")
+NOTE_KEYS = ("state", *NOTE_ITEMS, "rulesets", "stands")
 _SEASON_ID = re.compile(r"^(\d{4})-(\d{2})$")
 
 
@@ -360,7 +360,9 @@ def notes_of(x: Any) -> dict[str, Any]:
     :data:`NOTE_CHOICES`; a season's ``id`` is said as 2022-23, an ``engine`` item's ``issue``
     as #485. ``rulesets`` maps a
     ruleset's key to ``{"name", "order", "flags"}``, each optional, a flag ``{"level", "title",
-    "text"}``. Anything else is refused by name (:class:`NotesError`)."""
+    "text"}``. ``stands`` (PR results tab), optional, is the lead's own summary across runs, the
+    Results tab's "Where it stands": ``{"date": YYYY-MM-DD, "lines": [text, ...]}``, one line or
+    more. Anything else is refused by name (:class:`NotesError`)."""
     if not isinstance(x, Mapping):
         raise NotesError("notes: the file holds no object")
     unknown = sorted(set(x) - set(NOTE_KEYS))
@@ -388,6 +390,23 @@ def notes_of(x: Any) -> dict[str, Any]:
         if not isinstance(items, list):
             raise NotesError(f"notes: {section}: a list")
         out[section] = [_item(item, section, i) for i, item in enumerate(items)]
+    out["stands"] = None
+    if "stands" in x:
+        st = x["stands"]
+        if not isinstance(st, Mapping) or set(st) != {"date", "lines"}:
+            raise NotesError("notes: stands: an object of date and lines")
+        day = _text(st["date"], "stands.date")
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            raise NotesError(f"notes: stands.date: {day!r} is not a date (YYYY-MM-DD)") from None
+        lines = st["lines"]
+        if not isinstance(lines, list) or not lines:
+            raise NotesError("notes: stands.lines: a list of one line or more")
+        out["stands"] = {
+            "date": day,
+            "lines": [_text(v, f"stands.lines[{i}]") for i, v in enumerate(lines)],
+        }
     rs = x.get("rulesets", {})
     if not isinstance(rs, Mapping):
         raise NotesError("notes: rulesets: an object by ruleset key")
@@ -1377,12 +1396,14 @@ KNOBS_LINE = (
 #: (``screen.ALL_OFF``: its lever's key ``all`` and its one step ``off``). Its card shows it apart
 #: from the knobs, as the engine's own update, the other way round: the update on less off.
 ENGINE_ROW = "all-off"
+#: The capability mark that took in the changes the engine row turns off (PR take-in).
+ENGINE_MARK = "replay-22"
+#: The engine row in two sentences: what the update is, and the difference's head.
 ENGINE_WORDS = (
-    "Live's own update, all of it at once: the changes the simulator took in from live's odds "
-    "calibration ({knobs}), on against all of them off. The row's arm B turns them off; it is "
-    "read here the other way round, the update on less off. It is the engine's change, not a "
-    "knob's."
+    "Live's update{when} ({issues}), switched off as a whole in this one pair: the engine's "
+    "change, not a knob's."
 )
+ENGINE_ON = "With the update on, against it off:"
 #: What a card of a run played on an engine live has left says, folded shut by default.
 EARLIER_WORDS = (
     "Played on an engine live has left ({changes}): its figures are of the earlier engine. A "
@@ -1398,6 +1419,11 @@ SIDE_WORDS = {
     "none": "no SE",
 }
 #: A run's state in a card's head.
+#: What "Where it stands" says of itself: the one place on the tab the lead types figures.
+STANDS_LABEL = (
+    "The lead's own summary across runs, typed into the notes: its figures are the lead's, not "
+    "read from a record."
+)
 STATE_WORDS = {
     FINISHED: "played",
     IN_PLAY: "in play",
@@ -1465,7 +1491,11 @@ def days_words(pieces: Sequence[Mapping[str, Any]]) -> str | None:
     ]
     if not times:
         return None
-    a, b = (date.fromisoformat(cap.central_day(t)) for t in (min(times), max(times)))
+    return _span_words(*(date.fromisoformat(cap.central_day(t)) for t in (min(times), max(times))))
+
+
+def _span_words(a: date, b: date) -> str:
+    """Two days as a card says them: "Nov 24, 2026", "Nov 24 to Nov 26, 2026"."""
 
     def day(d: date) -> str:
         return f"{d:%b} {d.day}"
@@ -1516,11 +1546,33 @@ def _cells_of(rows: Sequence[Mapping[str, Any]], measure: str, flip: bool = Fals
     ]
 
 
+def engine_update(notes: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What the engine row turns off, as its card says it: the live changes the mark
+    :data:`ENGINE_MARK` took in, by issue, and the days live made them (the notes' ``engine``;
+    without them, no day), in one sentence; with the knobs it moves, for a tip."""
+    mark = next((m for m in cap.LOG if m.id == ENGINE_MARK), None)
+    issues = list(mark.takes_in) if mark is not None else []
+    days = sorted(
+        {
+            date.fromisoformat(e["date"])
+            for e in (notes or {}).get("engine") or []
+            if e["issue"] in issues
+        }
+    )
+    when = "" if not days else " of " + _span_words(days[0], days[-1])
+    return {
+        "words": ENGINE_WORDS.format(when=when, issues=", ".join(issues) or "its changes"),
+        "on": ENGINE_ON,
+        "knobs": [lever_label(k) for k in sc.ALL_OFF],
+    }
+
+
 def screen_result(
     record: Mapping[str, Any],
     rows: Sequence[Mapping[str, Any]],
     baseline: Mapping[str, Any] | None,
     measure: str,
+    update: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """What came out of a screen, from its record (its rows as :func:`screen_rows` reads them):
     the baseline's line on the measure and the playoff odds; how many of its single changes
@@ -1544,9 +1596,8 @@ def screen_result(
                 "key": key,
                 "played": bool(first["played"]),
                 "status": first.get("status"),
-                "words": ENGINE_WORDS.format(
-                    knobs=", ".join(lever_label(k).lower() for k in sc.ALL_OFF)
-                ),
+                "listed": key not in left,
+                **(update or engine_update(None)),
                 "did_nothing": bool(first.get("did_nothing")),
                 "cells": _cells_of(cells, measure, flip=True) if first["played"] else [],
             }
@@ -1623,18 +1674,29 @@ def screen_result(
 
 
 def _screen_did(run: Mapping[str, Any], result: Mapping[str, Any]) -> str:
-    n = result["counts"]["listed"]
+    """What a screen did, in the counts its card shows under it: the single changes played (so
+    far, while some are left), those listed and not played, those left, and the engine row."""
+    c = result["counts"]
+    n = c["played"]
     seasons = ", ".join(run["season_words"]) or "no recorded season"
     out = (
-        f"Tested {n} single change{'s' if n != 1 else ''}, one knob moved one step in each, "
-        f"each as a pair against today's settings on {run['paths']} paths of {seasons}"
-        f" ({run['forecasters'] or 'no recorded'} forecaster)."
+        f"Played {n} single change{'s' if n != 1 else ''}{' so far' if c['left'] else ''}, one "
+        f"knob moved one step in each, each as a pair against today's settings on "
+        f"{run['paths']} paths of {seasons} ({run['forecasters'] or 'no recorded'} forecaster)."
     )
-    if result["engine"] is not None:
-        out += " It also played live's own update turned off at once, as one more pair."
-    c = result["counts"]
+    if c["not_played"]:
+        k = c["not_played"]
+        out += f" {k} more {'was' if k == 1 else 'were'} listed and not played."
     if c["left"]:
-        out += f" {c['played']} of {n} played so far, {c['left']} left."
+        out += f" {c['left']} {'is' if c['left'] == 1 else 'are'} left to play."
+    e = result["engine"]
+    if e is not None:
+        out += (
+            " It also played live's update switched off, as one more pair."
+            if e["played"]
+            else " Live's update switched off, one more pair, "
+            + ("is left to play." if not e["listed"] else "was listed and not played.")
+        )
     return out
 
 
@@ -1716,10 +1778,24 @@ def tune_result(record: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[s
     status = conf["status"]
     if status is None:
         status = (
-            "not played yet; the search comes first"
-            if state in (IN_PLAY, PAUSED, NOT_STARTED)
-            else "no confirmation recorded"
+            "no confirmation recorded"
+            if state == FINISHED
+            else "not played yet; the search comes first"
+            if final is None
+            else "not played yet; the test is next"
         )
+    searched = sum(1 for x in levers if x["searched"])
+    if state == FINISHED:
+        step = None
+    elif final is None:
+        step = (
+            f"Searching: {searched} of {len(summary['order'])} levers searched; the test comes "
+            "after the search."
+        )
+    elif conf["status"] != tn.CONFIRMED:
+        step = "Search done; the test is next."
+    else:
+        step = None
     stages = {x["stage"] for x in levers if x["stage"]}
     return {
         "levers": levers,
@@ -1740,10 +1816,11 @@ def tune_result(record: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[s
             "cells": cells,
             "verdict": conf["verdict"],
         },
+        "next": step,
         "left": None
         if state == FINISHED
         else {
-            "searched": sum(1 for x in levers if x["searched"]),
+            "searched": searched,
             "levers": len(summary["order"]),
             "confirmation": conf["status"] != tn.CONFIRMED,
         },
@@ -1765,16 +1842,10 @@ def _tune_did(record: Mapping[str, Any], run: Mapping[str, Any], result: Mapping
         else "no season was named for its test"
     )
     k = len(names)
-    out = (
-        f"Searched {k} lever{'s' if k != 1 else ''} ({labels}), one at a time, each over a few "
+    return (
+        f"Searches {k} lever{'s' if k != 1 else ''} ({labels}), one at a time, each over a few "
         f"values on {run['paths']} paths of {seasons}; {test}."
     )
-    left = result["left"]
-    if left is not None:
-        out += f" {left['searched']} of {left['levers']} levers searched so far" + (
-            ", then the confirmation." if left["confirmation"] else "."
-        )
-    return out
 
 
 def results_of(
@@ -1787,11 +1858,13 @@ def results_of(
     head (ruleset, kind, days, state, capability; folded shut when it was played on an engine
     live has left), what it did, what came out (:func:`screen_result`, :func:`tune_result`), the
     lead's newest reading of it (:func:`reading_of`) and what it does not show
-    (:func:`not_shown_of`); with :data:`READ_HOW` and the Knobs page's line. ``sources``: each
+    (:func:`not_shown_of`); with :data:`READ_HOW` and the notes' ``stands``, the lead's own
+    summary across runs, labelled as typed (:data:`STANDS_LABEL`), or None. ``sources``: each
     ``{"kind", "name", "record", ...}``, with ``rows`` and ``baseline`` for a screen and
     ``summary`` for a tune; ``by_name``: the model's runs by name; ``names``: each ruleset's
     name by key."""
     cards = []
+    update = engine_update(notes)
     for src in sources:
         run = by_name[src["name"]]
         kind = src["kind"]
@@ -1805,6 +1878,8 @@ def results_of(
             "folder": run.get("folder"),
             "ruleset": run["ruleset"],
             "ruleset_name": names.get(run["ruleset"], run["ruleset"]),
+            # Plain words: two runs of one ruleset and kind are told apart by their days.
+            "title": f"{names.get(run['ruleset'], run['ruleset'])}: {kind}",
             "measure": measure,
             "measure_words": sc.MEASURE_WORDS.get(measure, measure),
             "days": days_words(run["pieces"]),
@@ -1822,14 +1897,20 @@ def results_of(
             "tune": None,
         }
         if kind == "screen":
-            card["screen"] = screen_result(record, src["rows"], src["baseline"], measure)
+            card["screen"] = screen_result(record, src["rows"], src["baseline"], measure, update)
             card["did"] = _screen_did(run, card["screen"])
         else:
             card["tune"] = tune_result(record, src["summary"])
             card["did"] = _tune_did(record, run, card["tune"])
         cards.append(card)
     cards.sort(key=lambda c: (_t(c["started_at"]), c["name"]), reverse=True)
-    return {"how": [dict(x) for x in READ_HOW], "cards": cards, "none": NO_RUNS}
+    stands = (notes or {}).get("stands")
+    return {
+        "how": [dict(x) for x in READ_HOW],
+        "stands": None if not stands else {**stands, "label": STANDS_LABEL},
+        "cards": cards,
+        "none": NO_RUNS,
+    }
 
 
 def build(

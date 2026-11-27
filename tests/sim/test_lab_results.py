@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +22,7 @@ from tests.sim.test_lab import (
     ENGINE,
     GENERATED,
     GOOD,
+    MARK,
     ONE_WIN,
     STATIC,
     block,
@@ -62,6 +64,8 @@ def test_a_screen_s_card_counts_its_changes_and_lists_those_that_cleared():
     (c,) = m["results"]["cards"]
     assert (c["kind"], c["state"], c["state_words"]) == ("screen", md.FINISHED, "played")
     assert c["ruleset_name"] == m["rulesets"][0]["name"] and c["measure_words"] == "matchup wins"
+    # Its title in plain words: the ruleset and the kind; its folder's name goes beside its days.
+    assert c["title"] == f"{c['ruleset_name']}: screen" and c["name"] == "s-made"
     assert c["days"] == "Jan 2, 2026"  # 10:00 UTC is the same day in Central
     r = c["screen"]
     assert r["counts"] == {
@@ -92,11 +96,16 @@ def test_a_screen_s_card_counts_its_changes_and_lists_those_that_cleared():
     assert (b["season_words"], b["forecaster"], b["paths"]) == ("2022-23", "prior", 8)
     assert b["measure"]["mean"] == 5.0 and b["made_playoffs"]["mean"] == 5.0
     assert r["baseline_tier"] == "fast tier" and r["no_baseline"] is None
+    # What it did says the number played, and the one listed and not played apart: the
+    # sentence and the counts under it add up.
     assert c["did"] == (
-        "Tested 9 single changes, one knob moved one step in each, each as a pair against "
-        "today's settings on 8 paths of 2022-23 (prior forecaster). It also played live's own "
-        "update turned off at once, as one more pair."
+        "Played 8 single changes, one knob moved one step in each, each as a pair against "
+        "today's settings on 8 paths of 2022-23 (prior forecaster). 1 more was listed and not "
+        "played. It also played live's update switched off, as one more pair."
     )
+    n = r["counts"]
+    assert n["up"] + n["down"] + n["mixed"] + n["level"] + n["did_nothing"] == n["played"]
+    assert n["played"] + n["not_played"] + n["left"] == n["listed"]
 
 
 def test_the_row_that_turns_live_s_update_off_is_shown_apart_the_other_way_round():
@@ -108,9 +117,26 @@ def test_the_row_that_turns_live_s_update_off_is_shown_apart_the_other_way_round
     (cell,) = e["cells"]
     assert cell["measure"]["mean"] == 0.8 and cell["measure"]["side"] == "better"
     assert cell["made_playoffs"]["mean"] == -0.01
-    assert e["words"] == md.ENGINE_WORDS.format(
-        knobs="later weeks' roster, recent-form weight, line's error (spread), missed games "
-        "(spread)"
+    # Two plain sentences: what the update is (no day without the notes' engine section), and
+    # the difference's head; the knobs it moves go to a tip.
+    assert e["words"] == (
+        "Live's update (#485, #486, #487), switched off as a whole in this one pair: the "
+        "engine's change, not a knob's."
+    )
+    assert e["on"] == "With the update on, against it off:"
+    assert e["knobs"] == [
+        "Later weeks' roster", "Recent-form weight", "Line's error (spread)",
+        "Missed games (spread)",
+    ]  # fmt: skip
+    assert md.cap.taken_in("#485").id == md.ENGINE_MARK
+    # With the notes' dates of live's changes, the update is said by its day.
+    took = [
+        {"date": "2026-11-23", "issue": i, "title": "made up", "words": "w"}
+        for i in ("#485", "#486", "#487")
+    ]
+    m = built([made_screen()], notes=md.notes_of({"engine": took}))
+    assert card(m, "s-made")["screen"]["engine"]["words"].startswith(
+        "Live's update of Nov 23, 2026 (#485, #486, #487), switched off"
     )
     # A screen without the row has none.
     one = screen("s-plain", ONE_WIN, [row("base", "pool", 0.0, did_nothing=True)])
@@ -143,7 +169,8 @@ def test_a_screen_in_play_says_what_is_played_and_what_is_left():
     c = card(built([s]), "s-live")
     assert (c["state"], c["state_words"]) == (md.IN_PLAY, "in play")
     assert c["screen"]["counts"]["left"] == 1 and c["screen"]["counts"]["listed"] == 10
-    assert c["did"].endswith(" 8 of 10 played so far, 1 left.")
+    assert c["did"].startswith("Played 8 single changes so far, one knob")
+    assert " 1 more was listed and not played. 1 is left to play. " in c["did"]
 
 
 @pytest.mark.parametrize("version", [6, 8])
@@ -192,9 +219,10 @@ def test_a_finished_tune_s_card_reads_its_search_its_set_and_its_test():
     assert static["measure"]["mean"] == 0.15
     assert run["made_playoffs"]["side"] == "level"
     assert cf["verdict"]["words"] == "made-up verdict"  # the record's own words
-    assert t["left"] is None
+    assert t["left"] is None and t["next"] is None
+    assert c["title"] == f"{c['ruleset_name']}: tune"
     assert c["did"] == (
-        "Searched 1 lever (candidate pool size), one at a time, each over a few values on 8 "
+        "Searches 1 lever (candidate pool size), one at a time, each over a few values on 8 "
         "paths of 2022-23; its test is 2023-24, a season no search has played, played once with "
         "the set it chose."
     )
@@ -227,7 +255,9 @@ def test_a_tune_in_play_says_what_is_done_and_what_is_left():
     assert c["tune"]["confirmation"]["status"] == "not played yet; the search comes first"
     assert c["tune"]["confirmation"]["cells"] == [] and not c["tune"]["confirmation"]["played"]
     assert c["tune"]["left"] == {"searched": 1, "levers": 2, "confirmation": True}
-    assert c["did"].endswith(" 1 of 2 levers searched so far, then the confirmation.")
+    assert c["tune"]["next"] == (
+        "Searching: 1 of 2 levers searched; the test comes after the search."
+    )
     # The Runs page's line says it too (it said "finished" before: its record has no ``left``).
     assert m["tunes"][0]["status"] == "in play"
     assert m["runs"][0]["live"]["state"] == md.IN_PLAY
@@ -240,7 +270,31 @@ def test_a_tune_stopped_between_pieces_is_paused():
     c = card(m, "t-paused")
     assert (c["state"], c["state_words"]) == (md.PAUSED, "paused between pieces")
     assert c["tune"]["levers"][1]["words"] == "not searched yet"
+    assert c["tune"]["next"].startswith("Searching: 1 of 2 levers searched")
     assert m["tunes"][0]["status"] == "left for the next piece"
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_a_tune_whose_search_is_done_says_the_test_is_next(paused):
+    """The final set is chosen and the confirmation is not played: in play (its piece plays
+    the confirmation now) or paused between pieces (the record says the confirmation is left)."""
+    t = tune("t-next", ONE_WIN)
+    rec = t["record"]
+    if paused:
+        rec["confirmation"] = {"status": tn.NOT_YET, "season": 2024, "cells": {}}
+        rec["left"] = {"next": "confirm-run", "stopped": "the piece's minutes ran out"}
+    else:
+        rec["confirmation"] = None
+        rec["timing"]["pieces"][0]["finished_at"] = None
+    c = card(built([], [t]), "t-next")
+    assert c["state_words"] == ("paused between pieces" if paused else "in play")
+    tu = c["tune"]
+    assert tu["next"] == "Search done; the test is next."
+    assert tu["final"]["set"][0]["value"] == "20"
+    assert tu["confirmation"]["status"] == (
+        tn.NOT_YET if paused else "not played yet; the test is next"
+    )
+    assert not tu["confirmation"]["played"]
 
 
 def test_a_tune_with_nothing_to_confirm_says_the_record_s_words():
@@ -265,6 +319,7 @@ def test_no_runs_at_all_says_so_and_a_replay_has_no_card():
         assert m["results"]["cards"] == []
         assert m["results"]["none"] == "No screen or tune is recorded yet."
         assert [h["term"] for h in m["results"]["how"]] == ["A pair", "A screen", "A tune"]
+        assert m["results"]["stands"] is None  # no notes: the strip is not drawn
     assert built()["knobs"]["line"] == md.KNOBS_LINE
     assert built()["lab_version"] == md.LAB_VERSION == 3
 
@@ -311,6 +366,33 @@ def test_the_lead_s_reading_is_the_newest_assessment_that_names_the_run():
     assert c["reading"] == {"date": "2026-01-06", "level": "ok", "text": "the newest"}
     c = card(built([made_screen()]), "s-made")
     assert c["reading"] is None and c["no_reading"] == "not written yet"
+
+
+STANDS = {"date": "2026-01-06", "lines": ["the lead's first line", "a second, with 1.5 typed"]}
+
+
+def test_where_it_stands_is_the_lead_s_own_summary_from_the_notes():
+    m = built([made_screen()], notes=md.notes_of({"stands": STANDS}))
+    assert m["results"]["stands"] == STANDS | {"label": md.STANDS_LABEL}
+    assert "not read from a record" in md.STANDS_LABEL
+    assert built([made_screen()], notes=md.notes_of({}))["results"]["stands"] is None
+
+
+@pytest.mark.parametrize(
+    ("stands", "words"),
+    [
+        ([], "notes: stands: an object of date and lines"),
+        ({"date": "2026-01-06"}, "notes: stands: an object of date and lines"),
+        (STANDS | {"by": "x"}, "notes: stands: an object of date and lines"),
+        (STANDS | {"date": "6 Jan"}, "notes: stands.date: '6 Jan' is not a date (YYYY-MM-DD)"),
+        (STANDS | {"lines": []}, "notes: stands.lines: a list of one line or more"),
+        (STANDS | {"lines": "one"}, "notes: stands.lines: a list of one line or more"),
+        (STANDS | {"lines": ["a", ""]}, "notes: stands.lines[1]: a non-empty text"),
+    ],
+)
+def test_a_malformed_stands_is_refused_by_name(stands, words):
+    with pytest.raises(md.NotesError, match=re.escape(words)):
+        md.notes_of({"stands": stands})
 
 
 def test_what_a_card_does_not_show_is_fixed_by_kind():
@@ -370,6 +452,7 @@ def _model(tmp_path: Path) -> Path:
         | {
             "rulesets": {},
             "assessments": [{"date": "2026-01-06", "level": "ok", "text": "read", "run": "s-made"}],
+            "stands": STANDS | {"lines": [MARK + " a line the lead typed"]},
         }
     )
     m = built([made_screen(), on_version(made_screen("s-old"), 21)], [tune("t-1", ONE_WIN), t_live],
@@ -400,6 +483,9 @@ def test_the_results_tab_is_first_draws_every_card_and_escapes_every_value(tmp_p
     assert "not written yet" in page and "in play now" in page
     assert page.count('data-screen="') == 2  # each screen's card links to the Screen tab
     assert "&lt;x-mark&gt;" in page  # the record's values were drawn, escaped
+    assert page.count("Where it stands") == 1 and html.escape(md.STANDS_LABEL) in page
+    assert page.count("<h2>&lt;x-mark&gt;") == 4  # each card's title in plain words, escaped
+    assert "Search done; the test is next." not in page and "Searching: 1 of 2" in page
     # The Knobs tab's line at its top.
     assert out["pages"]["knobs"].startswith('<p class="caution">' + html.escape(md.KNOBS_LINE))
 
@@ -431,6 +517,7 @@ def test_a_bare_address_opens_the_results_tab_and_no_run_says_so(tmp_path):
     assert out["problems"] == []
     assert out["nav"].startswith('<a href="#results" class="on">Results</a>')
     assert "No screen or tune is recorded yet." in out["first"]
+    assert "Where it stands" not in out["first"]
 
 
 def test_lab_check_has_a_results_line():

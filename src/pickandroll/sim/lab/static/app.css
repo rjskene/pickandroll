@@ -365,3 +365,8 @@ details.same { margin-top: 8px; color: var(--muted); } details.same summary { cu
 .res-conf { min-width: 220px; }
 .res-how ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; max-width: 900px; }
 .lvl { color: var(--text); }
+.res-state { color: var(--text); font-weight: 500; }
+.res-q { color: var(--accent); cursor: help; border-bottom: 1px dotted var(--accent); font-size: 12px; }
+.res-next { margin-top: 10px; color: var(--accent); }
+.res-stands { border-left: 3px solid var(--accent); }
+.res-stands ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; max-width: 900px; }

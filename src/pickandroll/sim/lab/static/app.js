@@ -67,7 +67,7 @@
     const up = s.up.length ? `<div class="k">Every change that cleared one SE upward, best first</div><ul class="res-list">${s.up.map((e) => change(e, m, many)).join("")}</ul>` : `<p class="sub">No change cleared one SE upward.</p>`;
     const down = s.down.length ? `<div class="k">The largest that cleared one SE downward${s.down_more ? `, and ${esc(s.down_more)} more` : ""}</div><ul class="res-list">${s.down.map((e) => change(e, m, many)).join("")}</ul>` : "";
     const en = s.engine;
-    const engine = !en ? "" : `<div class="res-engine"><div class="k">The engine's own update</div><p class="sub">${esc(en.words)}</p>${!en.played ? `<p class="empty">${esc(en.status || "not played")}</p>` : en.did_nothing ? `<p class="sub">did nothing</p>` : en.cells.map((x) => cellOf(x, m, many)).join("")}</div>`;
+    const engine = !en ? "" : `<div class="res-engine"><div class="k">The engine's own update</div><p>${esc(en.words)} <span class="res-q"${tip(`<b>What the update changed</b>${en.knobs.map((k) => `<div>${esc(k)}</div>`).join("")}`)}>what it changed</span></p>${!en.played ? `<p class="empty">${esc(en.status || "not played")}</p>` : en.did_nothing ? `<p class="sub">did nothing</p>` : `<p class="sub">${esc(en.on)}</p>` + en.cells.map((x) => cellOf(x, m, many)).join("")}</div>`;
     return `<div class="k">Today's settings</div>${base}
       <div class="k">The single changes played, on ${esc(c.measure_words)}</div><div class="stats res-tally">${tally}</div>${rest ? `<p class="sub">${rest}</p>` : ""}
       ${up}${down}${engine}`;
@@ -77,7 +77,7 @@
     const levers = t.levers.map((l) => `<li><b>${esc(l.label)}</b> <span class="sub">${l.from != null ? "from " + esc(l.from) : ""}${t.stages > 1 && l.stage ? " · " + esc(l.stage) : ""}</span> · <b class="${l.moved ? "up" : "lvl"}">${esc(l.words)}</b>${l.values.length ? `<ul>${l.values.map((v) => `<li>${v.values ? vals(v) : esc(v.nudge)}: ${v.mean == null ? esc(v.status || "") : judged(v, m)}${v.standing ? ` <span class="sub">(${esc(v.standing)})</span>` : ""}</li>`).join("")}</ul>` : ""}</li>`).join("");
     const set = f ? (f.set.length ? f.set.map((x) => `${esc(x.label)} <b>${esc(x.value)}</b>`).join(" · ") : esc(f.words)) : esc(t.final_words);
     const cells = cf.cells.map((x) => `<div class="stat res-conf"><span class="k">Against ${esc(x.rivals)} · ${esc(x.forecaster)}</span>${judged(x.measure, m)}<br><span class="sub">playoff odds</span> ${judged(x.made_playoffs, "made_playoffs")}${x.read ? "" : `<small>not read</small>`}</div>`).join("");
-    return `<div class="k">The search, lever by lever, on ${esc(c.measure_words)}</div><ul class="res-list">${levers || `<li class="empty">No lever in its order.</li>`}</ul>
+    return `${t.next ? `<p class="res-next">${esc(t.next)}</p>` : ""}<div class="k">The search, lever by lever, on ${esc(c.measure_words)}</div><ul class="res-list">${levers || `<li class="empty">No lever in its order.</li>`}</ul>
       <div class="k">Final set</div><p>${set}</p>
       <div class="k">The test${cf.season_words ? ` on ${esc(cf.season_words)}` : ""}: ${esc(cf.status)}</div>
       ${cells ? `<div class="stats">${cells}</div>` : ""}
@@ -87,8 +87,8 @@
     const r = c.reading;
     const read = r ? `<div class="entry"><div class="when"><span class="badge ${esc(r.level)}">${esc(r.level)}</span>${esc(r.date)}</div><p>${esc(r.text)}</p></div>` : `<p class="empty">${esc(c.no_reading)}</p>`;
     const watch = c.kind === "screen" && c.folder ? ` <a href="#screen" data-screen="${esc(c.folder)}">Watch it on the Screen tab.</a>` : "";
-    return `<details class="panel res rs t${tone(c.ruleset)}"${c.folded ? "" : " open"}><summary><span class="k">${esc(c.ruleset_name)} · ${esc(c.kind)} · ${esc(c.days || "no piece yet")} · ${esc(c.state_words)}</span>
-        <h2>${esc(c.name)}</h2><span class="sub">played on ${capw(c.capability)}${c.folded ? " · folded: of an engine live has left" : ""}</span></summary>
+    return `<details class="panel res rs t${tone(c.ruleset)}"${c.folded ? "" : " open"}><summary><h2>${esc(c.title)}</h2><span class="sub">${esc(c.days || "no piece yet")} · <code>${esc(c.name)}</code> · <b class="res-state">${esc(c.state_words)}</b></span>
+        <span class="sub">played on ${capw(c.capability)}${c.folded ? " · folded: of an engine live has left" : ""}</span></summary>
       ${c.earlier ? `<p class="caution">${esc(c.earlier)}</p>` : ""}
       <p class="did">${esc(c.did)}${watch}</p>
       ${c.kind === "screen" ? resScreen(c) : resTune(c)}
@@ -98,8 +98,11 @@
   function resultsPage() {
     const R = M.results;
     const how = `<section class="panel res-how"><h2>How to read this</h2><ul>${R.how.map((h) => `<li><b>${esc(h.term)}</b>: ${esc(h.words)}</li>`).join("")}</ul></section>`;
+    // The lead's own summary across runs, from the notes: drawn only when the notes hold one.
+    const st = R.stands;
+    const stands = !st ? "" : `<section class="panel res-stands"><h2>Where it stands</h2><p class="sub">${esc(st.label)} Written ${esc(st.date)}.</p><ul>${st.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></section>`;
     return `<p class="lede">What each screen and tune found, in plain words, newest first. <b>Every figure is read from the records</b>; a run played on an engine live has left is folded shut.</p>
-      ${how}${R.cards.length ? R.cards.map(resCard).join("") : `<section class="panel"><p class="empty">${esc(R.none)}</p></section>`}`;
+      ${how}${stands}${R.cards.length ? R.cards.map(resCard).join("") : `<section class="panel"><p class="empty">${esc(R.none)}</p></section>`}`;
   }
 
   // ------------------------------------------------------------------ overview
