@@ -339,7 +339,8 @@ def _written(name: str, key: str, mean: float, at: str, **tune_kw) -> dict:
 
 def _written_tune(name: str, paused: bool) -> dict:
     """One decided lever (``pool``) and one in its search (``min_gain``) with two pairs
-    written, beside pairs the card must not show: another tune's, the second stage's, a second
+    written, beside pairs the card must not show: another tune's, another lever's (this tune's,
+    the first stage's first pass, played, named by no step), the second stage's, a second
     pass's, one whose audit voided a path, one with no tune block, and the confirmation's."""
     t = _second_lever(tune(name, ONE_WIN))
     rec = t["record"]
@@ -351,6 +352,8 @@ def _written_tune(name: str, paused: bool) -> dict:
         "p1-min_gain-down.json": _written(name, "min_gain-down", -0.5, "2026-01-03T10:50:00+00:00"),
         "p1-min_gain-up.json": _written(name, "min_gain-up", 0.4, "2026-01-03T10:20:00+00:00"),
         "other.json": _written("t-other", "min_gain-up", 3.0, "2026-01-03T10:21:00+00:00"),
+        "p1-daily_cap-up.json": _written(name, "daily_cap-up", 3.0, "2026-01-03T10:21:30+00:00",
+                                         lever="daily_cap"),
         "d1-min_gain-up.json": _written(name, "min_gain-up", 3.0, "2026-01-03T10:22:00+00:00",
                                         stage="dynamic"),
         "p2-min_gain-up.json": _written(name, "min_gain-up", 3.0, "2026-01-03T10:23:00+00:00",
