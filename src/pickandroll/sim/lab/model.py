@@ -1448,6 +1448,18 @@ NO_LIVE = "Nothing here changes a live setting: that is your ruling."
 UNDECIDED = "Nothing is decided yet: the search picks among its values when all of them are played."
 #: The pairs of a lever in play held back from its card: the audit voided a path of each.
 HELD_WORDS = "{n} more played and not shown: the audit voided a path of {it}."
+#: A tune's test, the line above its cells (the lead's notes on the first finished tune): the
+#: record's verdict reads each cell's finish, and the league's measure decides nothing there
+#: (``tune.VERDICT_RULE``).
+TEST_READS = (
+    "The verdict reads the finish (playoff odds and final rank) against the run's rivals; the "
+    "league's measure ({measure}) is shown beside it and decides nothing."
+)
+#: A test cell's label over its measure, drawn after the finish and without a side's colour.
+MEASURE_ASIDE = "{measure}, shown beside: decides nothing"
+#: A test cell's finish (``tune.finish_of``, the record's words) by side, for its colour: any
+#: other finish (level, ahead on one and behind on the other) is level.
+FINISH_SIDES = {tn.AHEAD: "better", tn.BEHIND: "worse", tn.UNSURE: "none"}
 NO_RUNS = "No screen or tune is recorded yet."
 
 
@@ -1771,8 +1783,9 @@ def tune_result(
     in the order played, with the values tried and their differences, and "moved to" or
     "stayed"; the levers of its order not searched yet (the first in play while a piece plays);
     the final set; the confirmation on the season no search has played, against the run's rivals
-    and against static rivals, with the playoff odds, and the record's own verdict in its
-    words. The lever in play (or paused in its search) lists its pairs already written in the
+    and against static rivals, each cell with the record's finish and the two outcomes it is
+    read on (playoff odds, final rank), the league's measure beside it (:data:`TEST_READS`:
+    it decides nothing), and the record's own verdict in its words. The lever in play (or paused in its search) lists its pairs already written in the
     folder (``pairs``, :func:`written_of`): nothing is decided until all its values are
     played."""
     measure = summary["measure"]
@@ -1855,18 +1868,27 @@ def tune_result(
         )
     final = summary["final"]
     conf = summary["confirmation"]
+    # Each cell's finish, the record's own words, with the two outcomes it is read on (playoff
+    # odds, final rank: lower is better); the measure is shown beside and decides nothing.
     cells = [
         {
             "kind": c["kind"],
             "rivals": tn.RIVALS_WORDS.get(c["kind"], c["kind"]),
             "forecaster": c["forecaster"],
             "read": c["read"],
-            "measure": judged(c["measure"] | {"better": OUTCOMES[measure]["better"]}),
-            "made_playoffs": judged(c["made_playoffs"] | {"better": 1}),
             "finish": c["finish"],
+            "finish_side": "none"
+            if c["finish"] is None
+            else FINISH_SIDES.get(c["finish"], "level"),
+            "made_playoffs": judged(
+                c["made_playoffs"] | {"better": OUTCOMES["made_playoffs"]["better"]}
+            ),
+            "rank": judged(c["rank"] | {"better": OUTCOMES["rank"]["better"]}),
+            "measure": judged(c["measure"] | {"better": OUTCOMES[measure]["better"]}),
         }
         for c in conf["cells"]
     ]
+    words_of = sc.MEASURE_WORDS.get(measure, measure)
     status = conf["status"]
     if status is None:
         status = (
@@ -1905,6 +1927,8 @@ def tune_result(
             "season_words": conf["season_words"],
             "status": status,
             "played": conf["status"] == tn.CONFIRMED,
+            "reads": TEST_READS.format(measure=words_of) if cells else None,
+            "aside": MEASURE_ASIDE.format(measure=words_of),
             "cells": cells,
             "verdict": conf["verdict"],
         },

@@ -3665,8 +3665,14 @@ written replay has none; its line stays on Runs). It is the model's `results`
   the first stage's first pass for that lever, that no step names, are shown; a pair whose audit
   voided a path is counted and not shown, and a pair that cannot say all of that is left out.
   Then the final set; and its test on the season no search has played, against the
-  run's rivals and against static rivals with the playoff odds, and the record's verdict in its
-  own words (or the record's status: not played yet, nothing to confirm).
+  run's rivals and against static rivals, under one fixed line (`model.TEST_READS`): the verdict
+  reads the finish (playoff odds and final rank) against the run's rivals, and the league's
+  measure is shown beside it and decides nothing. Each cell says the record's own finish for it
+  first (`tune.finish_of`'s words: ahead, behind, both, no difference beyond one SE, no SE), then
+  the playoff odds and the final rank (lower is better) with their SEs, and last the league's
+  measure, labelled as deciding nothing and drawn in no side's colour, so a measure that clears
+  one SE beside a finish that does not is not read as the verdict. Then the record's verdict in
+  its own words (or the record's status: not played yet, nothing to confirm).
 - **The lead's reading**: the newest assessment in the notes whose `run` names the run, else "not
   written yet".
 - **What this does not show**, by kind: the run's seasons and one seed; that a screen sizes and

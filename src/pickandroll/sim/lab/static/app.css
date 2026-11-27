@@ -363,6 +363,9 @@ details.same { margin-top: 8px; color: var(--muted); } details.same summary { cu
 .res-not { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
 .res-engine { border-left: 3px solid var(--them); background: var(--panel-2); padding: 2px 12px 10px; margin-top: 14px; border-radius: 0 6px 6px 0; }
 .res-conf { min-width: 220px; }
+.res-finish { font-weight: 600; }
+.res-aside { margin-top: 6px; padding-top: 4px; border-top: 1px dashed var(--line-2); color: var(--muted); font-size: 12px; }
+.res-reads { margin-top: 6px; color: var(--muted); max-width: 900px; }
 .res-how ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; max-width: 900px; }
 .lvl { color: var(--text); }
 .res-state { color: var(--text); font-weight: 500; }

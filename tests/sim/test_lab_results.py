@@ -245,7 +245,9 @@ def test_a_finished_tune_s_card_reads_its_search_its_set_and_its_test():
     assert (run["rivals"], static["rivals"]) == tuple(tn.RIVALS_WORDS.values())
     assert run["measure"]["mean"] == 0.3 and run["measure"]["side"] == "better"
     assert static["measure"]["mean"] == 0.15
-    assert run["made_playoffs"]["side"] == "level"
+    assert run["made_playoffs"]["side"] == run["rank"]["side"] == "level"
+    # The record's own finish words, whatever its figures (this made-up record's are typed).
+    assert (run["finish"], run["finish_side"], static["finish"]) == ("ahead", "better", "level")
     # Playoff odds that rise past their SE are better (mutant 24).
     up = tune("t-odds", ONE_WIN)
     up["record"]["confirmation"]["cells"]["run"]["prior"]["difference"]["made_playoffs"] = {
@@ -261,6 +263,79 @@ def test_a_finished_tune_s_card_reads_its_search_its_set_and_its_test():
         "paths of 2022-23; its test is 2023-24, a season no search has played, played once with "
         "the set it chose."
     )
+
+
+def _tested(name: str, odds: tuple, rank: tuple, measure: tuple = (0.3, 0.1)) -> dict:
+    """A made-up finished tune whose test's cells, against both kinds of rivals, have the given
+    (mean, SE) on matchup wins, the playoff odds and the final rank; each cell's finish and the
+    verdict are the record's rule's own (``tune.finish_of``, ``tune.verdict_of``)."""
+    t = tune(name, ONE_WIN)
+    conf = t["record"]["confirmation"]
+    for c in conf["cells"].values():
+        d = c["prior"]["difference"]
+        for o, (mean, se) in (("matchup_wins", measure), ("made_playoffs", odds), ("rank", rank)):
+            d[o] = {"mean": mean, "se": se, "n": 8}
+        c["prior"]["finish"] = tn.finish_of(d)
+    v = tn.verdict_of(conf["cells"])
+    conf["verdict"] = {"state": v["state"], "words": v["words"], "flags": v["flags"]}
+    return t
+
+
+#: The test's line above its cells, on a league of matchup wins.
+READS = (
+    "The verdict reads the finish (playoff odds and final rank) against the run's rivals; the "
+    "league's measure (matchup wins) is shown beside it and decides nothing."
+)
+
+
+def test_a_test_whose_measure_clears_and_whose_finish_does_not_is_not_recommended():
+    """The lead's notes on the first finished tune: its measure cleared one SE upward and the
+    verdict said "not recommended"; each cell now says its finish, which the verdict reads."""
+    cf = card(built([], [_tested("t-m", (0.01, 0.02), (0.1, 0.3))]), "t-m")["tune"]["confirmation"]
+    assert cf["reads"] == READS
+    assert cf["aside"] == "matchup wins, shown beside: decides nothing"
+    for c in cf["cells"]:
+        assert c["measure"]["side"] == "better"  # the measure clears ...
+        assert (c["finish"], c["finish_side"]) == (tn.LEVEL, "level")  # ... the finish does not
+        assert c["made_playoffs"]["side"] == c["rank"]["side"] == "level"
+        assert (c["rank"]["mean"], c["rank"]["se"]) == (0.1, 0.3)
+    assert cf["verdict"]["state"] == tn.NOT_SHOWN
+    assert cf["verdict"]["words"] == tn.VERDICT_WORDS[tn.NOT_SHOWN]
+    assert "not recommended" in cf["verdict"]["words"]
+
+
+@pytest.mark.parametrize(
+    "odds, rank, finish, side, sides, state",
+    [
+        # The finish clears on the final rank alone: a lower rank is better.
+        ((0.01, 0.02), (-0.8, 0.3), tn.AHEAD, "better", ("level", "better"), tn.HOLDS),
+        # And on the playoff odds alone.
+        ((0.06, 0.02), (0.1, 0.3), tn.AHEAD, "better", ("better", "level"), tn.HOLDS),
+        ((0.01, 0.02), (0.8, 0.3), tn.BEHIND, "worse", ("level", "worse"), tn.AGAINST),
+        ((0.06, 0.02), (0.8, 0.3), tn.MIXED, "level", ("better", "worse"), tn.NOT_SHOWN),
+    ],
+)  # fmt: skip
+def test_a_test_s_cell_says_the_record_s_finish_on_its_two_outcomes(
+    odds, rank, finish, side, sides, state
+):
+    cf = card(built([], [_tested("t-f", odds, rank)]), "t-f")["tune"]["confirmation"]
+    for c in cf["cells"]:
+        assert (c["finish"], c["finish_side"]) == (finish, side)
+        assert (c["made_playoffs"]["side"], c["rank"]["side"]) == sides
+        assert (c["rank"]["mean"], c["rank"]["se"]) == rank
+        assert c["measure"]["side"] == "better"
+    assert cf["verdict"]["state"] == state
+    assert cf["verdict"]["words"] == tn.VERDICT_WORDS[state]
+    assert cf["reads"] == READS
+
+
+def test_a_test_cell_with_no_finish_or_no_se_says_so():
+    t = _tested("t-n", (0.01, None), (0.1, 0.3))
+    (c, _) = card(built([], [t]), "t-n")["tune"]["confirmation"]["cells"]
+    assert (c["finish"], c["finish_side"]) == (tn.UNSURE, "none")
+    del t["record"]["confirmation"]["cells"]["run"]["prior"]["finish"]  # a record without one
+    (c, _) = card(built([], [t]), "t-n")["tune"]["confirmation"]["cells"]
+    assert (c["finish"], c["finish_side"]) == (None, "none")
 
 
 def _second_lever(t: dict) -> dict:
@@ -289,6 +364,7 @@ def test_a_tune_in_play_says_what_is_done_and_what_is_left():
     assert c["tune"]["final"] is None and c["tune"]["final_words"].startswith("not chosen yet")
     assert c["tune"]["confirmation"]["status"] == "not played yet; the search comes first"
     assert c["tune"]["confirmation"]["cells"] == [] and not c["tune"]["confirmation"]["played"]
+    assert c["tune"]["confirmation"]["reads"] is None  # no cell, no line above the cells
     assert c["tune"]["left"] == {"searched": 1, "levers": 2, "confirmation": True}
     assert c["tune"]["next"] == (
         "Searching: 1 of 2 levers searched; the test comes after the search."
@@ -681,6 +757,53 @@ def test_a_bare_address_opens_the_results_tab_and_no_run_says_so(tmp_path):
     assert out["nav"].startswith('<a href="#results" class="on">Results</a>')
     assert "No screen or tune is recorded yet." in out["first"]
     assert "Where it stands" not in out["first"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_a_test_cell_draws_the_finish_first_and_the_measure_apart(tmp_path):
+    """A tune whose measure clears and whose finish does not, and one whose finish clears: each
+    test cell draws the record's finish first, the playoff odds and the final rank, and the
+    league's measure last, labelled and in no side's colour; the line above the cells once a
+    tune."""
+    tunes = [_tested("t-m", (0.01, 0.02), (0.1, 0.3)), _tested("t-f", (0.01, 0.02), (-0.8, 0.3))]
+    f = tmp_path / "m.json"
+    f.write_text(json.dumps(json.loads(json.dumps(built([], tunes), default=str))))
+    harness = Path(__file__).with_name("lab_page_harness.js")
+    got = subprocess.run(
+        ["node", str(harness), str(STATIC / "app.js"), str(f), str(f), str(STATIC / "season.js")],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    out = json.loads(got.stdout)
+    assert out["problems"] == []
+    page = out["pages"]["results"]
+    cards = re.findall(r'<details class="panel res.*?</details>', page, re.DOTALL)
+    assert len(cards) == 2
+    for body, finish, side, rank in (
+        (next(x for x in cards if "<code>t-m</code>" in x), tn.LEVEL, "lvl", '"lvl">+0.10</b>'),
+        (next(x for x in cards if "<code>t-f</code>" in x), tn.AHEAD, "up", '"up">\u22120.80</b>'),
+    ):
+        assert body.count(html.escape(READS)) == 1
+        cells = re.findall(r'<div class="stat res-conf">.*?</small></div>', body, re.DOTALL)
+        assert len(cells) == 2 and body.index(html.escape(READS)) < body.index(cells[0])
+        for cell in cells:
+            at = [
+                cell.index(f'<b class="res-finish {side}">{html.escape(finish)}</b>'),
+                cell.index("playoff odds"),
+                cell.index(f"final rank, lower is better</span> <b class={rank} ± 0.30"),
+                cell.index('<div class="res-aside">'),
+            ]
+            assert at == sorted(at)
+            aside = cell[at[-1] :]
+            # The measure cleared upward: drawn labelled and in no side's colour.
+            assert "matchup wins, shown beside: decides nothing" in aside
+            assert "+0.30 ± 0.10 <small>better, by more than one SE</small>" in aside
+            assert not re.search(r"<b[ >]", aside) and 'class="up"' not in aside
+        verdict = re.search(r'<p class="verdict">(.*?)</p>', body).group(1)
+        assert body.index(cells[-1]) < body.index('<p class="verdict">')
+        assert ("not recommended" in verdict) == (finish == tn.LEVEL)
 
 
 def test_lab_check_has_a_results_line():
