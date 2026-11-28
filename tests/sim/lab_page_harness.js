@@ -36,7 +36,7 @@ const look = (where) => {
   if (season) eval(fs.readFileSync(season, "utf8"));
   eval(src);
   await tick(); await tick();
-  const pages = ["overview", "knobs", "checks", "runs", "season", "openings", "explainer"];
+  const pages = ["results", "overview", "knobs", "checks", "runs", "season", "openings", "explainer"];
   const m = models[0];
   const rs = m.rulesets.filter((x) => x.listed && x.screen).map((x) => x.key);
   const states = [{}];

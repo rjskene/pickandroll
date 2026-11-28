@@ -110,10 +110,8 @@ def _iso(t: datetime | None) -> str | None:
 def label_of(name: str) -> str:
     """A lever's or an override's name as the page says it: the lab's label for the knob, and an
     override's situation after it (``rate_cv@standing.behind`` is "Line's error (spread) ·
-    standing behind")."""
-    knob, _, where = str(name).partition("@")
-    label = md.lever_label(knob)
-    return f"{label} · {where.replace('.', ' ')}" if where else label
+    standing behind"): the model's :func:`~pickandroll.sim.lab.model.row_label`."""
+    return md.row_label(name)
 
 
 def _int(x: Any, default: int) -> int:

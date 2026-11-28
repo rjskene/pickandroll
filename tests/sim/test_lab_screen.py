@@ -416,7 +416,7 @@ def test_the_model_names_each_screen_s_folder_and_state():
         confirmation=2026,
         generated={"at": "x", "read": {}, "refused": []},
     )
-    assert m["lab_version"] == md.LAB_VERSION == 2
+    assert m["lab_version"] == md.LAB_VERSION == 3
     (run,) = m["runs"]
     assert run["folder"] == "s-live"
     assert run["live"] == {
